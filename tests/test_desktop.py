@@ -1,0 +1,1411 @@
+"""Desktop UI bridge: config persistence, state, chat/lead push events,
+memory & skills & logs surfaces."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+from codeagent.desktop.api import DesktopAPI, DesktopConfig
+from codeagent.desktop.ui import HTML
+
+
+class FakeWindow:
+    """Captures evaluate_js pushes like a real webview window."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def evaluate_js(self, script: str):
+        prefix = "window._onEvent("
+        assert script.startswith(prefix)
+        self.calls.append(json.loads(script[len(prefix):-1]))
+
+    def kinds(self) -> list[str]:
+        return [c["kind"] for c in self.calls]
+
+
+@pytest.fixture
+def api(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "codeagent.desktop.api.DESKTOP_CONFIG_PATH", tmp_path / "desktop.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.api.MEMORY_PATH", tmp_path / "memory.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.api.DEFAULT_SKILLS_DIR", tmp_path / "skills"
+    )
+    monkeypatch.setattr(
+        "codeagent.settings.DEFAULT_SETTINGS_PATH", tmp_path / "settings.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.models.MODELS_PATH", tmp_path / "models.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.models.SECRETS_PATH", tmp_path / "secrets.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.router.ROUTER_PATH", tmp_path / "router.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.permissions.PERMS_PATH", tmp_path / "permissions.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.permissions.AUDIT_PATH", tmp_path / "audit.jsonl"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.activity.ACTIVITY_PATH", tmp_path / "activity.jsonl"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.activity.LEARNING_PATH", tmp_path / "learning.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.automation.WORKFLOWS_PATH", tmp_path / "workflows.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.cron.CRON_PATH", tmp_path / "cron.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.evolution.EVOLUTION_PATH", tmp_path / "evolution.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.projects.PROJECTS_INDEX", tmp_path / "projects.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.projects.DEFAULT_BASE", tmp_path / "proj-base"
+    )
+    a = DesktopAPI(root=tmp_path)
+    a._window = FakeWindow()
+    return a
+
+
+def wait_for(window: FakeWindow, kind: str, timeout: float = 8.0) -> dict:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        hit = [c for c in window.calls if c["kind"] == kind]
+        if hit:
+            return hit[-1]
+        time.sleep(0.05)
+    raise AssertionError(f"no push event of kind {kind!r}; got {window.kinds()}")
+
+
+# ---------------------------------------------------------------------------
+# config & state
+# ---------------------------------------------------------------------------
+
+
+def test_desktop_config_roundtrip(tmp_path):
+    path = tmp_path / "desktop.json"
+    DesktopConfig(
+        provider="openrouter", model="m1", api_key="k",
+        voice_enabled=True, voice_name="xiaochen",
+        workers_json='[{"name":"a","provider":"ollama"}]',
+    ).save(path)
+    loaded = DesktopConfig.load(path)
+    assert loaded.provider == "openrouter"
+    assert loaded.voice_enabled is True
+    assert loaded.voice_name == "xiaochen"
+    assert "ollama" in loaded.workers_json
+
+
+def test_desktop_config_ignores_unknown_fields(tmp_path):
+    path = tmp_path / "desktop.json"
+    path.write_text(json.dumps({"provider": "ollama", "hack": True}), encoding="utf-8")
+    cfg = DesktopConfig.load(path)
+    assert cfg.provider == "ollama"
+    assert not hasattr(cfg, "hack")
+
+
+def test_get_state(api):
+    state = api.get_state()
+    assert state["version"]
+    assert "ollama" in state["providers"]
+    assert "openrouter" in state["providers"]
+    assert state["config"]["provider"] == "ollama"
+    assert "settings" in state
+    assert "voices" in state
+
+
+def test_save_config_persists_and_resets_agent(api, tmp_path):
+    api.save_config({"provider": "openai", "model": "gpt-4o-mini", "api_key": "k"})
+    assert api.config.provider == "openai"
+    assert api._agent is None
+    reloaded = DesktopConfig.load(tmp_path / "desktop.json")
+    assert reloaded.model == "gpt-4o-mini"
+
+
+def test_save_settings_updates_personalization(api):
+    api.save_settings({"nickname": "石头", "language": "中文"})
+    assert api.settings.nickname == "石头"
+
+
+def test_get_changelog(api):
+    assert "0.21.0" in api.get_changelog()
+
+
+# ---------------------------------------------------------------------------
+# model assets (LCA-style)
+# ---------------------------------------------------------------------------
+
+
+def test_assets_default_endpoint(api):
+    assets = api.get_model_assets()
+    assert assets["endpoints"]  # default localhost endpoint exists
+    assert assets["endpoints"][0]["base"] == "http://localhost:11434"
+    assert assets["active"] == ""
+
+
+def test_add_and_remove_endpoint(api):
+    r = api.add_endpoint("http://192.168.1.10:11434/")
+    assert r["ok"]
+    eps = api.get_model_assets()["endpoints"]
+    ep = next(e for e in eps if e["base"] == "http://192.168.1.10:11434")
+    assert api.remove_endpoint(ep["id"])
+    assert not any(e["id"] == ep["id"]
+                   for e in api.get_model_assets()["endpoints"])
+
+
+def test_add_endpoint_rejects_duplicates(api):
+    api.add_endpoint("http://x:11434")
+    assert not api.add_endpoint("http://x:11434")["ok"]
+
+
+def test_api_model_key_stored_as_pointer(api, tmp_path):
+    r = api.add_api_model("https://api.deepseek.com/v1", "deepseek-chat",
+                          label="DS", api_key="sk-real-key-1234")
+    assert r["ok"]
+    # store holds no plaintext key
+    store_text = (tmp_path / "models.json").read_text(encoding="utf-8")
+    assert "sk-real-key-1234" not in store_text
+    # secret file holds it, owner-only
+    secrets = (tmp_path / "secrets.json").read_text(encoding="utf-8")
+    assert "sk-real-key-1234" in secrets
+    import stat
+    mode = (tmp_path / "secrets.json").stat().st_mode
+    assert stat.S_IMODE(mode) == 0o600
+    # UI sees only the mask
+    listed = api.get_model_assets()["api_models"][0]
+    assert listed["key_masked"].endswith("1234")
+    assert "sk-real" not in listed["key_masked"]
+
+
+def test_remove_api_model_deletes_secret(api, tmp_path):
+    r = api.add_api_model("https://x/v1", "m", api_key="k123")
+    assert api.remove_api_model(r["id"])
+    assert "k123" not in (tmp_path / "secrets.json").read_text(encoding="utf-8")
+
+
+def test_set_active_local_model(api):
+    ep = api.assets.endpoints[0]
+    r = api.set_active_model(f"local:qwen3:8b@{ep.id}")
+    assert r["ok"] and "qwen3:8b" in r["active_label"]
+    assert api._agent is None
+    # persists
+    from codeagent.desktop.models import ModelAssets
+    assert ModelAssets.load().active == f"local:qwen3:8b@{ep.id}"
+
+
+def test_active_api_model_builds_openai_provider(api):
+    r = api.add_api_model("https://api.deepseek.com/v1", "deepseek-chat",
+                          api_key="sk-x")
+    api.set_active_model(f"api:{r['id']}")
+    provider = api._build_provider()
+    assert provider.name == "openai"
+    assert provider.model == "deepseek-chat"
+    assert provider.client.api_key == "sk-x"
+
+
+def test_legacy_config_when_no_active_asset(api):
+    provider = api._build_provider()
+    assert provider.name == "ollama"  # falls back to desktop.json config
+
+
+def test_diagnose_messages(api):
+    assert "连不上" in api._diagnose(Exception("Connection refused"))
+    assert "超时" in api._diagnose(Exception("request timed out"))
+    assert "Key" in api._diagnose(Exception("401 Unauthorized"))
+    assert "404" in api._diagnose(Exception("404 not found"))
+
+
+def test_get_overview(api):
+    overview = api.get_overview()
+    assert overview["version"]
+    assert overview["provider"] == "ollama"
+    assert isinstance(overview["skills"], int)
+    assert isinstance(overview["memories"], int)
+    assert isinstance(overview["harnesses"], int)
+    assert isinstance(overview["recent_runs"], list)
+
+
+# ---------------------------------------------------------------------------
+# chat flow
+# ---------------------------------------------------------------------------
+
+
+def test_send_empty_rejected(api):
+    assert api.send("   ") is False
+
+
+def test_send_chat_pushes_events(api, monkeypatch):
+    from codeagent.core.types import LLMResponse
+
+    class FakeProvider:
+        name = "fake"
+        model = "fake-model"
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            return LLMResponse(content="你好，石头")
+
+    monkeypatch.setattr(
+        "codeagent.desktop.api.parse_provider_spec",
+        lambda *a, **k: FakeProvider(),
+    )
+    assert api.send("你好") is True
+    done = wait_for(api._window, "done")
+    assert done["text"] == "你好，石头"
+    assert "text" in api._window.kinds()
+
+
+def test_send_error_pushes_error(api, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("连接失败")
+
+    monkeypatch.setattr("codeagent.desktop.api.parse_provider_spec", boom)
+    api.send("hi")
+    err = wait_for(api._window, "error")
+    assert "连接失败" in err["text"]
+
+
+def test_reset_clears_agent(api):
+    class StubAgent:
+        reset_called = False
+
+        def reset(self):
+            self.reset_called = True
+
+    stub = StubAgent()
+    api._agent = stub
+    assert api.reset() is True
+    assert stub.reset_called
+    assert api._agent is None
+
+
+# ---------------------------------------------------------------------------
+# leader command center
+# ---------------------------------------------------------------------------
+
+
+def test_leader_workers_default(api):
+    roster = api._leader_workers()
+    assert len(roster) == 1
+    assert roster[0].provider == "ollama"
+
+
+def test_leader_workers_from_json(api):
+    api.config.workers_json = json.dumps([
+        {"name": "claude", "provider": "anthropic", "description": "代码"},
+        {"name": "qwen", "provider": "ollama", "model": "qwen2.5-coder:7b"},
+    ])
+    roster = api._leader_workers()
+    assert [w.name for w in roster] == ["claude", "qwen"]
+    assert roster[1].model == "qwen2.5-coder:7b"
+
+
+def test_leader_workers_invalid_json_falls_back(api):
+    api.config.workers_json = "{broken"
+    assert len(api._leader_workers()) == 1
+
+
+def test_lead_pushes_task_and_done(api, monkeypatch):
+    from codeagent.core.types import LLMResponse
+    from codeagent.llm.base import LLMProvider
+
+    class FakePlanner(LLMProvider):
+        name = "fake"
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            # planner call → one assignment; worker call → answer
+            if "任务拆解" in (system or ""):
+                return LLMResponse(content=json.dumps({
+                    "assignments": [{"worker": "worker", "task": "查一下"}]
+                }))
+            return LLMResponse(content="查完了")
+
+    monkeypatch.setattr(
+        "codeagent.desktop.api.parse_provider_spec",
+        lambda *a, **k: FakePlanner(model="fake"),
+    )
+    monkeypatch.setattr(
+        "codeagent.leader.leader.build_worker_agent",
+        lambda config, root, **kw: __import__("codeagent").Agent(
+            provider=FakePlanner(model="w"), tools=None
+        ),
+    )
+    assert api.lead("检查项目") is True
+    done = wait_for(api._window, "lead_done")
+    assert "查完了" in done["text"]
+    tasks = [c for c in api._window.calls if c["kind"] == "task"]
+    assert any(t["status"] == "running" for t in tasks)
+    assert any(t["status"] == "done" for t in tasks)
+
+
+def test_get_runs_empty(api):
+    assert api.get_runs() == []
+
+
+# ---------------------------------------------------------------------------
+# memory / skills / logs
+# ---------------------------------------------------------------------------
+
+
+def test_memory_add_list_search_delete(api):
+    assert api.add_memory("用户喜欢 pytest") is True
+    items = api.get_memories()
+    assert any("pytest" in m["content"] for m in items)
+    hits = api.get_memories("pytest")
+    assert hits
+    assert api.delete_memory(items[0]["id"]) is True
+    assert api.get_memories() == []
+
+
+def test_get_skills_empty(api):
+    assert api.get_skills() == []
+
+
+def test_get_skills_lists_pack(api, tmp_path):
+    skills_dir = tmp_path / "skills"
+    pack = skills_dir / "demo"
+    pack.mkdir(parents=True)
+    (pack / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: 演示技能\n---\n\n内容\n", encoding="utf-8"
+    )
+    skills = api.get_skills()
+    assert skills and skills[0]["name"] == "demo"
+
+
+def test_get_harnesses_shape(api):
+    for h in api.get_harnesses():
+        assert {"name", "binary", "available"} <= set(h)
+
+
+def test_get_logs_returns_list(api):
+    assert isinstance(api.get_logs(10), list)
+
+
+# ---------------------------------------------------------------------------
+# UI shell
+# ---------------------------------------------------------------------------
+
+
+def test_ui_has_all_pages_and_bridge():
+    for page in ("dashboard", "chat", "lead", "memory", "skills", "logs",
+                 "settings", "models", "router", "permissions", "versions",
+                 "automation", "cron", "learning", "evolution", "project"):
+        assert f'id="page-{page}"' in HTML
+    assert "pywebview.api.send" in HTML
+    assert "pywebview.api.lead" in HTML
+    assert "pywebview.api.get_overview" in HTML
+    assert "pywebview.api.get_memories" in HTML
+    assert "pywebview.api.get_skills" in HTML
+    assert "pywebview.api.get_logs" in HTML
+    assert "pywebview.api.get_models_page" in HTML
+    assert "pywebview.api.save_mixture" in HTML
+    assert "pywebview.api.route_sandbox" in HTML
+    assert "pywebview.api.set_permission_level" in HTML
+    assert "pywebview.api.resolve_confirm" in HTML
+    assert "pywebview.api.get_versions" in HTML
+    assert "pywebview.api.send_feedback" in HTML
+    assert "pywebview.api.get_workflows" in HTML
+    assert "pywebview.api.add_cron_job" in HTML
+    assert "pywebview.api.learn_now" in HTML
+    assert "pywebview.api.run_evolution_now" in HTML
+    assert "pywebview.api.set_patch_status" in HTML
+    assert "pywebview.api.approve_skill" in HTML
+    assert "pywebview.api.get_nav_status" in HTML
+    assert "window._onEvent" in HTML
+
+
+# ---------------------------------------------------------------------------
+# mixtures (LCA 聚合池)
+# ---------------------------------------------------------------------------
+
+
+def _two_members(api):
+    ep = api.assets.endpoints[0]
+    r = api.add_api_model("https://api.deepseek.com/v1", "deepseek-chat")
+    return [f"local:qwen3:8b@{ep.id}", f"api:{r['id']}"]
+
+
+def test_mixture_create_requires_two_members(api):
+    members = _two_members(api)
+    r = api.save_mixture("测试池", "weighted", members[:1])
+    assert not r["ok"] and "至少" in r["error"]
+    r = api.save_mixture("", "weighted", members)
+    assert not r["ok"]
+    r = api.save_mixture("测试池", "weighted", members)
+    assert r["ok"]
+    mixes = api.get_model_assets()["mixtures"]
+    assert len(mixes) == 1
+    assert mixes[0]["name"] == "测试池"
+    assert mixes[0]["strategy"] == "weighted"
+    assert len(mixes[0]["members"]) == 2
+    assert mixes[0]["fallback"]  # 默认第一个成员
+
+
+def test_mixture_edit_reset_fallback_and_delete(api):
+    members = _two_members(api)
+    api.save_mixture("池子", "cascade", members)
+    mix = api.assets.mixtures[0]
+    # 编辑：换掉成员，兜底被移出时重置
+    r = api.save_mixture("池子v2", "weighted", [members[1], members[0]], mix.id)
+    assert r["ok"]
+    assert api.assets.mixtures[0].name == "池子v2"
+    assert api.delete_mixture(mix.id)
+    assert api.assets.mixtures == []
+
+
+def test_mixture_active_builds_aggregate(api):
+    members = _two_members(api)
+    api.save_mixture("混合", "cascade", members)
+    mix = api.assets.mixtures[0]
+    api.set_active_model(f"mix:{mix.id}")
+    provider = api._build_provider()
+    assert provider.name == "aggregate"
+    assert len(provider.providers) == 2
+    assert "混合" in api._active_label()
+
+
+def test_mixture_toggle_persists(api):
+    members = _two_members(api)
+    api.save_mixture("开关池", "weighted", members)
+    mix = api.assets.mixtures[0]
+    assert api.toggle_mixture(mix.id, False)
+    from codeagent.desktop.models import ModelAssets
+    assert ModelAssets.load().mixtures[0].enabled is False
+
+
+# ---------------------------------------------------------------------------
+# router (LCA 路由引擎)
+# ---------------------------------------------------------------------------
+
+
+def test_router_rule_crud_and_move(api):
+    members = _two_members(api)
+    api.save_mixture("池", "weighted", members)
+    target = f"mix:{api.assets.mixtures[0].id}"
+    assert api.add_route_rule("代码调试", "报错,bug", target)["ok"]
+    assert api.add_route_rule("兜底", "", target)["ok"]
+    rules = api.get_router()["rules"]
+    assert len(rules) == 2
+    assert rules[0]["target_label"].startswith("聚合池")
+    # move: 兜底 initially same priority; moving first down swaps order
+    first = rules[0]["id"]
+    assert api.move_route_rule(first, 1)
+    assert api.get_router()["rules"][1]["id"] == first
+    assert api.toggle_route_rule(first, False)
+    assert api.delete_route_rule(first)
+    assert len(api.get_router()["rules"]) == 1
+
+
+def test_router_sandbox_keyword_hit(api):
+    members = _two_members(api)
+    api.save_mixture("调试池", "rule", members)
+    target = f"mix:{api.assets.mixtures[0].id}"
+    api.add_route_rule("代码调试", "报错,bug", target)
+    r = api.route_sandbox("帮我看看这个报错")
+    assert r["ok"]
+    assert r["taskType"] == "代码调试"
+    assert r["strategy"] == "规则直通"
+    assert "调试池" in r["chosen"]
+
+
+def test_router_sandbox_fallback_rule(api):
+    members = _two_members(api)
+    target = f"api:{api.assets.api_models[0].id}"
+    api.add_route_rule("兜底", "", target)
+    r = api.route_sandbox("随便聊聊")
+    assert r["strategy"] == "兜底分发"
+    assert r["cost"] == 0.005
+
+
+def test_router_sandbox_default_direct(api):
+    r = api.route_sandbox("你好")
+    assert r["strategy"] == "默认直连"
+    assert r["chosen"] == "（当前激活模型）"
+
+
+def test_router_weights_clamped(api):
+    w = api.save_route_weights(150, -5, 60)
+    assert w == {"cost": 100, "quality": 0, "local_first": 60}
+    from codeagent.desktop.router import RouterStore
+    assert RouterStore.load().weights.cost == 100
+
+
+def test_chat_routes_through_rule(api, monkeypatch):
+    """命中规则时，对话真实走规则目标而非激活模型。"""
+    from codeagent.core.types import LLMResponse
+
+    seen = {}
+
+    class FakeProvider:
+        def __init__(self, model):
+            self.model = model
+            self.name = "fake"
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            seen["model"] = self.model
+            return LLMResponse(content="ok")
+
+    monkeypatch.setattr(
+        "codeagent.desktop.api.parse_provider_spec",
+        lambda *a, **k: FakeProvider("legacy"),
+    )
+    monkeypatch.setattr(
+        "codeagent.desktop.models.OllamaProvider",
+        lambda model, base_url: FakeProvider(model),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "codeagent.llm.ollama.OllamaProvider",
+        lambda model, base_url: FakeProvider(model),
+    )
+    ep = api.assets.endpoints[0]
+    api.add_route_rule("代码调试", "报错", f"local:routed-model@{ep.id}")
+    assert api.send("这里有报错") is True
+    wait_for(api._window, "done")
+    assert seen["model"] == "routed-model"
+    # 状态栏提示了路由决策
+    assert any("路由" in c.get("text", "") for c in api._window.calls
+               if c["kind"] == "status")
+
+
+# ---------------------------------------------------------------------------
+# permissions (LCA 权限控制)
+# ---------------------------------------------------------------------------
+
+
+def test_permissions_matrix_and_levels(api):
+    data = api.get_permissions()
+    caps = {c["id"]: c for c in data["capabilities"]}
+    assert {"fs_read", "fs_write", "shell", "network", "delegate"} <= set(caps)
+    assert caps["fs_write"]["level"] == "confirm"  # default
+    r = api.set_permission_level("fs_write", "off")
+    assert r["ok"]
+    assert api.get_permissions()["capabilities"][1]["level"] == "off"
+    assert not api.set_permission_level("fs_write", "bogus")["ok"]
+    # 审计留痕
+    audit = api.get_permissions()["audit"]
+    assert any("文件写入" in a["action"] for a in audit)
+
+
+def test_permission_policy_mapping(api):
+    import asyncio
+    from codeagent.core.types import ToolCall
+    from codeagent.desktop.permissions import build_policy
+    from codeagent.security.policy import ApprovalDecision
+
+    levels = {"fs_read": "full", "fs_write": "off", "shell": "readonly",
+              "network": "full", "delegate": "off"}
+    policy = build_policy(levels, None)
+
+    async def check(tool):
+        return await policy.authorize(ToolCall(name=tool, arguments={}), 0)
+
+    assert asyncio.run(check("read_file")) == ApprovalDecision.APPROVE
+    assert asyncio.run(check("write_file")) == ApprovalDecision.DENY
+    assert asyncio.run(check("bash")) == ApprovalDecision.DENY
+    assert asyncio.run(check("web_fetch")) == ApprovalDecision.APPROVE
+    assert asyncio.run(check("delegate")) == ApprovalDecision.DENY
+    # 拒绝已记入审计
+    from codeagent.desktop.permissions import read_audit
+    assert any("write_file" in a["action"] for a in read_audit())
+
+
+def test_confirmer_approve_and_timeout(api):
+    import asyncio
+    import threading
+    from codeagent.core.types import ToolCall
+    from codeagent.desktop.permissions import Confirmer
+    from codeagent.security.policy import ApprovalDecision, RiskLevel
+
+    pushes = []
+    confirmer = Confirmer(lambda kind, data: pushes.append((kind, data)))
+    call = ToolCall(name="bash", arguments={"command": "ls"})
+
+    result = {}
+
+    def ask():
+        result["d"] = confirmer.ask(call, RiskLevel.EXECUTE)
+
+    t = threading.Thread(target=ask)
+    t.start()
+    # 等 push 到达后批准
+    deadline = time.time() + 5
+    while not pushes and time.time() < deadline:
+        time.sleep(0.02)
+    assert pushes and pushes[0][0] == "confirm"
+    cid = pushes[0][1]["id"]
+    assert confirmer.resolve(cid, True)
+    t.join(timeout=5)
+    assert result["d"] == ApprovalDecision.APPROVE
+
+    # 超时路径：把超时缩到 0.1s
+    confirmer.TIMEOUT_S = 0.1
+    d = confirmer.ask(call, RiskLevel.EXECUTE)
+    assert d == ApprovalDecision.DENY
+
+
+def test_versions_page_data(api):
+    v = api.get_versions()
+    assert v["current"]["version"]
+    assert v["current"]["points"]
+    assert isinstance(v["history"], list) and v["history"]
+
+
+# ---------------------------------------------------------------------------
+# activity stream & self-learning (LCA 卷三 · 自我学习)
+# ---------------------------------------------------------------------------
+
+
+def test_feedback_writes_learn_activity(api):
+    assert api.send_feedback(True)["ok"]
+    assert api.send_feedback(False)["ok"]
+    entries = api.get_activity()
+    learns = [e for e in entries if e["kind"] == "learn"]
+    assert any("正向" in e["text"] for e in learns)
+    assert any("点踩" in e["text"] for e in learns)
+
+
+def test_learn_now_requires_samples(api):
+    r = api.learn_now()
+    assert not r["ok"] and "反馈样本" in r["error"]
+
+
+def test_learn_now_upserts_today(api):
+    api.send_feedback(True)
+    api.send_feedback(True)
+    api.send_feedback(False)
+    r = api.learn_now()
+    assert r["ok"] and r["samples"] == 3 and r["accuracy"] == 67
+    data = api.get_learning()
+    assert data["total_samples"] == 3
+    assert data["records"][-1]["thumbs_up"] == 2
+    # 同日覆盖而非追加
+    api.send_feedback(True)
+    r2 = api.learn_now()
+    assert r2["samples"] == 4
+    assert len(api.get_learning()["records"]) == 1
+
+
+def test_learn_now_low_accuracy_shifts_local_first(api):
+    api.send_feedback(False)
+    api.send_feedback(False)
+    api.send_feedback(True)
+    before = api.router.weights.local_first
+    r = api.learn_now()
+    assert r["ok"] and r["accuracy"] == 33
+    assert api.router.weights.local_first == min(100, before + 5)
+
+
+# ---------------------------------------------------------------------------
+# automation workflows (LCA 卷三 · 自动化)
+# ---------------------------------------------------------------------------
+
+
+def _wf_steps():
+    return [{"name": "采集", "tool": ""}, {"name": "汇总", "tool": ""}]
+
+
+def test_workflow_crud(api):
+    assert not api.add_workflow("", "", "manual", _wf_steps())["ok"]
+    assert not api.add_workflow("x", "", "manual", [])["ok"]
+    r = api.add_workflow("巡检", "每日代码巡检", "cron", _wf_steps())
+    assert r["ok"]
+    wfs = api.get_workflows()
+    assert len(wfs) == 1 and wfs[0]["name"] == "巡检"
+    assert wfs[0]["trigger"] == "cron"
+    assert wfs[0]["step_labels"] == ["当前激活模型", "当前激活模型"]
+    assert api.delete_workflow(wfs[0]["id"])
+    assert api.get_workflows() == []
+
+
+def test_workflow_run_executes_steps_and_audits(api, monkeypatch):
+    seen = []
+
+    def fake_run_step(step, context):
+        seen.append((step.name, context))
+        return f"产出-{step.name}"
+
+    api.runner._run_step = fake_run_step
+    api.add_workflow("测试流", "", "manual", _wf_steps())
+    wf = api.get_workflows()[0]
+    assert api.run_workflow(wf["id"])["ok"]
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        cur = api.get_workflows()[0]
+        if cur["status"] == "idle" and cur["runs"] == 1:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("workflow did not finish")
+    # 步骤链：第二步拿到第一步的产出作为上下文
+    assert seen[0] == ("采集", "")
+    assert seen[1][0] == "汇总" and "产出-采集" in seen[1][1]
+    assert cur["last_run"] != "-"
+    kinds = [e["text"] for e in api.get_activity() if e["kind"] == "workflow"]
+    assert any("开始执行" in t for t in kinds)
+    assert any("执行完成" in t for t in kinds)
+
+
+def test_workflow_continuous_loops_until_paused(api):
+    rounds = []
+
+    def fake_run_step(step, context):
+        rounds.append(step.name)
+        return "ok"
+
+    api.runner._run_step = fake_run_step
+    import codeagent.desktop.automation as auto
+    auto.CONTINUOUS_DELAY_S = 0.05
+    api.add_workflow("连续流", "", "manual", [{"name": "s", "tool": ""}])
+    wf = api.get_workflows()[0]
+    assert api.set_workflow_continuous(wf["id"], True)
+    api.run_workflow(wf["id"])
+    deadline = time.time() + 5
+    while len(rounds) < 3 and time.time() < deadline:
+        time.sleep(0.05)
+    assert len(rounds) >= 3  # 自动衔接了多轮
+    api.pause_workflow(wf["id"])
+    assert api.get_workflows()[0]["status"] == "paused"
+
+
+def test_workflow_double_start_rejected(api):
+    block = threading.Event()
+
+    def slow_step(step, context):
+        block.wait(2)
+        return "ok"
+
+    api.runner._run_step = slow_step
+    api.add_workflow("慢流", "", "manual", [{"name": "s", "tool": ""}])
+    wf = api.get_workflows()[0]
+    assert api.run_workflow(wf["id"])["ok"]
+    r = api.run_workflow(wf["id"])
+    assert not r["ok"] and "运行中" in r["error"]
+    block.set()
+
+
+# ---------------------------------------------------------------------------
+# cron (LCA 卷三 · 定时任务)
+# ---------------------------------------------------------------------------
+
+
+def test_cron_expression_matching():
+    from codeagent.desktop.cron import cron_matches
+
+    tm = time.struct_time((2026, 8, 31, 8, 0, 0, 0, 243, 0))  # 周一 08:00
+    assert cron_matches("0 8 * * *", tm)
+    assert cron_matches("*/30 * * * *", tm)
+    assert cron_matches("0 8 * * 1", tm)
+    assert not cron_matches("0 9 * * *", tm)
+    assert not cron_matches("0 8 * * 5", tm)
+    assert not cron_matches("bad", tm)
+    assert not cron_matches("61 * * * *", tm)
+
+
+def test_cron_next_run_hint():
+    from codeagent.desktop.cron import next_run_hint
+
+    hint = next_run_hint("*/30 * * * *")
+    assert hint != "待调度器计算"
+    assert len(hint) == len("08-31 09:00")
+
+
+def test_cron_job_crud(api):
+    assert not api.add_cron_job("", "0 8 * * *", "x")["ok"]
+    assert not api.add_cron_job("x", "0 8", "x")["ok"]  # 非五字段
+    r = api.add_cron_job("每晚备份", "0 2 * * *", "备份对话")
+    assert r["ok"]
+    jobs = api.get_cron()["jobs"]
+    assert len(jobs) == 1 and jobs[0]["enabled"]
+    assert jobs[0]["next_run"] != "待调度器计算"
+    assert api.toggle_cron_job(jobs[0]["id"], False)
+    assert not api.get_cron()["jobs"][0]["enabled"]
+    assert api.delete_cron_job(jobs[0]["id"])
+    assert api.get_cron()["jobs"] == []
+
+
+def test_cron_scheduler_tick_fires_due_job(api):
+    fired = []
+    api.scheduler._run_action = lambda job: fired.append(job.id) or True
+    api.add_cron_job("每分钟", "* * * * *", "心跳")
+    hit = api.scheduler.tick()
+    assert len(hit) == 1 and fired
+    job = api.get_cron()["jobs"][0]
+    assert job["last_result"] == "success"
+    assert job["last_run"] != "-"
+    # 同一分钟不重复触发
+    assert api.scheduler.tick() == []
+
+
+def test_cron_scheduler_disabled_job_skipped(api):
+    api.scheduler._run_action = lambda job: True
+    api.add_cron_job("停用任务", "* * * * *", "x")
+    job = api.get_cron()["jobs"][0]
+    api.toggle_cron_job(job["id"], False)
+    assert api.scheduler.tick() == []
+
+
+def test_cron_evolution_job_fires(api):
+    api.scheduler._run_action = lambda job: True
+    api.evolution.settings.enabled = True
+    api.evolution.settings.cron = "* * * * *"
+    hit = api.scheduler.tick()
+    assert "__evolution__" in hit
+    assert api.evolution.runs  # 进化作业真的跑了一轮
+
+
+# ---------------------------------------------------------------------------
+# evolution (LCA 卷三 · 进化日志)
+# ---------------------------------------------------------------------------
+
+
+def test_evolution_run_produces_patches(api):
+    r = api.run_evolution_now()
+    assert r["ok"] and r["patches"] >= 1
+    data = api.get_evolution()
+    assert len(data["runs"]) == 1
+    run = data["runs"][0]
+    assert [p["name"] for p in run["phases"]] == list(
+        ["复盘员", "归因员", "路由师", "记忆官", "教官"])
+    # L0 + autoApplyL01 → 直接 active
+    assert any(p["status"] == "active" for p in data["patches"])
+
+
+def test_evolution_l2_patch_needs_approval(api):
+    # 跑多轮直到 L2 补丁（凭证类）出现
+    for _ in range(3):
+        api.run_evolution_now()
+    patches = api.get_evolution()["patches"]
+    l2 = next((p for p in patches if p["level"] == "L2"), None)
+    assert l2 is not None
+    assert l2["status"] == "pending"  # L2 必须人工批准
+
+
+def test_patch_state_machine(api):
+    api.run_evolution_now()
+    patch = api.get_evolution()["patches"][0]
+    assert api.set_patch_status(patch["id"], "disabled")["ok"]
+    assert api.get_evolution()["patches"][0]["status"] == "disabled"
+    assert api.set_patch_status(patch["id"], "active")["ok"]
+    assert api.set_patch_status(patch["id"], "rolledback")["ok"]
+    # 回滚是终态，但接口幂等
+    assert not api.set_patch_status(patch["id"], "bogus")["ok"]
+    # 审计：回滚记 denied
+    from codeagent.desktop.permissions import read_audit
+    audit = read_audit(20)
+    rollback = next(a for a in audit if "回滚" in a["action"])
+    assert rollback["result"] == "denied"
+
+
+def test_active_patches_injected_into_settings(api):
+    api.run_evolution_now()
+    settings = api._settings_with_patches()
+    assert settings.instructions  # 有补丁注入
+    api.settings.instructions = "原有说明"
+    settings = api._settings_with_patches()
+    assert "原有说明" in settings.instructions  # 不覆盖用户个性化
+
+
+def test_approve_skill_becomes_workflow(api):
+    api.run_evolution_now()
+    api.run_evolution_now()  # 第二轮才草拟技能
+    runs = api.get_evolution()["runs"]
+    draft_run = next((r for r in runs if r["skill_drafts"]), None)
+    assert draft_run is not None
+    draft = draft_run["skill_drafts"][0]
+    r = api.approve_skill(draft_run["id"], draft["id"])
+    assert r["ok"]
+    wfs = api.get_workflows()
+    assert any(w["name"] == draft["name"] and w["trigger"] == "cron"
+               for w in wfs)
+    # 重复批准被拒
+    assert not api.approve_skill(draft_run["id"], draft["id"])["ok"]
+
+
+def test_evolution_settings_gates(api):
+    r = api.save_evolution_settings(False, True, True, "0 3 * * *")
+    assert r["ok"]
+    s = api.get_evolution()["settings"]
+    assert not s["enabled"] and s["cron"] == "0 3 * * *"
+    # 非法 cron 不覆盖
+    api.save_evolution_settings(True, True, True, "bad")
+    assert api.get_evolution()["settings"]["cron"] == "0 3 * * *"
+
+
+def test_nav_status(api):
+    s = api.get_nav_status()
+    assert set(s) == {"running", "online", "mixtures"}
+
+
+# ---------------------------------------------------------------------------
+# theme (浅色主题)
+# ---------------------------------------------------------------------------
+
+
+def test_theme_persists_in_config(api, tmp_path):
+    api.save_config({"theme": "light"})
+    assert api.config.theme == "light"
+    assert DesktopConfig.load(tmp_path / "desktop.json").theme == "light"
+    api.save_config({"theme": "auto"})
+    assert api.config.theme == "auto"
+    # 非法值回退深色
+    api.save_config({"theme": "neon"})
+    assert api.config.theme == "dark"
+
+
+def test_ui_has_light_theme_and_toggle():
+    assert "body.light" in HTML
+    assert "codeagent-theme" in HTML
+    # 主题切换位于偏好设置页：深色 / 浅色 / 自动跟随系统 三档分段控件
+    assert 'id="themeTabs"' in HTML
+    assert 'data-theme="dark"' in HTML
+    assert 'data-theme="light"' in HTML
+    assert 'data-theme="auto"' in HTML
+    assert "setTheme" in HTML
+    assert "prefers-color-scheme: light" in HTML
+
+
+# ---------------------------------------------------------------------------
+# chat composer: attachments / thinking / copy-share
+# ---------------------------------------------------------------------------
+
+
+def test_attachment_text_file(tmp_path):
+    from codeagent.desktop.attachments import read_attachment
+
+    f = tmp_path / "notes.md"
+    f.write_text("# 标题\n内容", encoding="utf-8")
+    info = read_attachment(f)
+    assert info["kind"] == "text"
+    assert "标题" in info["text"]
+
+
+def test_attachment_docx_stdlib_extraction(tmp_path):
+    import zipfile
+    from codeagent.desktop.attachments import read_attachment
+
+    f = tmp_path / "doc.docx"
+    with zipfile.ZipFile(f, "w") as zf:
+        zf.writestr("word/document.xml",
+                    "<w:p><w:t>你好世界</w:t></w:p><w:p><w:t>第二段</w:t></w:p>")
+    info = read_attachment(f)
+    assert info["kind"] == "docx"
+    assert "你好世界" in info["text"] and "第二段" in info["text"]
+
+
+def test_attachment_binary_and_image_fallback(tmp_path):
+    from codeagent.desktop.attachments import read_attachment
+
+    img = tmp_path / "p.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+    info = read_attachment(img)
+    assert info["kind"] == "image" and not info["text"] and info["note"]
+
+    blob = tmp_path / "d.bin"
+    blob.write_bytes(bytes(range(256)))
+    info = read_attachment(blob)
+    assert info["kind"] == "binary" and info["note"]
+
+
+def test_attachment_long_text_capped(tmp_path):
+    from codeagent.desktop.attachments import MAX_CHARS, read_attachment
+
+    f = tmp_path / "big.txt"
+    f.write_text("x" * (MAX_CHARS + 5000), encoding="utf-8")
+    info = read_attachment(f)
+    assert len(info["text"]) == MAX_CHARS
+    assert "截取" in info["note"]
+
+
+def test_format_attachments():
+    from codeagent.desktop.attachments import format_attachments
+
+    block = format_attachments([
+        {"name": "a.txt", "size": "3 B", "text": "hello", "note": ""},
+        {"name": "b.png", "size": "1 KB", "text": "", "note": "图片文件"},
+    ])
+    assert "【附件：a.txt" in block and "hello" in block
+    assert "b.png" in block and "图片文件" in block
+
+
+def test_send_combines_attachments(api):
+    captured = {}
+    orig_run = api._run_chat
+    api._run_chat = lambda text: (captured.setdefault("text", text),
+                                  setattr(api, "_busy", False))
+    api._attachments = [{"name": "a.txt", "size": "3 B", "text": "文件内容",
+                         "note": ""}]
+    assert api.send("看看这个") is True
+    assert "文件内容" in captured["text"] and "看看这个" in captured["text"]
+    assert api._attachments == []
+    api._run_chat = orig_run
+
+
+def test_send_attachment_only_no_text(api):
+    api._run_chat = lambda text: setattr(api, "_busy", False)
+    api._attachments = [{"name": "a.txt", "size": "3 B", "text": "x", "note": ""}]
+    assert api.send("") is True  # 仅附件也可发送
+    assert api._attachments == []
+
+
+def test_remove_attachment(api):
+    api._attachments = [{"name": "a"}, {"name": "b"}]
+    rest = api.remove_attachment(0)
+    assert [a["name"] for a in rest] == ["b"]
+
+
+def test_copy_text_uses_system_clipboard(api):
+    assert api.copy_text("hello 剪贴板") is True  # macOS pbcopy
+
+
+def test_thinking_config_validation(api):
+    api.save_config({"thinking": "high"})
+    assert api.config.thinking == "high"
+    api.save_config({"thinking": "extreme"})
+    assert api.config.thinking == "medium"
+
+
+def test_thinking_injected_into_settings(api):
+    api.save_config({"thinking": "high"})
+    s = api._settings_with_patches()
+    assert "思考强度=高" in s.instructions
+    api.save_config({"thinking": "low"})
+    assert "思考强度=低" in api._settings_with_patches().instructions
+
+
+def test_ui_chat_composer_features():
+    assert 'id="attBtn"' in HTML and 'id="attRow"' in HTML
+    assert 'id="thinkingSel"' in HTML
+    assert 'id="modelPicker"' in HTML  # 模型选择器在输入区工具栏
+    assert "msg-actions" in HTML and "copy_text" in HTML
+    assert "export_message" in HTML
+    assert "pick_attachments" in HTML
+
+
+# ---------------------------------------------------------------------------
+# theme startup injection（重启后主题保持）
+# ---------------------------------------------------------------------------
+
+
+def test_themed_html_injects_light(tmp_path, monkeypatch):
+    import codeagent.desktop.api as api_mod
+    from codeagent.desktop.app import _themed_html
+
+    monkeypatch.setattr(api_mod, "DESKTOP_CONFIG_PATH", tmp_path / "d.json")
+    DesktopConfig(theme="light").save(tmp_path / "d.json")
+    assert '<body class="light">' in _themed_html()
+
+    DesktopConfig(theme="dark").save(tmp_path / "d.json")
+    assert '<body class="light">' not in _themed_html()
+
+
+def test_themed_html_auto_follows_system(tmp_path, monkeypatch):
+    import codeagent.desktop.api as api_mod
+    import codeagent.desktop.app as app_mod
+
+    monkeypatch.setattr(api_mod, "DESKTOP_CONFIG_PATH", tmp_path / "d.json")
+    DesktopConfig(theme="auto").save(tmp_path / "d.json")
+    monkeypatch.setattr(app_mod, "_system_light", lambda: True)
+    assert '<body class="light">' in app_mod._themed_html()
+    monkeypatch.setattr(app_mod, "_system_light", lambda: False)
+    assert '<body class="light">' not in app_mod._themed_html()
+
+
+def test_ui_theme_storage_is_fault_tolerant():
+    # localStorage 抛异常也不能阻断保存：全部走安全包装
+    assert "storeSet(THEME_KEY,t)" in HTML
+    assert "try{localStorage" in HTML or "catch(e)" in HTML
+    # 启动时无条件以服务端配置为准
+    assert "applyTheme(st.config.theme" in HTML
+
+
+# ---------------------------------------------------------------------------
+# detect_service（自动识别必须带 Key）
+# ---------------------------------------------------------------------------
+
+
+class _FakeResp:
+    def __init__(self, status, payload=None):
+        self.status_code = status
+        self._payload = payload or {}
+
+    def json(self):
+        return self._payload
+
+
+class _FakeClient:
+    """记录请求头并返回脚本化响应的 httpx.AsyncClient 替身。"""
+
+    script = {}   # url_suffix -> _FakeResp | Exception
+    seen = []     # (url, headers)
+
+    def __init__(self, **kw):
+        self.headers = kw.get("headers") or {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url):
+        _FakeClient.seen.append((url, dict(self.headers)))
+        for suffix, outcome in _FakeClient.script.items():
+            if url.endswith(suffix):
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+        raise ConnectionError("no script")
+
+
+def _patch_client(monkeypatch, script):
+    import httpx
+    from codeagent.desktop import models as m
+
+    _FakeClient.script = script
+    _FakeClient.seen = []
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    return m
+
+
+def test_detect_requires_key_hint(monkeypatch):
+    m = _patch_client(monkeypatch, {"/models": _FakeResp(401)})
+    r = asyncio.run(m.detect_service("https://api.deepseek.com/v1"))
+    assert r["kind"] == "unknown" and "API Key" in r["error"]
+
+
+def test_detect_sends_bearer_key(monkeypatch):
+    m = _patch_client(monkeypatch, {
+        "/models": _FakeResp(200, {"data": [{"id": "deepseek-chat"}]}),
+    })
+    r = asyncio.run(m.detect_service("https://api.deepseek.com/v1", "sk-x"))
+    assert r["kind"] == "openai" and r["models"] == ["deepseek-chat"]
+    assert _FakeClient.seen[0][1]["Authorization"] == "Bearer sk-x"
+
+
+def test_detect_bad_key_message(monkeypatch):
+    m = _patch_client(monkeypatch, {"/models": _FakeResp(403)})
+    r = asyncio.run(m.detect_service("https://api.x.com/v1", "bad"))
+    assert "鉴权失败" in r["error"]
+
+
+def test_detect_v1_fallback(monkeypatch):
+    m = _patch_client(monkeypatch, {
+        "/v1/models": _FakeResp(200, {"data": [{"id": "qwen-max"}]}),
+    })
+    # 用户填的是根域名，无 /v1
+    r = asyncio.run(m.detect_service("https://dashscope.aliyuncs.com", "sk-x"))
+    assert r["kind"] == "openai" and r["models"] == ["qwen-max"]
+
+
+def test_detect_ollama_fallback(monkeypatch):
+    m = _patch_client(monkeypatch, {
+        "/api/tags": _FakeResp(200, {"models": [{"name": "qwen3:8b"}]}),
+    })
+    r = asyncio.run(m.detect_service("http://localhost:11434"))
+    assert r["kind"] == "ollama" and r["models"] == ["qwen3:8b"]
+
+
+def test_ui_detect_fills_model_dropdown():
+    # 识别后模型填进下拉菜单供用户选择（不再是弹窗）
+    assert "modelDialog" not in HTML
+    assert '<select id="am_model"' in HTML
+    assert "先点「自动识别」列出全部模型" in HTML
+    assert "am_model_wrap" in HTML
+    assert "请从下拉菜单选择" in HTML
+    # 识别失败降级为手动输入框
+    assert "模型名（手动填写）" in HTML
+
+
+def test_detect_timeout_error_is_actionable(monkeypatch):
+    import httpx
+    m = _patch_client(monkeypatch, {"/models": httpx.ConnectTimeout("")})
+    # ConnectTimeout 的 str() 为空，也必须给出可读提示
+    r = asyncio.run(m.detect_service("https://openai.app.msh.team/v1", "sk-x"))
+    assert r["kind"] == "unknown"
+    assert "ConnectTimeout" in r["error"] and "VPN" in r["error"]
+
+
+def test_detect_moonshot_alt_host_fallback(monkeypatch):
+    # .cn 鉴权失败 → 自动用同一把 Key 重试 .ai，成功后回填新 base_url
+    m = _patch_client(monkeypatch, {
+        "api.moonshot.cn/v1/models": _FakeResp(401),
+        "api.moonshot.ai/v1/models": _FakeResp(200, {"data": [{"id": "kimi-k2"}]}),
+    })
+    r = asyncio.run(m.detect_service("https://api.moonshot.cn/v1", "sk-x"))
+    assert r["kind"] == "openai" and r["models"] == ["kimi-k2"]
+    assert r["base_url"] == "https://api.moonshot.ai/v1"
+    assert "已自动切换" in r["note"]
+
+
+def test_detect_no_alt_fallback_without_key(monkeypatch):
+    # 无 Key 的 401 不触发换站（应先提示填 Key）
+    m = _patch_client(monkeypatch, {"/models": _FakeResp(401)})
+    r = asyncio.run(m.detect_service("https://api.moonshot.cn/v1"))
+    assert r["kind"] == "unknown" and "API Key" in r["error"]
+
+
+# ---------------------------------------------------------------------------
+# projects（项目工作区：文件夹 + 对话持久化）
+# ---------------------------------------------------------------------------
+
+
+def test_project_create_makes_folder(api, tmp_path):
+    r = api.create_project("爬虫项目", str(tmp_path / "base"))
+    assert r["ok"]
+    folder = tmp_path / "base" / "爬虫项目"
+    assert folder.is_dir()
+    assert (folder / "project.json").is_file()
+    assert (folder / "conversations").is_dir()
+    assert (folder / "files").is_dir()
+    # 工作根目录切到项目文件夹
+    assert api.root == folder
+    assert api.projects.active == r["project"]["id"]
+
+
+def test_project_folder_name_dedup(api, tmp_path):
+    api.create_project("重名", str(tmp_path / "b"))
+    r2 = api.create_project("重名", str(tmp_path / "b"))
+    assert (tmp_path / "b" / "重名-2").is_dir()
+    assert r2["project"]["path"].endswith("重名-2")
+
+
+def test_project_switch_changes_root(api, tmp_path):
+    r1 = api.create_project("P1", str(tmp_path / "b"))
+    r2 = api.create_project("P2", str(tmp_path / "b"))
+    assert api.root.name == "P2"
+    api.switch_project(r1["project"]["id"])
+    assert api.root.name == "P1"
+    assert api._conv_id is None  # 切换后开新对话
+
+
+def test_project_delete_keeps_folder(api, tmp_path):
+    r = api.create_project("保留我", str(tmp_path / "b"))
+    folder = Path(r["project"]["path"])
+    assert api.delete_project(r["project"]["id"]) is True
+    assert folder.is_dir()  # 文件夹保留
+    assert api.projects.get(r["project"]["id"]) is None
+
+
+def test_conversation_persisted_in_project_folder(api, tmp_path):
+    api.create_project("记录", str(tmp_path / "b"))
+    api.send("你好，记住这句话")
+    wait_for(api._window, "done")
+    proj = api.projects.get(api.projects.active)
+    convs = list((Path(proj.path) / "conversations").glob("*.jsonl"))
+    assert len(convs) == 1
+    content = convs[0].read_text(encoding="utf-8")
+    assert "你好，记住这句话" in content
+    # md 可读版同步生成
+    md = convs[0].with_suffix(".md")
+    assert md.is_file() and "🧑 用户" in md.read_text(encoding="utf-8")
+
+
+def test_conversation_list_and_load(api, tmp_path):
+    api.create_project("历史", str(tmp_path / "b"))
+    api.send("第一条消息")
+    wait_for(api._window, "done")
+    items = api.get_conversations()["items"]
+    assert len(items) == 1 and items[0]["count"] == 2
+    assert "第一条消息" in items[0]["title"]
+    r = api.load_conversation(items[0]["id"])
+    assert r["ok"] and len(r["messages"]) == 2
+    # 载入后续聊：下一条消息带前文上下文
+    captured = {}
+    orig = api._run_chat
+    api._run_chat = lambda t: (captured.setdefault("t", t),
+                               setattr(api, "_busy", False))
+    api.send("继续")
+    assert "本会话之前的对话记录" in captured["t"]
+    api._run_chat = orig
+
+
+def test_new_conversation_starts_fresh(api, tmp_path):
+    api.create_project("多对话", str(tmp_path / "b"))
+    api.send("对话一")
+    wait_for(api._window, "done")
+    api.new_conversation()
+    api.send("对话二")
+    wait_for(api._window, "done")
+    proj = api.projects.get(api.projects.active)
+    convs = list((Path(proj.path) / "conversations").glob("*.jsonl"))
+    assert len(convs) == 2  # 所有对话都保留
+
+
+def test_ui_has_projects_surface():
+    assert 'id="projectList"' in HTML
+    assert 'id="projDialog"' in HTML
+    assert 'id="convPicker"' in HTML and 'id="newConvBtn"' in HTML
+    assert 'id="chatProjSel"' in HTML and 'id="composerProj"' in HTML
+    assert "onChatProject" in HTML and "fillProjectSelects" in HTML
+    assert "createProject" in HTML and "switchProject" in HTML
+    assert "loadConv" in HTML
+    assert 'id="page-project"' in HTML
+    assert 'id="pj_cat"' in HTML
+    assert "loadProjectRecords" in HTML
+    assert "get_project_records" in HTML
+
+
+def test_project_category(api, tmp_path):
+    r = api.create_project("官网", str(tmp_path / "b"), "工作")
+    assert r["project"]["category"] == "工作"
+    r2 = api.create_project("日记", str(tmp_path / "b"), "个人")
+    assert r2["project"]["category"] == "个人"
+    cats = {p["category"] for p in api.get_projects()["projects"]}
+    assert cats == {"工作", "个人"}
+
+
+def test_ensure_default_creates_folder(tmp_path, monkeypatch):
+    from codeagent.desktop.projects import ProjectStore
+    monkeypatch.setattr("codeagent.desktop.projects.DEFAULT_BASE", tmp_path / "base")
+    monkeypatch.setattr("codeagent.desktop.projects.PROJECTS_INDEX", tmp_path / "idx.json")
+    store = ProjectStore()
+    proj = store.ensure_default()
+    assert proj.name == "默认项目"
+    assert Path(proj.path).is_dir()
+    assert (Path(proj.path) / "files").is_dir()
+    assert store.ensure_default().id == proj.id  # 不重复创建
+
+
+def test_attachment_copied_into_project_files(api, tmp_path):
+    api.create_project("附件箱", str(tmp_path / "b"))
+    src = tmp_path / "需求.md"
+    src.write_text("内容", encoding="utf-8")
+    info = api._ingest_attachment(src)
+    dest = Path(info["saved"])
+    assert dest.is_file()
+    assert dest.parent.name == "files"
+    assert dest.read_text(encoding="utf-8") == "内容"
+    rec = api.get_project_records()
+    assert rec["ok"] and any(f["name"] == "需求.md" for f in rec["files"])
+
+
+def test_project_records_lists_conversations(api, tmp_path):
+    from codeagent.desktop.projects import append_message
+
+    api.create_project("记录页", str(tmp_path / "b"), "学习")
+    proj = api.projects.get(api.projects.active)
+    api._conv_id = "20260902-test-1"
+    append_message(proj, api._conv_id, "user", "今天学了什么")
+    append_message(proj, api._conv_id, "assistant", "学了项目分类")
+    rec = api.get_project_records()
+    assert rec["ok"] and rec["project"]["name"] == "记录页"
+    assert rec["conversations"] and "今天学了什么" in rec["conversations"][0]["title"]
+    assert rec["conversations"][0]["count"] == 2

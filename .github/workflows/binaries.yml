@@ -1,0 +1,106 @@
+name: Binaries
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-amd64
+          - os: macos-13
+            target: macos-amd64
+          - os: macos-14
+            target: macos-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          pip install -e ".[anthropic,openai,mcp,voice,desktop]" pyinstaller
+
+      - name: Build CLI binary
+        run: python scripts/build_binary.py
+
+      - name: Build desktop app
+        run: python scripts/build_desktop.py
+
+      - name: Sign & notarize (macOS, when secrets configured)
+        if: runner.os == 'macOS' && vars.MACOS_SIGNING_ENABLED == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: python scripts/sign_macos.py
+
+      - name: Package CLI DMG (macOS)
+        if: runner.os == 'macOS'
+        run: python scripts/build_dmg.py
+
+      - name: Package CLI ZIP (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/binary/codeagent-${{ matrix.target }}.exe -DestinationPath dist/codeagent-${{ matrix.target }}.zip
+
+      - name: Install Inno Setup (Windows installer)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Package desktop Setup.exe (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
+          $ver = (Select-String -Path pyproject.toml -Pattern '^version\s*=' | Select-Object -First 1).Line.Split('"')[1]
+          & $iscc "/DMyAppVersion=$ver" "/Fcodeagent-desktop-${{ matrix.target }}-setup" packaging\windows-setup.iss
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeagent-${{ matrix.target }}
+          path: |
+            dist/binary/codeagent-${{ matrix.target }}*
+            dist/codeagent-${{ matrix.target }}.dmg
+            dist/codeagent-${{ matrix.target }}.zip
+            dist/codeagent-desktop-${{ matrix.target }}.dmg
+            dist/codeagent-desktop-${{ matrix.target }}.zip
+            dist/codeagent-desktop-${{ matrix.target }}-setup.exe
+          if-no-files-found: warn
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+
+      - name: Attach binaries to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            binaries/**/codeagent-*.dmg
+            binaries/**/codeagent-*.zip
+            binaries/**/codeagent-*-setup.exe
+            binaries/**/codeagent-macos-*
+            binaries/**/codeagent-windows-*

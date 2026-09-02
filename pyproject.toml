@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codeagent"
+version = "0.24.0"
+description = "A professional framework for building code development agents with multi-model support"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "stone" }]
+keywords = ["agent", "llm", "coding", "ai", "anthropic", "openai"]
+dependencies = [
+    "pydantic>=2.0",
+    "typer>=0.12",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40"]
+openai = ["openai>=1.0"]
+ollama = ["openai>=1.0"]
+mcp = ["mcp>=1.0", "httpx>=0.27"]
+voice = ["edge-tts>=6.1"]
+voice-full = ["edge-tts>=6.1", "faster-whisper>=1.0", "sounddevice>=0.4", "soundfile>=0.12"]
+scrape = ["scrapling>=0.4", "curl_cffi>=0.7", "playwright>=1.40", "patchright>=1.40"]
+xiaozhi = ["websockets>=12", "httpx>=0.27"]
+ocr = ["pytesseract>=0.3.10", "Pillow>=10.0"]
+ocr-easy = ["easyocr>=1.7"]
+desktop = ["pywebview>=5.0"]
+all = ["anthropic>=0.40", "openai>=1.0", "mcp>=1.0", "httpx>=0.27", "edge-tts>=6.1", "faster-whisper>=1.0", "sounddevice>=0.4", "soundfile>=0.12", "scrapling>=0.4", "curl_cffi>=0.7", "playwright>=1.40", "patchright>=1.40", "pytesseract>=0.3.10", "Pillow>=10.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+packaging = ["pyinstaller>=6.0"]
+
+[project.scripts]
+codeagent = "codeagent.cli.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/codeagent"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
