@@ -5,6 +5,8 @@
 # they are lazily imported at runtime and report clean install hints when
 # missing, so the binary stays small and builds fast.
 
+import sys
+
 from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = (
