@@ -575,7 +575,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
         模型管理</button>
       <button class="navbtn sub" data-page="router">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.5 6H15a3 3 0 0 1 3 3v2M15.5 18H9a3 3 0 0 1-3-3v-2"/></svg>
-        路由引擎</button>
+        自由路由</button>
       <button class="navbtn sub" data-page="permissions">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
         权限控制</button>
@@ -662,7 +662,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
             onchange="onChatProject(this.value)" title="当前对话所属项目"></select>
     <select id="modelPicker" class="toolsel" onchange="pickModel(this.value)"
             title="当前对话模型" style="min-width:180px;max-width:260px">
-      <option value="">选择模型…</option>
+      <option value="route:free">自由路由</option>
     </select>
     <select id="convPicker" class="toolsel" style="max-width:200px"
             onchange="loadConv(this.value)" title="历史对话（保存在项目文件夹）"></select>
@@ -951,7 +951,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 
 <!-- ============ 路由引擎（LCA RouterPage.tsx） ============ -->
 <section class="page" id="page-router">
-  <div class="page-head"><h1>路由引擎</h1>
+  <div class="page-head"><h1>自由路由</h1>
     <span class="sub">规则 → 分类 → 级联 → 学习，四级路由策略在此编排</span></div>
   <div class="page-body"><div class="page-wrap"><div class="grid-32">
     <div>
@@ -2058,8 +2058,9 @@ function renderPicker(a){
   const sel=$('modelPicker'); if(!sel)return;
   const keep=sel.value;
   sel.innerHTML='';
+  const fr=(a.free_route && a.free_route.ref) || 'route:free';
   const opt0=document.createElement('option');
-  opt0.value=''; opt0.textContent='选择模型…';
+  opt0.value=fr; opt0.textContent=(a.free_route && a.free_route.label) || '自由路由';
   sel.appendChild(opt0);
   (a.mixtures||[]).forEach(x=>{
     const o=document.createElement('option');
@@ -2087,7 +2088,7 @@ function renderPicker(a){
   });
   if(a.active && [...sel.options].some(o=>o.value===a.active)) sel.value=a.active;
   else if(keep && [...sel.options].some(o=>o.value===keep)) sel.value=keep;
-  else if(!a.active) sel.selectedIndex=0;
+  else sel.value=fr;
   syncVideoGenBar();
 }
 function pickModel(ref){

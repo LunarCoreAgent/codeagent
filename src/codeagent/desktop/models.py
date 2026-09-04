@@ -143,7 +143,8 @@ class ModelAssets:
     endpoints: list[OllamaEndpoint] = field(default_factory=list)
     api_models: list[ApiModel] = field(default_factory=list)
     mixtures: list[Mixture] = field(default_factory=list)
-    # "local:{model}@{endpoint_id}" | "api:{id}" | "mix:{id}" | "" (legacy)
+    # "local:{model}@{endpoint_id}" | "api:{id}" | "mix:{id}"
+    # | "route:free" 自由路由（路由引擎） | "" 同自由路由（旧配置）
     active: str = ""
 
     @classmethod

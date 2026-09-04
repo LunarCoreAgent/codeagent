@@ -17,6 +17,16 @@ from typing import Any
 
 ROUTER_PATH = Path("~/.codeagent/router.json").expanduser()
 
+# 对话模型选择器里的「自由路由」= 本页路由引擎按规则分发
+FREE_ROUTE_REF = "route:free"
+FREE_ROUTE_LABEL = "自由路由"
+
+
+def is_free_route(ref: str) -> bool:
+    """Empty (legacy) and ``route:free`` both mean: let the routing engine decide."""
+    return (ref or "").strip() in ("", FREE_ROUTE_REF)
+
+
 # 内置任务类型关键词（命中即归类，与 LCA engine 的分类器一致思路）
 BUILTIN_TASK_TYPES: dict[str, list[str]] = {
     "代码调试": ["报错", "错误", "bug", "debug", "修复", "fix", "异常", "traceback", "error"],

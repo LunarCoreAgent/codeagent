@@ -185,7 +185,9 @@ def test_assets_default_endpoint(api):
     assets = api.get_model_assets()
     assert assets["endpoints"]  # default localhost endpoint exists
     assert assets["endpoints"][0]["base"] == "http://localhost:11434"
-    assert assets["active"] == ""
+    assert assets["active"] == "route:free"
+    assert assets["free_route"]["label"] == "自由路由"
+    assert assets["active_label"] == "自由路由"
 
 
 def test_add_and_remove_endpoint(api):
@@ -685,6 +687,47 @@ def test_chat_routes_through_rule(api, monkeypatch):
     # 状态栏提示了路由决策
     assert any("路由" in c.get("text", "") for c in api._window.calls
                if c["kind"] == "status")
+
+
+def test_set_active_free_route(api):
+    r = api.set_active_model("route:free")
+    assert r["ok"]
+    assert r["active_label"] == "自由路由"
+    assert api.assets.active == "route:free"
+    r2 = api.set_active_model("")
+    assert r2["active_label"] == "自由路由"
+    assert api.assets.active == "route:free"
+
+
+def test_pinned_model_skips_free_route(api, monkeypatch):
+    """钉死具体模型时，规则不得改道。"""
+    from codeagent.core.types import LLMResponse
+
+    seen = {}
+
+    class FakeProvider:
+        def __init__(self, model):
+            self.model = model
+            self.name = "fake"
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            seen["model"] = self.model
+            return LLMResponse(content="ok")
+
+    monkeypatch.setattr(
+        "codeagent.desktop.api.parse_provider_spec",
+        lambda *a, **k: FakeProvider("legacy"),
+    )
+    monkeypatch.setattr(
+        "codeagent.llm.ollama.OllamaProvider",
+        lambda model, base_url: FakeProvider(model),
+    )
+    ep = api.assets.endpoints[0]
+    api.set_active_model(f"local:pinned-model@{ep.id}")
+    api.add_route_rule("代码调试", "报错", f"local:routed-model@{ep.id}")
+    assert api.send("这里有报错") is True
+    wait_for(api._window, "done")
+    assert seen["model"] == "pinned-model"
 
 
 # ---------------------------------------------------------------------------
@@ -1196,6 +1239,9 @@ def test_ui_chat_composer_features():
     assert 'id="attBtn"' in HTML and 'id="attRow"' in HTML
     assert 'id="thinkingSel"' in HTML
     assert 'id="modelPicker"' in HTML  # 页眉模型选择
+    assert "route:free" in HTML
+    assert "自由路由" in HTML
+    assert "选择模型…" not in HTML
     assert 'id="composerProj"' not in HTML  # 输入区不再放项目/模型下拉
     assert 'id="videoGenBar"' in HTML
     assert 'id="vg_res"' in HTML and 'id="vg_frames"' in HTML and 'id="vg_steps"' in HTML

@@ -76,7 +76,14 @@ from codeagent.desktop.projects import (
     load_conversation,
     new_conversation_id,
 )
-from codeagent.desktop.router import RouteRule, RouterStore, route_message
+from codeagent.desktop.router import (
+    FREE_ROUTE_LABEL,
+    FREE_ROUTE_REF,
+    RouteRule,
+    RouterStore,
+    is_free_route,
+    route_message,
+)
 from codeagent.llm.aggregate import parse_provider_spec
 from codeagent.llm.registry import list_providers
 from codeagent.log import get_logger, setup_logging, tail_log
@@ -329,12 +336,14 @@ class DesktopAPI:
                 models = [(e.label or "").strip() or "WAN 文生视频"]
             rec["models"] = models
             endpoints.append(rec)
+        active = self.assets.active
         return {
             "endpoints": endpoints,
             "api_models": [self._api_model_dict(m) for m in self.assets.api_models],
             "mixtures": [self._mixture_dict(x) for x in self.assets.mixtures],
-            "active": self.assets.active,
+            "active": FREE_ROUTE_REF if is_free_route(active) else active,
             "active_label": self._active_label(),
+            "free_route": {"ref": FREE_ROUTE_REF, "label": FREE_ROUTE_LABEL},
         }
 
     @staticmethod
@@ -379,6 +388,8 @@ class DesktopAPI:
         return ep
 
     def _active_label(self) -> str:
+        if is_free_route(self.assets.active):
+            return FREE_ROUTE_LABEL
         ep = self._active_video_ep()
         if ep is not None:
             model = self.assets.active[6:].rsplit("@", 1)[0]
@@ -458,15 +469,18 @@ class DesktopAPI:
         return True
 
     def set_active_model(self, ref: str) -> dict[str, Any]:
-        """ref: 'local:model@endpoint_id' | 'api:{id}' | '' (legacy config).
+        """ref: 'local:model@endpoint_id' | 'api:{id}' | 'mix:{id}' | 'route:free'.
 
         Gradio 端点可选为当前「文生视频」模型，但不能作为对话 LLM。
+        空字符串与 ``route:free`` 都表示自由路由。
         """
         ref = (ref or "").strip()
+        if is_free_route(ref):
+            ref = FREE_ROUTE_REF
         self.assets.active = ref
         self.assets.save()
         self._agent = None  # rebuild on next chat
-        log.info("active model: %s", self.assets.active or "(legacy)")
+        log.info("active model: %s", self.assets.active)
         return {"ok": True, "active_label": self._active_label()}
 
     def test_model(self, ref: str) -> dict[str, Any]:
@@ -545,12 +559,14 @@ class DesktopAPI:
         endpoints = asyncio.run(_all())
         if dirty:
             self.assets.save()
+        active = self.assets.active
         return {
             "endpoints": endpoints,
             "api_models": [self._api_model_dict(m) for m in self.assets.api_models],
             "mixtures": [self._mixture_dict(x) for x in self.assets.mixtures],
-            "active": self.assets.active,
+            "active": FREE_ROUTE_REF if is_free_route(active) else active,
             "active_label": self._active_label(),
+            "free_route": {"ref": FREE_ROUTE_REF, "label": FREE_ROUTE_LABEL},
         }
 
     def set_local_loaded(self, endpoint_id: str, model: str, load: bool) -> dict[str, Any]:
@@ -1149,8 +1165,17 @@ class DesktopAPI:
         )
 
     def _provider_for_message(self, text: str):
-        """路由引擎真实生效：命中规则的目标覆盖当前激活模型。"""
+        """自由路由时按规则分发；钉死具体模型则直连，不改道。"""
         decision = route_message(text, self.router, self._target_label)
+        if not is_free_route(self.assets.active):
+            decision = {
+                **decision,
+                "strategy": "默认直连",
+                "reason": "已指定模型，跳过自由路由",
+                "chosen": self._active_label(),
+                "candidates": [],
+            }
+            return self._build_provider(), decision
         target = next(
             (r.target for r in self.router.sorted_rules()
              if r.enabled and r.target
