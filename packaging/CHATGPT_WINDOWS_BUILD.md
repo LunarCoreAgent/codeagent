@@ -23,7 +23,7 @@ macOS 安装包已经在 Mac 上打好：`dist/codeagent-desktop-macos-arm64.dmg
 1. **`codeagent-desktop-windows-amd64-setup.exe`** — Inno Setup 安装向导（正式安装程序）
 2. **`codeagent-desktop-windows-amd64.zip`** — 便携包（内含 `codeagent.exe` + `README.txt`）
 
-版本号从 `pyproject.toml` 的 `version` 读取（当前 `0.24.0`）。
+版本号从 `pyproject.toml` 的 `version` 读取（当前 `0.26.0`）。
 
 ## 环境
 
@@ -58,7 +58,7 @@ OK → dist\codeagent-desktop-windows-amd64-setup.exe (... MB)
 然后重跑 `python scripts/build_desktop.py`。也可以手动：
 
 ```bat
-"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /DMyAppVersion=0.24.0 /Fcodeagent-desktop-windows-amd64-setup packaging\windows-setup.iss
+"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /DMyAppVersion=0.26.0 /Fcodeagent-desktop-windows-amd64-setup packaging\windows-setup.iss
 ```
 
 ## 验收

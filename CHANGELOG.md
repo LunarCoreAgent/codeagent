@@ -2,6 +2,17 @@
 
 所有版本更新记录。数据源：`src/codeagent/releases.py`（CLI 里 `codeagent changelog` 可查）。
 
+## 0.26.0（2026-09-04）
+
+- 对话页眉选择模型；输入区下方仅在选用文生视频模型后开放分辨率/帧数/推理步数下拉
+
+## 0.25.0（2026-09-04）
+
+- 局域网 Gradio 文生视频：识别 WAN（如 192.168.3.23:7860）为在线视频服务而非离线聊天模型；官方 Client.predict(/generate_video) 写入视频运营 02-generate/
+- 视频运营融合：选题/生成/剪辑/分析/多平台发布草稿（人工点发布）
+- 知识库（Obsidian/llmwiki 结构）一键布置；侧栏只保留项目；隐私条款
+- 本地端点双协议探测：Ollama /api/tags 与 OpenAI 兼容 /v1/models（如 DeepSeek LAN）
+
 ## 0.18.0（2026-08-30）
 
 - 版本与日志：settings 显示版本号，version/changelog 命令查看更新历史，运行日志持久化到 ~/.codeagent/logs/（轮转），logs 命令查看

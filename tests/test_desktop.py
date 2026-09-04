@@ -130,6 +130,33 @@ def test_get_state(api):
     assert state["config"]["provider"] == "ollama"
     assert "settings" in state
     assert "voices" in state
+    assert state["privacy_accepted"] is False
+    assert state["privacy_version"]
+
+
+def test_privacy_policy_accept_flow(api, tmp_path):
+    from codeagent.desktop.privacy import PRIVACY_VERSION
+
+    doc = api.get_privacy_policy()
+    assert doc["version"] == PRIVACY_VERSION
+    assert doc["sections"]
+    assert doc["accepted"] is False
+    r = api.accept_privacy()
+    assert r["ok"] and r["privacy_accepted"]
+    assert api.get_privacy_policy()["accepted"] is True
+    assert api.get_state()["privacy_accepted"] is True
+    saved = DesktopConfig.load(tmp_path / "desktop.json")
+    assert saved.privacy_accepted_version == PRIVACY_VERSION
+    assert saved.privacy_accepted_at
+
+
+def test_privacy_markdown_matches_module():
+    from pathlib import Path
+
+    from codeagent.desktop.privacy import privacy_markdown
+
+    root = Path(__file__).resolve().parents[1] / "PRIVACY.md"
+    assert root.read_text(encoding="utf-8") == privacy_markdown()
 
 
 def test_save_config_persists_and_resets_agent(api, tmp_path):
@@ -174,6 +201,33 @@ def test_add_and_remove_endpoint(api):
 def test_add_endpoint_rejects_duplicates(api):
     api.add_endpoint("http://x:11434")
     assert not api.add_endpoint("http://x:11434")["ok"]
+
+
+def test_add_endpoint_normalizes_fullwidth_colon(api):
+    r = api.add_endpoint("192.168.3.6：9000", label="DS")
+    assert r["ok"]
+    bases = [e["base"] for e in api.get_model_assets()["endpoints"]]
+    assert "http://192.168.3.6:9000" in bases
+
+
+def test_local_openai_endpoint_builds_openai_provider(api):
+    from codeagent.desktop.models import OllamaEndpoint
+
+    ep = OllamaEndpoint(base="http://192.168.3.6:9000", kind="openai", label="DS")
+    api.assets.endpoints.append(ep)
+    api.assets.save()
+    api.set_active_model(f"local:deepseek-v4-flash@{ep.id}")
+    provider = api._build_provider()
+    assert provider.name == "openai"
+    assert provider.model == "deepseek-v4-flash"
+    assert "192.168.3.6:9000/v1" in str(provider.client.base_url)
+
+
+def test_normalize_endpoint_base():
+    from codeagent.desktop.models import normalize_endpoint_base
+
+    assert normalize_endpoint_base("192.168.3.6：9000") == "http://192.168.3.6:9000"
+    assert normalize_endpoint_base("http://host:11434/") == "http://host:11434"
 
 
 def test_api_model_key_stored_as_pointer(api, tmp_path):
@@ -405,8 +459,10 @@ def test_memory_add_list_search_delete(api):
     assert api.get_memories() == []
 
 
-def test_get_skills_empty(api):
-    assert api.get_skills() == []
+def test_get_skills_includes_bundled(api):
+    names = {s["name"] for s in api.get_skills()}
+    assert "video-ops-pipeline" in names
+    assert "short-drama-script" in names
 
 
 def test_get_skills_lists_pack(api, tmp_path):
@@ -417,7 +473,10 @@ def test_get_skills_lists_pack(api, tmp_path):
         "---\nname: demo\ndescription: 演示技能\n---\n\n内容\n", encoding="utf-8"
     )
     skills = api.get_skills()
-    assert skills and skills[0]["name"] == "demo"
+    names = {s["name"] for s in skills}
+    assert "demo" in names
+    demo = next(s for s in skills if s["name"] == "demo")
+    assert demo["description"] == "演示技能"
 
 
 def test_get_harnesses_shape(api):
@@ -437,7 +496,8 @@ def test_get_logs_returns_list(api):
 def test_ui_has_all_pages_and_bridge():
     for page in ("dashboard", "chat", "lead", "memory", "skills", "logs",
                  "settings", "models", "router", "permissions", "versions",
-                 "automation", "cron", "learning", "evolution", "project"):
+                 "automation", "cron", "learning", "evolution", "project",
+                 "knowledge", "videoops", "privacy"):
         assert f'id="page-{page}"' in HTML
     assert "pywebview.api.send" in HTML
     assert "pywebview.api.stop" in HTML
@@ -460,6 +520,11 @@ def test_ui_has_all_pages_and_bridge():
     assert "pywebview.api.set_patch_status" in HTML
     assert "pywebview.api.approve_skill" in HTML
     assert "pywebview.api.get_nav_status" in HTML
+    assert "pywebview.api.get_privacy_policy" in HTML
+    assert "pywebview.api.accept_privacy" in HTML
+    assert 'id="page-privacy"' in HTML
+    assert 'id="privacyDialog"' in HTML
+    assert "ensurePrivacyAccepted" in HTML
     assert "window._onEvent" in HTML
     assert "CodeCoreAgent" in HTML
     assert '<div class="name">codeagent</div>' not in HTML
@@ -1130,7 +1195,13 @@ def test_thinking_injected_into_settings(api):
 def test_ui_chat_composer_features():
     assert 'id="attBtn"' in HTML and 'id="attRow"' in HTML
     assert 'id="thinkingSel"' in HTML
-    assert 'id="modelPicker"' in HTML  # 模型选择器在输入区工具栏
+    assert 'id="modelPicker"' in HTML  # 页眉模型选择
+    assert 'id="composerProj"' not in HTML  # 输入区不再放项目/模型下拉
+    assert 'id="videoGenBar"' in HTML
+    assert 'id="vg_res"' in HTML and 'id="vg_frames"' in HTML and 'id="vg_steps"' in HTML
+    assert "syncVideoGenBar" in HTML
+    assert "isVideoModelSelected" in HTML
+    assert "composer-video" in HTML
     assert "msg-actions" in HTML and "copy_text" in HTML
     assert "export_message" in HTML
     assert "pick_attachments" in HTML
@@ -1224,6 +1295,105 @@ def _patch_client(monkeypatch, script):
     _FakeClient.seen = []
     monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
     return m
+
+
+def test_probe_endpoint_info_falls_back_to_openai(monkeypatch):
+    import asyncio
+    from codeagent.desktop import models as m
+
+    _patch_client(monkeypatch, {
+        "/api/tags": _FakeResp(404, {"error": {"message": "unknown"}}),
+        "/v1/models": _FakeResp(200, {
+            "data": [{"id": "deepseek-v4-flash", "context_length": 128000}],
+        }),
+    })
+    info = asyncio.run(m.probe_endpoint_info("http://192.168.3.6:9000"))
+    assert info["kind"] == "openai"
+    assert info["models"][0]["name"] == "deepseek-v4-flash"
+
+
+def test_probe_endpoint_info_detects_gradio(monkeypatch):
+    import asyncio
+    from codeagent.desktop import models as m
+
+    _patch_client(monkeypatch, {
+        "/api/tags": _FakeResp(404),
+        "/v1/models": _FakeResp(404),
+        "/models": _FakeResp(404),
+        "/config": _FakeResp(200, {
+            "version": "6.26.0",
+            "title": "WAN-1.3B 文生视频",
+            "components": [{}],
+            "dependencies": [{}],
+        }),
+        "/gradio_api/info": _FakeResp(200, {
+            "named_endpoints": {"/generate_video": {}},
+        }),
+    })
+    info = asyncio.run(m.probe_endpoint_info("http://192.168.3.23:7860"))
+    assert info["kind"] == "gradio"
+    assert info["models"][0]["name"] == "WAN-1.3B 文生视频"
+    assert info["models"][0]["quant"] == "文生视频"
+
+
+def test_detect_service_gradio(monkeypatch):
+    m = _patch_client(monkeypatch, {
+        "/models": _FakeResp(404),
+        "/v1/models": _FakeResp(404),
+        "/api/tags": _FakeResp(404),
+        "/config": _FakeResp(200, {
+            "version": "6.26.0",
+            "title": "WAN-1.3B 文生视频",
+            "components": [{}],
+            "dependencies": [{}],
+        }),
+        "/gradio_api/info": _FakeResp(200, {
+            "named_endpoints": {"/generate_video": {}},
+        }),
+    })
+    r = asyncio.run(m.detect_service("http://192.168.3.23:7860"))
+    assert r["kind"] == "gradio"
+    assert "WAN-1.3B" in r["models"][0]
+    assert "对话" in r["note"]
+
+
+def test_gradio_endpoint_is_not_chat_provider():
+    from codeagent.desktop.models import ModelAssets, OllamaEndpoint
+
+    ep = OllamaEndpoint(base="http://192.168.3.23:7860", kind="gradio", id="g1")
+    assets = ModelAssets(endpoints=[ep], active="local:WAN@g1")
+    assert assets.resolve_member("local:WAN@g1") is None
+
+
+def test_set_active_gradio_video_model(api):
+    from codeagent.desktop.models import OllamaEndpoint
+
+    ep = OllamaEndpoint(base="http://192.168.3.23:7860", kind="gradio",
+                        id="g1", label="WAN")
+    api.assets.endpoints = [ep]
+    r = api.set_active_model("local:WAN@g1")
+    assert r["ok"]
+    assert "文生视频" in r["active_label"]
+    assert api._active_video_ep() is not None
+
+
+def test_send_video_params_without_gradio_still_chats(api):
+    """Extra send() args are ignored unless a Gradio model is active."""
+    captured = {}
+    orig = api._run_chat
+    api._run_chat = lambda text: (captured.setdefault("text", text),
+                                  setattr(api, "_busy", False))
+    api._run_video_gen = lambda *a, **k: captured.setdefault("video", True)
+    assert api.send("你好", "1080p", 81, 40) is True
+    assert captured.get("text") == "你好"
+    assert "video" not in captured
+    api._run_chat = orig
+
+
+def test_ui_mentions_gradio_video():
+    assert "Gradio 文生视频" in HTML
+    assert "去视频运营" in HTML
+    assert "不能作为对话模型添加" in HTML
 
 
 def test_detect_requires_key_hint(monkeypatch):
@@ -1394,12 +1564,15 @@ def test_ui_has_projects_surface():
     assert 'id="projectList"' in HTML
     assert 'id="projDialog"' in HTML
     assert 'id="convPicker"' in HTML and 'id="newConvBtn"' in HTML
-    assert 'id="chatProjSel"' in HTML and 'id="composerProj"' in HTML
+    assert 'id="chatProjSel"' in HTML
+    assert 'id="composerProj"' not in HTML
     assert "onChatProject" in HTML and "fillProjectSelects" in HTML
     assert "createProject" in HTML and "switchProject" in HTML
     assert "loadConv" in HTML
     assert 'id="page-project"' in HTML
-    assert 'id="pj_cat"' in HTML
+    assert 'id="pj_cat"' not in HTML  # 侧栏不再按分类展示
+    assert "lab.className='proj-cat'" not in HTML
+    assert "optgroup" not in HTML
     assert "loadProjectRecords" in HTML
     assert "get_project_records" in HTML
 
@@ -1450,3 +1623,48 @@ def test_project_records_lists_conversations(api, tmp_path):
     assert rec["ok"] and rec["project"]["name"] == "记录页"
     assert rec["conversations"] and "今天学了什么" in rec["conversations"][0]["title"]
     assert rec["conversations"][0]["count"] == 2
+
+
+def test_desktop_api_knowledge(api, tmp_path, monkeypatch):
+    monkeypatch.setattr("codeagent.knowledge.CONFIG_PATH", tmp_path / "knowledge.json")
+    root = tmp_path / "vault"
+    r = api.save_knowledge_config(str(root), "local", "obsidian", True)
+    assert r["ok"]
+    boot = api.bootstrap_knowledge()
+    assert boot["ok"] and boot["status"]["ready"]
+    assert api.search_knowledge("overview")
+    assert api.ingest_knowledge("笔记", "跨电脑共享测试")["ok"]
+    d = api.get_knowledge()
+    assert d["status"]["ready"] and d["config"]["path"] == str(root)
+
+
+def test_desktop_api_video_ops(api, tmp_path, monkeypatch):
+    monkeypatch.setattr("codeagent.videoops.CONFIG_PATH", tmp_path / "videoops.json")
+    monkeypatch.setattr("codeagent.videoops.SKILLS_DIR", tmp_path / "skills")
+    root = tmp_path / "video-ws"
+    r = api.save_video_ops_config(str(root), True)
+    assert r["ok"]
+    boot = api.bootstrap_video_ops()
+    assert boot["ok"] and boot["status"]["ready"]
+    assert "short-drama-script" in boot["skills_installed"]
+    draft = api.save_video_ops_draft("标题", "简介", "tag1", "/tmp/a.mp4", "")
+    assert draft["ok"]
+    d = api.get_video_ops()
+    assert d["status"]["draft"]["title"] == "标题"
+    names = {s["name"] for s in d["skills"]}
+    assert "libtv-generate" in names
+    assert "wan-gradio" in names
+
+    async def fake_probe(base, timeout=4.0):
+        return {"title": "WAN-1.3B 文生视频", "version": "6.26.0",
+                "endpoints": ["/generate_video"]}
+
+    monkeypatch.setattr("codeagent.videoops.gradio.probe_gradio_app", fake_probe)
+    r2 = api.save_video_ops_config(str(root), True, "http://192.168.3.23:7860")
+    assert r2["gradio"]["online"] and "WAN" in r2["gradio"]["title"]
+    assert r2["ok"]
+    assert r2["config"]["gradio_base"] == "http://192.168.3.23:7860"
+    bases = [e.base for e in api.assets.endpoints]
+    assert "http://192.168.3.23:7860" in bases
+    kind = next(e.kind for e in api.assets.endpoints if e.base.endswith(":7860"))
+    assert kind == "gradio"

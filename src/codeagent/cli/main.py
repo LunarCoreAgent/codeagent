@@ -158,10 +158,15 @@ def _build_skills(
     Falls back to ~/.codeagent/skills when it exists, so evolved skills are
     picked up automatically in later sessions.
     """
-    directory = skills_dir or (_DEFAULT_SKILLS_DIR if _DEFAULT_SKILLS_DIR.expanduser().is_dir() else None)
-    if directory is None:
+    from codeagent.videoops import load_all_skills
+
+    extra = skills_dir or (
+        _DEFAULT_SKILLS_DIR if _DEFAULT_SKILLS_DIR.expanduser().is_dir() else None
+    )
+    library = load_all_skills(*([extra] if extra is not None else []))
+    directory = extra or _DEFAULT_SKILLS_DIR
+    if not len(library):
         return None, None
-    library = SkillLibrary.load(directory)
     evolver = None
     if evolve:
         evolver = SkillEvolver(
@@ -170,6 +175,14 @@ def _build_skills(
             directory=directory,
         )
     return library, evolver
+
+
+def _register_workspace_tools(registry: ToolRegistry) -> None:
+    from codeagent.knowledge.tools import knowledge_tools
+    from codeagent.videoops.tools import video_ops_tools
+
+    for tool in knowledge_tools() + video_ops_tools():
+        registry.register(tool)
 
 
 @app.command()
@@ -197,6 +210,7 @@ def run(
 
     async def _run() -> None:
         registry = default_tools(root)
+        _register_workspace_tools(registry)
         if web:
             for tool in web_tools():
                 registry.register(tool)
@@ -257,6 +271,7 @@ def chat(
 
     async def _chat() -> None:
         registry = default_tools(root)
+        _register_workspace_tools(registry)
         if web:
             for tool in web_tools():
                 registry.register(tool)
@@ -377,6 +392,7 @@ def lead(
 
         def registry_factory() -> ToolRegistry:
             registry = default_tools(root)
+            _register_workspace_tools(registry)
             if web:
                 for tool in web_tools():
                     registry.register(tool)

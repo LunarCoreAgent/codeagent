@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -85,11 +86,15 @@ class OllamaEndpoint:
     base: str
     label: str = ""
     role: str = "backup"  # "primary" 主推理 | "backup" 备用/快速
+    # "" unknown | "ollama" | "openai" OpenAI-compatible | "gradio" 文生视频 UI
+    kind: str = ""
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
     def __post_init__(self) -> None:
         if not self.label:
             self.label = self.base
+        if self.kind not in ("", "ollama", "openai", "gradio"):
+            self.kind = ""
 
 
 @dataclass
@@ -186,7 +191,18 @@ class ModelAssets:
             ep = next((e for e in self.endpoints if e.id == ep_id), None)
             if ep is None:
                 return None
-            return "local", {"model": model, "base_url": ep.base + "/v1"}
+            base = ep.base.rstrip("/")
+            # OpenAI 兼容本地站已带 /v1；Ollama 用 native，仍拼 /v1 供 strip
+            if ep.kind == "gradio":
+                return None  # 文生视频，不能当对话 provider
+            if ep.kind == "openai":
+                openai_base = base if base.endswith("/v1") else base + "/v1"
+                return "local_openai", {
+                    "model": model,
+                    "base_url": openai_base,
+                    "api_key": "local",
+                }
+            return "local", {"model": model, "base_url": base + "/v1"}
         if ref.startswith("api:"):
             am = next((m for m in self.api_models if m.id == ref[4:]), None)
             if am is None:
@@ -213,7 +229,7 @@ class ModelAssets:
         if resolved is None:
             return ref
         kind, kwargs = resolved
-        if kind == "local":
+        if kind in ("local", "local_openai"):
             return f"{kwargs['model']}（本地）"
         am = next((m for m in self.api_models if m.id == ref[4:]), None)
         return am.display if am else ref
@@ -259,12 +275,24 @@ def build_active_provider(assets: ModelAssets) -> LLMProvider | None:
 # probing & detection
 # ---------------------------------------------------------------------------
 
+def normalize_endpoint_base(raw: str) -> str:
+    """Accept bare host:port / fullwidth colon / trailing slash."""
+    s = (raw or "").strip()
+    # 中文全角冒号、斜杠 → ASCII（用户常从聊天里粘贴）
+    s = s.replace("：", ":").replace("／", "/")
+    if not s:
+        return ""
+    if not re.match(r"^https?://", s, re.I):
+        s = "http://" + s
+    return s.rstrip("/")
+
+
 async def probe_endpoint(base: str, timeout: float = 3.0) -> list[str]:
-    """List installed models on one Ollama endpoint."""
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.get(base.rstrip("/") + "/api/tags")
-        resp.raise_for_status()
-        return [m["name"] for m in resp.json().get("models", [])]
+    """List models: Ollama /api/tags, else OpenAI-compatible /v1/models."""
+    info = await probe_endpoint_info(base, timeout=timeout)
+    if info is None:
+        raise RuntimeError("endpoint unreachable or unknown protocol")
+    return [m["name"] for m in info["models"]]
 
 
 async def probe_all(endpoints: list[OllamaEndpoint]) -> dict[str, Any]:
@@ -273,11 +301,14 @@ async def probe_all(endpoints: list[OllamaEndpoint]) -> dict[str, Any]:
 
     async def one(ep: OllamaEndpoint) -> dict[str, Any]:
         try:
-            models = await probe_endpoint(ep.base)
-            return {"id": ep.id, "base": ep.base, "ok": True, "models": models}
+            info = await probe_endpoint_info(ep.base)
+            return {
+                "id": ep.id, "base": ep.base, "ok": True,
+                "kind": info["kind"], "models": [m["name"] for m in info["models"]],
+            }
         except Exception as exc:  # noqa: BLE001 — failure must be visible
             return {"id": ep.id, "base": ep.base, "ok": False,
-                    "models": [], "error": str(exc)[:120]}
+                    "kind": "", "models": [], "error": str(exc)[:120]}
 
     return {"endpoints": list(await asyncio.gather(*(one(e) for e in endpoints)))}
 
@@ -356,16 +387,25 @@ async def _detect_once(
         if auth_error:
             return {"kind": "unknown", "models": [], "error": auth_error}
         native = base.removesuffix("/v1")
+        ollama_error = conn_error
         try:
             resp = await client.get(native + "/api/tags")
             if resp.status_code < 400:
                 models = [m["name"] for m in resp.json().get("models", [])]
                 return {"kind": "ollama", "models": models}
-            return {"kind": "unknown", "models": [],
-                    "error": f"HTTP {resp.status_code}，既非 OpenAI 兼容也非 Ollama 端点"}
-        except Exception as exc:  # noqa: BLE001
-            return {"kind": "unknown", "models": [],
-                    "error": conn_error or _net_error_text(exc)}
+            ollama_error = f"HTTP {resp.status_code}"
+        except Exception as exc:  # noqa: BLE001 — try Gradio next
+            ollama_error = conn_error or _net_error_text(exc)
+        gradio = await _probe_gradio(client, native)
+        if gradio is not None:
+            return {
+                "kind": "gradio",
+                "models": [m["name"] for m in gradio["models"]],
+                "note": "这是 Gradio 服务，不能当作对话模型使用",
+            }
+        detail = ollama_error or "无法识别"
+        return {"kind": "unknown", "models": [],
+                "error": f"{detail}：既非 OpenAI/Ollama 对话接口，也非 Gradio"}
 
 
 async def test_provider(provider: LLMProvider, timeout: float = 45.0) -> dict[str, Any]:
@@ -390,28 +430,114 @@ async def test_provider(provider: LLMProvider, timeout: float = 45.0) -> dict[st
     return {"ok": True, "latency_ms": latency, "sample": resp.content[:60]}
 
 
+async def _probe_gradio(
+    client: httpx.AsyncClient, root: str
+) -> dict[str, Any] | None:
+    """Gradio UI (often :7860 文生视频). ``/config`` + optional API info."""
+    root = root.rstrip("/")
+    try:
+        resp = await client.get(root + "/config")
+        if resp.status_code >= 400:
+            return None
+        cfg = resp.json()
+    except Exception:  # noqa: BLE001 — not Gradio
+        return None
+    if not isinstance(cfg, dict):
+        return None
+    if not isinstance(cfg.get("components"), list) and "dependencies" not in cfg:
+        return None
+    title = str(cfg.get("title") or "").strip() or "Gradio"
+    version = str(cfg.get("version") or "").strip()
+    endpoints: list[str] = []
+    for path in ("/gradio_api/info", "/info"):
+        try:
+            info = await client.get(root + path)
+            if info.status_code >= 400:
+                continue
+            payload = info.json()
+            named = payload.get("named_endpoints") if isinstance(payload, dict) else None
+            if isinstance(named, dict):
+                endpoints = [k for k in named if isinstance(k, str)]
+            break
+        except Exception:  # noqa: BLE001 — title-only Gradio still counts
+            break
+    blob = f"{title} {' '.join(endpoints)}".lower()
+    videoish = "video" in blob or "视频" in title or "wan" in blob
+    params = f"Gradio {version}".strip() if version else "Gradio"
+    if endpoints:
+        params += " · " + "、".join(endpoints[:4])
+    return {
+        "kind": "gradio",
+        "models": [
+            {
+                "name": title,
+                "params": params,
+                "quant": "文生视频" if videoish else "Gradio",
+                "size": "-",
+            }
+        ],
+    }
+
+
+async def probe_endpoint_info(
+    base: str, timeout: float = 3.0
+) -> dict[str, Any] | None:
+    """Probe → ``{kind, models}`` or None if offline.
+
+    Prefer Ollama ``/api/tags``; then OpenAI ``/v1/models``; then Gradio ``/config``.
+    """
+    root = base.rstrip("/")
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            resp = await client.get(root + "/api/tags")
+            if resp.status_code < 400:
+                out = []
+                for m in resp.json().get("models", []):
+                    details = m.get("details") or {}
+                    out.append(
+                        {
+                            "name": m.get("name", ""),
+                            "params": details.get("parameter_size", "-"),
+                            "quant": details.get("quantization_level", "-"),
+                            "size": f"{m.get('size', 0) / 1e9:.1f} GB",
+                        }
+                    )
+                return {"kind": "ollama", "models": out}
+        except Exception:  # noqa: BLE001 — try OpenAI next
+            pass
+
+        for path in ("/v1/models", "/models"):
+            try:
+                resp = await client.get(root + path)
+                if resp.status_code >= 400:
+                    continue
+                out = []
+                for m in resp.json().get("data", []):
+                    mid = m.get("id") or m.get("name") or ""
+                    if not mid:
+                        continue
+                    ctx = m.get("context_length")
+                    out.append(
+                        {
+                            "name": mid,
+                            "params": f"ctx {ctx}" if ctx else (m.get("name") or "-"),
+                            "quant": "-",
+                            "size": "-",
+                        }
+                    )
+                return {"kind": "openai", "models": out}
+            except Exception:  # noqa: BLE001 — next path
+                continue
+
+        return await _probe_gradio(client, root)
+
+
 async def probe_endpoint_details(
     base: str, timeout: float = 3.0
 ) -> list[dict[str, Any]] | None:
-    """/api/tags with full metadata (params/quant/size) for the model list."""
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(base.rstrip("/") + "/api/tags")
-            resp.raise_for_status()
-            out = []
-            for m in resp.json().get("models", []):
-                details = m.get("details") or {}
-                out.append(
-                    {
-                        "name": m.get("name", ""),
-                        "params": details.get("parameter_size", "-"),
-                        "quant": details.get("quantization_level", "-"),
-                        "size": f"{m.get('size', 0) / 1e9:.1f} GB",
-                    }
-                )
-            return out
-    except Exception:  # noqa: BLE001 — offline endpoint → None
-        return None
+    """Backward-compat: model detail list only (None if offline)."""
+    info = await probe_endpoint_info(base, timeout=timeout)
+    return None if info is None else info["models"]
 
 
 async def running_models(base: str, timeout: float = 3.0) -> set[str]:

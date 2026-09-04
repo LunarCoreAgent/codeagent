@@ -1,9 +1,9 @@
 ; codeagent 桌面版 Windows 安装程序（Inno Setup 6）
 ; 用法（在仓库根目录、已产出 dist\desktop\codeagent.exe 后）：
-;   iscc /DMyAppVersion=0.24.0 packaging\windows-setup.iss
+;   iscc /DMyAppVersion=0.26.0 packaging\windows-setup.iss
 
 #ifndef MyAppVersion
-#define MyAppVersion "0.24.0"
+#define MyAppVersion "0.26.0"
 #endif
 #define MyAppName "CodeCoreAgent"
 #define MyAppPublisher "CodeCoreAgent"

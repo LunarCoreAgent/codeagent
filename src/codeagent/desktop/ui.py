@@ -104,11 +104,14 @@ body.light #sidebar .brand .mark {
 .page.active { display: flex; }
 .page-head {
   padding: 16px 26px 13px; border-bottom: 1px solid var(--border);
-  display: flex; align-items: baseline; gap: 12px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
 }
-.page-head h1 { font-size: 15.5px; font-weight: 650; }
-.page-head .sub { color: var(--muted); font-size: 12px; }
-.page-head .spacer { flex: 1; }
+.page-head h1 { font-size: 15.5px; font-weight: 650; flex-shrink: 0; }
+.page-head .sub { color: var(--muted); font-size: 12px; min-width: 0;
+                  max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+                  white-space: nowrap; }
+.page-head .spacer { flex: 1; min-width: 8px; }
+.page-head select, .page-head .btn { flex-shrink: 0; }
 .page-body { flex: 1; overflow-y: auto; padding: 20px 26px; }
 
 /* ---------- primitives (shadcn) ---------- */
@@ -154,7 +157,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 
 /* ---------- chat ---------- */
 #page-chat { padding: 0; }
-#chat { flex: 1; overflow-y: auto; padding: 22px 0; }
+#chat { flex: 1; overflow-y: auto; padding: 22px 0; min-height: 0; }
 .chat-col { max-width: 720px; margin: 0 auto; display: flex;
             flex-direction: column; gap: 12px; padding: 0 22px; }
 .msg { max-width: 85%; padding: 11px 15px; border-radius: 14px;
@@ -186,6 +189,10 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
          line-height: 1.55; }
 .composer-tools { display: flex; gap: 8px; align-items: center; }
 .composer-tools .spacer { flex: 1; }
+.composer-video { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.composer-video .toolsel { flex: 1; min-width: 140px; max-width: none; }
+.composer-video.is-off { display: none; }
+#modelPicker { min-width: 180px; max-width: 260px; }
 .toolbtn { background: var(--elev); border: 1px solid var(--border);
            color: var(--muted); border-radius: 9px; height: 34px;
            padding: 0 12px; cursor: pointer; font-size: 14px; }
@@ -341,9 +348,17 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.6);
   display: none; place-items: center; z-index: 60; }
 .modal-mask.open { display: grid; }
+#privacyDialog { z-index: 80; }
 .modal { width: 420px; max-width: 92vw; background: var(--card);
   border: 1px solid var(--border-hi); border-radius: 12px; padding: 20px;
   animation: pop .16s ease; }
+.modal.wide { width: 560px; max-height: 86vh; display: flex; flex-direction: column; }
+.modal .privacy-scroll { overflow-y: auto; flex: 1; min-height: 0;
+  padding-right: 4px; margin: 0 0 14px; }
+.privacy-sec { margin-bottom: 14px; }
+.privacy-sec h4 { font-size: 12.5px; font-weight: 600; margin-bottom: 5px; }
+.privacy-sec p { font-size: 12px; color: var(--muted); line-height: 1.75;
+  white-space: pre-wrap; }
 .modal .spacer { flex: 1; }
 .modal h3 { font-size: 14px; margin-bottom: 14px; }
 .modal label { display: block; font-size: 11.5px; color: var(--muted);
@@ -515,6 +530,12 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     <button class="navbtn" data-page="memory">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
       长期记忆</button>
+    <button class="navbtn" data-page="knowledge">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M8 7h8M8 11h6"/></svg>
+      知识库</button>
+    <button class="navbtn" data-page="videoops">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M10 10l5 2-5 2z"/></svg>
+      视频运营</button>
     <button class="navbtn" data-page="skills">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 7l-8.5 8.5a2.1 2.1 0 1 0 3 3L17 10"/><path d="M15 3l6 6-3 3-6-6z"/></svg>
       技能库</button>
@@ -561,6 +582,9 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       <button class="navbtn sub" data-page="versions">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
         版本说明</button>
+      <button class="navbtn sub" data-page="privacy">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><circle cx="12" cy="11" r="2"/><path d="M12 13v3"/></svg>
+        隐私条款</button>
       <button class="navbtn sub" data-page="settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3.2"/><path d="M19 12a7 7 0 1 0 .1 0z"/></svg>
         偏好设置</button>
@@ -632,10 +656,14 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 <!-- ============ 对话 ============ -->
 <section class="page" id="page-chat">
   <div class="page-head"><h1>对话</h1>
-    <span class="sub">工具全开的单 agent · 支持附件与思考强度</span>
+    <span class="sub">工具全开的单 agent · 支持附件、思考强度与文生视频</span>
     <span class="spacer"></span>
     <select id="chatProjSel" class="toolsel" style="max-width:180px"
             onchange="onChatProject(this.value)" title="当前对话所属项目"></select>
+    <select id="modelPicker" class="toolsel" onchange="pickModel(this.value)"
+            title="当前对话模型" style="min-width:180px;max-width:260px">
+      <option value="">选择模型…</option>
+    </select>
     <select id="convPicker" class="toolsel" style="max-width:200px"
             onchange="loadConv(this.value)" title="历史对话（保存在项目文件夹）"></select>
     <button class="btn" id="newConvBtn" style="font-size:12px"
@@ -649,8 +677,6 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     <textarea id="input" rows="2" placeholder="输入消息，Enter 发送，Shift+Enter 换行；📎 可附加任意文件"></textarea>
     <div class="composer-tools">
       <button class="toolbtn" id="attBtn" title="上传附件（所有文件类型均可识别）">📎</button>
-      <select id="composerProj" class="toolsel" onchange="onChatProject(this.value)" title="当前对话所属项目"></select>
-      <select id="modelPicker" class="toolsel" onchange="pickModel(this.value)" title="当前对话模型"></select>
       <select id="thinkingSel" class="toolsel" onchange="setThinking(this.value)" title="思考强度：注入系统提示，控制推理深度">
         <option value="low">思考 · 低</option>
         <option value="medium" selected>思考 · 中</option>
@@ -659,6 +685,25 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       <span class="spacer"></span>
       <button class="stopbtn" id="stopBtn" onclick="stopChat()" disabled title="生成过程中可中断当前回复">停止</button>
       <button class="sendbtn" id="sendBtn" onclick="sendChat()">发送</button>
+    </div>
+    <div class="composer-video is-off" id="videoGenBar" title="选择文生视频模型后可调">
+      <select id="vg_res" class="toolsel" disabled title="分辨率">
+        <option value="480p">分辨率 · 480p（832×480）</option>
+        <option value="720p" selected>分辨率 · 720p（1280×720）</option>
+        <option value="1080p">分辨率 · 1080p（1920×1088）</option>
+      </select>
+      <select id="vg_frames" class="toolsel" disabled title="帧数 33–81">
+        <option value="33">帧数 · 33</option>
+        <option value="45">帧数 · 45</option>
+        <option value="60" selected>帧数 · 60</option>
+        <option value="81">帧数 · 81</option>
+      </select>
+      <select id="vg_steps" class="toolsel" disabled title="推理步数 20–50">
+        <option value="20">推理步数 · 20</option>
+        <option value="30">推理步数 · 30</option>
+        <option value="40">推理步数 · 40</option>
+        <option value="50" selected>推理步数 · 50</option>
+      </select>
     </div>
   </div></div>
 </section>
@@ -703,10 +748,121 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
   </div>
 </section>
 
+<!-- ============ 知识库（Obsidian / LLM Wiki） ============ -->
+<section class="page" id="page-knowledge">
+  <div class="page-head"><h1>知识库</h1>
+    <span class="sub">Obsidian / LLM Wiki 结构 · 本地或跨电脑共享目录</span>
+    <span class="spacer"></span>
+    <button class="btn" onclick="openKnowledgeFolder()">📂 打开文件夹</button>
+    <button class="btn primary" onclick="bootstrapKnowledge()">⚡ 一键布置</button>
+  </div>
+  <div class="page-body"><div class="settings-wrap" style="max-width:780px">
+    <div class="card sect">
+      <h3>连接设置</h3>
+      <label>存储方式</label>
+      <select id="kb_mode">
+        <option value="local">本机目录</option>
+        <option value="shared">跨电脑共享（NAS / 网盘同步 / 网络盘）</option>
+      </select>
+      <label>后端形态</label>
+      <select id="kb_backend">
+        <option value="obsidian">Obsidian 库（推荐，可用 Obsidian 打开）</option>
+        <option value="llmwiki">LLM Wiki（同一套目录结构）</option>
+      </select>
+      <label>知识库路径</label>
+      <input id="kb_path" placeholder="~/Documents/CodeCoreAgent-Wiki 或 /Volumes/NAS/wiki">
+      <div class="hint" id="kb_hint">本机：默认 Documents 下独立库。跨电脑：把库放在 Syncthing / iCloud / NAS 挂载点，各机填写同一路径。</div>
+      <div class="checkline" style="margin-top:10px">
+        <input type="checkbox" id="kb_enabled" checked>
+        <span>启用知识库（对话中注入 knowledge_search / read / ingest 工具）</span>
+      </div>
+      <div class="savebar" style="margin-top:12px">
+        <button class="btn" onclick="loadKnowledge()">刷新</button>
+        <button class="btn primary" onclick="saveKnowledgeConfig()">保存连接</button>
+      </div>
+    </div>
+    <div class="card sect">
+      <h3>库状态</h3>
+      <div id="kbStatus" class="hint">加载中…</div>
+    </div>
+    <div class="card sect">
+      <h3>投递原始材料</h3>
+      <label>标题</label><input id="kb_ingest_title" placeholder="如：某次架构决策">
+      <label>内容</label><textarea id="kb_ingest_body" rows="4" placeholder="粘贴笔记、链接摘要、对话要点…"></textarea>
+      <div class="savebar">
+        <button class="btn primary" onclick="ingestKnowledge()">写入 raw/inbox</button>
+      </div>
+    </div>
+    <div class="card sect">
+      <h3>Wiki 页面</h3>
+      <div class="toolbar" style="max-width:none;margin:0 0 12px">
+        <input id="kbQuery" placeholder="搜索 wiki…（回车）" style="flex:1">
+        <button class="btn" onclick="searchKnowledge()">搜索</button>
+      </div>
+      <div id="kbPageList"><div class="empty">尚未布置或无可显示页面</div></div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ============ 视频运营 ============ -->
+<section class="page" id="page-videoops">
+  <div class="page-head"><h1>视频运营</h1>
+    <span class="sub">选题剧本 · 生成 · 剪辑 · 分析 · 多平台发布草稿</span>
+    <span class="spacer"></span>
+    <button class="btn" onclick="openVideoOpsFolder()">📂 打开工作区</button>
+    <button class="btn primary" onclick="bootstrapVideoOps()">⚡ 一键布置</button>
+  </div>
+  <div class="page-body"><div class="settings-wrap" style="max-width:780px">
+    <div class="card sect">
+      <h3>工作区</h3>
+      <label>本地路径（也可填 NAS / 网盘同步目录，实现跨电脑共用）</label>
+      <input id="vo_path" placeholder="~/Documents/CodeCoreAgent-VideoOps">
+      <div class="checkline"><input type="checkbox" id="vo_enabled" checked>
+        <span>启用（对话注入视频运营技能与工具）</span></div>
+      <div class="savebar">
+        <button class="btn" onclick="loadVideoOps()">刷新</button>
+        <button class="btn primary" onclick="saveVideoOpsConfig()">保存路径</button>
+      </div>
+      <div class="hint" id="voStatus">加载中…</div>
+    </div>
+    <div class="card sect">
+      <h3>局域网文生视频（Gradio / WAN）</h3>
+      <label>服务地址（如 WAN-1.3B 的 http://192.168.3.23:7860）</label>
+      <input id="vo_gradio" placeholder="http://192.168.3.23:7860">
+      <div class="hint" id="voGradioStatus">未接入</div>
+      <div class="savebar">
+        <button class="btn primary" onclick="connectVideoGradio()">探测并接入</button>
+      </div>
+      <div class="hint">识别为 Gradio 文生视频后，对话里可用 <code>video_generate</code> 把成片写到 02-generate/。不能当作聊天模型。</div>
+    </div>
+    <div class="card sect">
+      <h3>本机工具链</h3>
+      <div id="voToolchain" class="hint">检测中…</div>
+      <div class="hint" style="margin-top:8px">LibTV 用于画布生成；Node+npx 用于 Remotion；ffmpeg 用于中文竖屏剪辑。未安装时 Agent 会改用已有路径并提示。</div>
+    </div>
+    <div class="card sect">
+      <h3>融合技能包</h3>
+      <div id="voSkills" class="hint">—</div>
+    </div>
+    <div class="card sect">
+      <h3>发布草稿（人工确认发布）</h3>
+      <label>标题</label><input id="vo_title" placeholder="短视频标题">
+      <label>描述</label><textarea id="vo_desc" rows="3" placeholder="简介 / 口播要点"></textarea>
+      <label>标签（空格分隔）</label><input id="vo_tags" placeholder="标签1 标签2">
+      <label>成片路径</label><input id="vo_video" placeholder="/path/to/final.mp4">
+      <label>竖版封面</label><input id="vo_cover" placeholder="/path/to/cover.jpg">
+      <div class="hint">写入 05-publish/draft.json，覆盖抖音 / 小红书 / 视频号 / B 站 / YouTube 同一套资料。各后台仍由你点「发布」。</div>
+      <div class="savebar">
+        <button class="btn primary" onclick="saveVideoOpsDraft()">保存草稿</button>
+      </div>
+    </div>
+  </div></div>
+</section>
+
 <!-- ============ 技能 ============ -->
 <section class="page" id="page-skills">
   <div class="page-head"><h1>技能库</h1>
-    <span class="sub">~/.codeagent/skills 下的 SKILL.md 技能包，自动注入所有对话</span></div>
+    <span class="sub">内置视频运营技能 + ~/.codeagent/skills 下的 SKILL.md，自动注入对话</span></div>
   <div class="page-body"><div class="skill-grid" id="skillGrid"></div></div>
 </section>
 
@@ -744,7 +900,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
         <div id="endpointList"><div class="empty">探测中…</div></div>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
           <input id="ep_label" placeholder="端点名称，如：主推理" style="width:150px">
-          <input id="ep_base" placeholder="http://IP:11434" style="flex:1;min-width:200px">
+          <input id="ep_base" placeholder="http://IP:11434 或 http://IP:9000" style="flex:1;min-width:200px">
           <select id="ep_role" style="width:110px">
             <option value="primary">主推理</option>
             <option value="backup" selected>备用/快速</option>
@@ -873,6 +1029,21 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       <div class="hint" style="margin-bottom:12px">过往更新记录</div>
       <div id="verHistory"></div>
     </div>
+  </div></div>
+</section>
+
+<!-- ============ 隐私条款 ============ -->
+<section class="page" id="page-privacy">
+  <div class="page-head"><h1>隐私条款</h1>
+    <span class="sub" id="privacySub">本地优先 · 数据由您掌控</span></div>
+  <div class="page-body"><div class="page-wrap" style="max-width:720px">
+    <div class="card sect" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span class="pill" id="privacyVerPill">版本 —</span>
+      <span class="pill green" id="privacyAcceptPill" style="display:none">已同意</span>
+      <span style="flex:1"></span>
+      <button class="btn primary" id="privacyAcceptBtn" onclick="acceptPrivacy()" style="display:none">同意并继续</button>
+    </div>
+    <div class="card sect" id="privacyBody"></div>
   </div></div>
 </section>
 
@@ -1066,6 +1237,20 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 
 </div>
 
+<!-- 隐私条款首次确认 -->
+<div class="modal-mask" id="privacyDialog">
+  <div class="modal wide">
+    <h3 id="privacyDlgTitle">隐私条款</h3>
+    <div class="hint" style="margin:-6px 0 10px;font-size:11px;color:var(--faint)">
+      首次使用或条款更新后需确认。同意后可在「设置 → 隐私条款」随时查阅。
+    </div>
+    <div class="privacy-scroll" id="privacyDlgBody"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn primary" style="flex:1" onclick="acceptPrivacy()">我已阅读并同意</button>
+    </div>
+  </div>
+</div>
+
 <!-- 聚合池对话框（LCA Dialog） -->
 <div class="modal-mask" id="mixDialog">
   <div class="modal">
@@ -1152,13 +1337,6 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     <h3>新建项目</h3>
     <label>项目名称</label>
     <input id="pj_name" placeholder="如：网站重构、数据分析">
-    <label>分类</label>
-    <select id="pj_cat">
-      <option value="工作">工作</option>
-      <option value="个人">个人</option>
-      <option value="学习">学习</option>
-      <option value="其他" selected>其他</option>
-    </select>
     <label>存放位置（留空用默认目录）</label>
     <input id="pj_base" placeholder="">
     <div class="hint">将在该目录下创建项目文件夹——agent 产生的所有文件、内容与全部对话记录都保存在项目文件夹里</div>
@@ -1186,7 +1364,7 @@ function toast(t){const el=$('toast');el.textContent=t;el.classList.add('show');
   setTimeout(()=>el.classList.remove('show'),2200);}
 
 /* ---------- nav ---------- */
-const SETTINGS_PAGES=['models','router','permissions','versions','settings'];
+const SETTINGS_PAGES=['models','router','permissions','versions','privacy','settings'];
 const SETTINGS_KEY='codeagent-nav-settings-open';
 function go(page){
   document.querySelectorAll('.navbtn[data-page]').forEach(x=>
@@ -1195,6 +1373,8 @@ function go(page){
     x.classList.toggle('active', x.id==='page-'+page));
   if(SETTINGS_PAGES.includes(page))setSettingsOpen(true); // 进入设置类页面自动展开
   if(page==='memory')loadMemories();
+  if(page==='knowledge')loadKnowledge();
+  if(page==='videoops')loadVideoOps();
   if(page==='skills')loadSkills();
   if(page==='logs')loadLogs();
   if(page==='settings')loadSettings();
@@ -1202,6 +1382,7 @@ function go(page){
   if(page==='router')loadRouter();
   if(page==='permissions')loadPermissions();
   if(page==='versions')loadVersions();
+  if(page==='privacy')loadPrivacy();
   if(page==='lead')loadRuns();
   if(page==='dashboard')loadDashboard();
   if(page==='automation')loadAutomation();
@@ -1209,7 +1390,7 @@ function go(page){
   if(page==='learning')loadLearning();
   if(page==='evolution')loadEvolution();
   if(page==='project')loadProjectRecords();
-  if(page==='chat'){loadProjects();loadConversations();}
+  if(page==='chat'){loadProjects();loadConversations();loadModelAssets();}
 }
 document.querySelectorAll('.navbtn[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page));
 
@@ -1279,24 +1460,13 @@ setSettingsOpen(false);  // 每次启动默认收起设置抽屉
 function loadProjects(){
   pywebview.api.get_projects().then(d=>{
     const el=$('projectList'); el.innerHTML='';
-    const cats=d.categories||['工作','个人','学习','其他'];
-    cats.forEach(cat=>{
-      const group=d.projects.filter(p=>(p.category||'其他')===cat);
-      if(!group.length)return;
-      const lab=document.createElement('div');
-      lab.className='proj-cat'; lab.textContent=cat;
-      el.appendChild(lab);
-      group.forEach(p=>el.appendChild(projBtn(p,d)));
-    });
-    // 旧数据没有分类的兜底
-    const known=new Set(cats);
-    d.projects.filter(p=>!known.has(p.category||'其他')).forEach(p=>el.appendChild(projBtn(p,d)));
+    // 侧栏只保留「项目」一组，不再按工作/个人/学习/其他分子标题
+    (d.projects||[]).forEach(p=>el.appendChild(projBtn(p,d)));
     fillProjectSelects(d);
   });
 }
 function fillProjectSelects(d){
-  const cats=d.categories||['工作','个人','学习','其他'];
-  ['chatProjSel','composerProj'].forEach(id=>{
+  ['chatProjSel'].forEach(id=>{
     const sel=$(id); if(!sel)return;
     const keep=sel.value;
     sel.innerHTML='';
@@ -1306,17 +1476,11 @@ function fillProjectSelects(d){
       sel.appendChild(o);
       return;
     }
-    cats.forEach(cat=>{
-      const group=d.projects.filter(p=>(p.category||'其他')===cat);
-      if(!group.length)return;
-      const og=document.createElement('optgroup'); og.label=cat;
-      group.forEach(p=>{
-        const o=document.createElement('option');
-        o.value=p.id; o.textContent=p.name; o.title=p.path;
-        if(p.id===d.active)o.selected=true;
-        og.appendChild(o);
-      });
-      sel.appendChild(og);
+    d.projects.forEach(p=>{
+      const o=document.createElement('option');
+      o.value=p.id; o.textContent=p.name; o.title=p.path;
+      if(p.id===d.active)o.selected=true;
+      sel.appendChild(o);
     });
     const extra=document.createElement('option');
     extra.value='__new'; extra.textContent='＋ 新建项目…';
@@ -1361,7 +1525,7 @@ function openProjDialog(){
 function createProject(){
   const name=$('pj_name').value.trim();
   if(!name){toast('请填写项目名称');return;}
-  pywebview.api.create_project(name,$('pj_base').value.trim(),$('pj_cat').value).then(r=>{
+  pywebview.api.create_project(name,$('pj_base').value.trim()).then(r=>{
     if(!r.ok){toast('创建失败：'+r.error);return;}
     $('projDialog').classList.remove('open');
     toast('项目已创建：'+r.project.path);
@@ -1533,12 +1697,34 @@ function setChatBusy(on){
   $('sendBtn').disabled=!!on;
   $('stopBtn').disabled=!on;
 }
+function isVideoModelSelected(){
+  const sel=$('modelPicker');
+  if(!sel||sel.selectedIndex<0)return false;
+  const opt=sel.options[sel.selectedIndex];
+  return !!(opt&&opt.dataset.kind==='gradio');
+}
+function syncVideoGenBar(){
+  const on=isVideoModelSelected();
+  const bar=$('videoGenBar');
+  if(bar)bar.classList.toggle('is-off',!on);
+  ['vg_res','vg_frames','vg_steps'].forEach(id=>{
+    const el=$(id); if(el)el.disabled=!on;
+  });
+  if($('thinkingSel'))$('thinkingSel').disabled=on;
+  const inp=$('input');
+  if(inp)inp.placeholder=on
+    ?'描述要生成的画面，Enter 发送生成视频'
+    :'输入消息，Enter 发送，Shift+Enter 换行；📎 可附加任意文件';
+}
 function sendChat(){
   const text=$('input').value.trim();
   if(!text&&!atts.length)return;
   addMsg('user',text||atts.map(a=>'📎 '+a.name).join('、'));
   $('input').value=''; setChatBusy(true); curBot=null;
-  pywebview.api.send(text).then(ok=>{
+  const res=($('vg_res')&&$('vg_res').value)||'720p';
+  const frames=parseInt(($('vg_frames')&&$('vg_frames').value)||'60',10);
+  const steps=parseInt(($('vg_steps')&&$('vg_steps').value)||'50',10);
+  pywebview.api.send(text, res, frames, steps).then(ok=>{
     if(!ok){addChip('error','上一条还在处理中');setChatBusy(false);}
     else{atts=[];renderAtts();}
   });
@@ -1628,6 +1814,175 @@ function addMemory(){
 }
 $('memQuery').addEventListener('keydown',e=>{if(e.key==='Enter')loadMemories();});
 
+/* ---------- knowledge (Obsidian / LLM Wiki) ---------- */
+function loadKnowledge(){
+  pywebview.api.get_knowledge().then(d=>{
+    const c=d.config||{}, s=d.status||{};
+    $('kb_mode').value=c.mode||'local';
+    $('kb_backend').value=c.backend||'obsidian';
+    $('kb_path').value=c.path||'';
+    $('kb_enabled').checked=c.enabled!==false;
+    updateKbHint();
+    const pills=[];
+    pills.push(s.ready?'<span class="pill green">已布置</span>':'<span class="pill amber">未布置</span>');
+    pills.push(s.exists?'<span class="pill">路径存在</span>':'<span class="pill">路径不存在</span>');
+    pills.push(s.writable?'<span class="pill green">可写</span>':'<span class="pill">只读/不可写</span>');
+    if(s.has_obsidian)pills.push('<span class="pill blue">Obsidian</span>');
+    pills.push('<span class="pill">'+esc(String(s.page_count||0))+' 个 wiki 页</span>');
+    $('kbStatus').innerHTML=pills.join(' ')+
+      '<div style="margin-top:8px;font-family:Menlo,monospace;font-size:11px;color:var(--faint)">'+esc(s.path||'')+'</div>'+
+      (s.ready?'':'<div style="margin-top:8px;color:var(--muted);font-size:12px">点击右上角「一键布置」按 CodeCoreAgent 结构创建 raw/ + wiki/ + AGENTS.md</div>');
+    renderKbPages(d.pages||[]);
+  });
+}
+function updateKbHint(){
+  const shared=$('kb_mode').value==='shared';
+  $('kb_hint').textContent=shared
+    ?'跨电脑：填写 NAS 挂载点、SMB 映射盘或 Syncthing/iCloud/Dropbox 同步文件夹中的库路径，多机保持一致即可共享。'
+    :'本机：默认 ~/Documents/CodeCoreAgent-Wiki。可用 Obsidian「打开文件夹作为库」浏览图谱。';
+}
+$('kb_mode').addEventListener('change',updateKbHint);
+function saveKnowledgeConfig(){
+  pywebview.api.save_knowledge_config(
+    $('kb_path').value.trim(),
+    $('kb_mode').value,
+    $('kb_backend').value,
+    $('kb_enabled').checked
+  ).then(r=>{
+    if(!r.ok){toast(r.error||'保存失败');return;}
+    toast('知识库连接已保存');
+    loadKnowledge();
+  });
+}
+function bootstrapKnowledge(){
+  // 先保存当前表单，再布置
+  pywebview.api.save_knowledge_config(
+    $('kb_path').value.trim(),
+    $('kb_mode').value,
+    $('kb_backend').value,
+    $('kb_enabled').checked
+  ).then(()=>pywebview.api.bootstrap_knowledge()).then(r=>{
+    if(!r.ok){toast(r.error||'布置失败');return;}
+    toast('知识库已布置（'+(r.created||[]).length+' 项）');
+    loadKnowledge();
+  });
+}
+function openKnowledgeFolder(){
+  pywebview.api.open_knowledge_folder().then(r=>{
+    if(!r.ok)toast(r.error||'无法打开');
+  });
+}
+function searchKnowledge(){
+  pywebview.api.search_knowledge($('kbQuery').value).then(renderKbPages);
+}
+function renderKbPages(pages){
+  const el=$('kbPageList');
+  if(!pages||!pages.length){el.innerHTML='<div class="empty">无匹配页面</div>';return;}
+  el.innerHTML=pages.map(p=>
+    '<div class="card mem" style="cursor:pointer" onclick="peekKnowledge(\''+esc(p.rel).replace(/'/g,"\\'")+'\')">'+
+    '<div class="m-body"><b style="font-weight:550">'+esc(p.title)+'</b>'+
+    '<div style="font-size:11px;color:var(--faint);margin-top:3px;font-family:Menlo,monospace">'+esc(p.rel)+'</div>'+
+    '<div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.55">'+esc(p.preview||'')+'</div></div></div>'
+  ).join('');
+}
+function peekKnowledge(rel){
+  pywebview.api.read_knowledge_page(rel).then(p=>{
+    if(p.error){toast(p.error);return;}
+    alert((p.title||rel)+'\\n\\n'+(p.content||'').slice(0,2500));
+  });
+}
+function ingestKnowledge(){
+  const t=$('kb_ingest_title').value.trim(), b=$('kb_ingest_body').value.trim();
+  if(!t||!b){toast('请填写标题与内容');return;}
+  pywebview.api.ingest_knowledge(t,b).then(r=>{
+    if(!r.ok){toast(r.error||'写入失败');return;}
+    toast('已写入 '+r.rel);
+    $('kb_ingest_title').value=''; $('kb_ingest_body').value='';
+    loadKnowledge();
+  });
+}
+$('kbQuery').addEventListener('keydown',e=>{if(e.key==='Enter')searchKnowledge();});
+
+/* ---------- video ops ---------- */
+function loadVideoOps(){
+  pywebview.api.get_video_ops().then(d=>{
+    const c=d.config||{}, s=d.status||{}, tc=(s.toolchain||{});
+    $('vo_path').value=c.path||'';
+    $('vo_enabled').checked=c.enabled!==false;
+    $('vo_gradio').value=c.gradio_base||'';
+    const g=d.gradio||{};
+    $('voGradioStatus').innerHTML=g.online
+      ?'<span class="pill green">在线</span> '+esc(g.title||'Gradio')+(g.endpoints&&g.endpoints.length?' · '+esc(g.endpoints.join('、')):'')
+      :(c.gradio_base?'<span class="pill">离线</span> 打不开该地址':'未接入。填地址后点「探测并接入」');
+    const pills=[];
+    pills.push(s.ready?'<span class="pill green">已布置</span>':'<span class="pill amber">未布置</span>');
+    Object.entries(s.counts||{}).forEach(([k,v])=>pills.push('<span class="pill">'+esc(k)+' '+v+'</span>'));
+    $('voStatus').innerHTML=pills.join(' ')+
+      '<div style="margin-top:8px;font-family:Menlo,monospace;font-size:11px;color:var(--faint)">'+esc(s.path||'')+'</div>';
+    function chip(name,val){
+      return val
+        ? '<span class="pill green">'+esc(name)+'</span> <span style="font-size:11px;color:var(--faint);font-family:Menlo,monospace">'+esc(val)+'</span>'
+        : '<span class="pill">'+esc(name)+' 未安装</span>';
+    }
+    $('voToolchain').innerHTML=[chip('libtv',tc.libtv),chip('ffmpeg',tc.ffmpeg),chip('node',tc.node),chip('npx',tc.npx)].join('<br>');
+    $('voSkills').innerHTML=(d.skills||[]).map(sk=>
+      '<div style="margin-bottom:8px"><b style="font-size:12.5px">'+esc(sk.name)+'</b>'+
+      '<div style="font-size:12px;color:var(--muted);margin-top:2px">'+esc(sk.description)+'</div></div>'
+    ).join('')||'<div class="empty">无</div>';
+    const dr=s.draft||{};
+    if(dr.title)$('vo_title').value=dr.title;
+    if(dr.description)$('vo_desc').value=dr.description;
+    if(dr.tags)$('vo_tags').value=dr.tags;
+    if(dr.video_path)$('vo_video').value=dr.video_path;
+    if(dr.cover_path)$('vo_cover').value=dr.cover_path;
+  });
+}
+function saveVideoOpsConfig(){
+  pywebview.api.save_video_ops_config(
+    $('vo_path').value.trim(),$('vo_enabled').checked,$('vo_gradio').value.trim()
+  ).then(r=>{
+    if(!r.ok){toast(r.error||'保存失败');return;}
+    toast('视频运营路径已保存'); loadVideoOps();
+  });
+}
+function connectVideoGradio(){
+  const url=$('vo_gradio').value.trim()||'http://192.168.3.23:7860';
+  $('vo_gradio').value=url;
+  toast('正在探测 Gradio…');
+  pywebview.api.save_video_ops_config(
+    $('vo_path').value.trim(),$('vo_enabled').checked,url
+  ).then(r=>{
+    if(!r.ok){toast(r.error||'接入失败');return;}
+    const g=(r.gradio||{});
+    toast(g.online?('已接入 '+(g.title||'Gradio')):'已保存地址，但当前离线');
+    loadVideoOps(); loadModelsPage();
+  });
+}
+function bootstrapVideoOps(){
+  pywebview.api.save_video_ops_config(
+    $('vo_path').value.trim(),$('vo_enabled').checked,$('vo_gradio').value.trim()
+  ).then(()=>
+    pywebview.api.bootstrap_video_ops()
+  ).then(r=>{
+    if(!r.ok){toast(r.error||'布置失败');return;}
+    toast('已布置工作区并安装 '+((r.skills_installed||[]).length)+' 个技能包');
+    loadVideoOps(); loadSkills();
+  });
+}
+function openVideoOpsFolder(){
+  pywebview.api.open_video_ops_folder().then(r=>{if(!r.ok)toast(r.error||'无法打开');});
+}
+function saveVideoOpsDraft(){
+  pywebview.api.save_video_ops_draft(
+    $('vo_title').value.trim(), $('vo_desc').value.trim(),
+    $('vo_tags').value.trim(), $('vo_video').value.trim(), $('vo_cover').value.trim()
+  ).then(r=>{
+    if(!r.ok){toast(r.error||'保存失败');return;}
+    toast('发布草稿已写入 05-publish/draft.json');
+    loadVideoOps();
+  });
+}
+
 /* ---------- skills ---------- */
 function loadSkills(){
   pywebview.api.get_skills().then(items=>{
@@ -1700,9 +2055,11 @@ document.querySelectorAll('.tab[data-tab]').forEach(t=>t.onclick=()=>{
 });
 
 function renderPicker(a){
-  const sel=$('modelPicker'); sel.innerHTML='';
+  const sel=$('modelPicker'); if(!sel)return;
+  const keep=sel.value;
+  sel.innerHTML='';
   const opt0=document.createElement('option');
-  opt0.value=''; opt0.textContent='高级配置 · '+(a.active?'':a.active_label||'');
+  opt0.value=''; opt0.textContent='选择模型…';
   sel.appendChild(opt0);
   (a.mixtures||[]).forEach(x=>{
     const o=document.createElement('option');
@@ -1713,8 +2070,11 @@ function renderPicker(a){
   (a.endpoints||[]).forEach(ep=>{
     (ep.models||[]).forEach(m=>{
       const name=typeof m==='string'?m:m.name;
+      if(!name)return;
       const o=document.createElement('option');
-      o.value='local:'+name+'@'+ep.id; o.textContent=name+'（本地）';
+      o.value='local:'+name+'@'+ep.id;
+      o.dataset.kind=ep.kind||'';
+      o.textContent=ep.kind==='gradio'?name+'（文生视频）':name+'（本地）';
       if(a.active===o.value)o.selected=true;
       sel.appendChild(o);
     });
@@ -1725,12 +2085,21 @@ function renderPicker(a){
     if(a.active===o.value)o.selected=true;
     sel.appendChild(o);
   });
-  if(!a.active)sel.selectedIndex=0;
+  if(a.active && [...sel.options].some(o=>o.value===a.active)) sel.value=a.active;
+  else if(keep && [...sel.options].some(o=>o.value===keep)) sel.value=keep;
+  else if(!a.active) sel.selectedIndex=0;
+  syncVideoGenBar();
 }
 function pickModel(ref){
   pywebview.api.set_active_model(ref).then(r=>{
+    if(!r.ok){toast(r.error||'无法设为当前模型');return;}
     toast('当前模型：'+r.active_label);
     $('footProvider').textContent=r.active_label;
+    const sel=$('modelPicker');
+    if(sel){
+      for(const o of sel.options){ if(o.value===ref){ sel.value=ref; break; } }
+    }
+    syncVideoGenBar();
   });
 }
 
@@ -1819,11 +2188,20 @@ function renderEndpoints(eps){
   if(!eps.length){el.innerHTML='<div class="empty">无端点</div>';return;}
   el.innerHTML=eps.map(ep=>{
     const names=(ep.models||[]).map(m=>esc(typeof m==='string'?m:m.name)).join('、');
+    const kindPill=ep.kind==='openai'
+      ?'<span class="pill blue">OpenAI 兼容</span>'
+      :(ep.kind==='gradio'
+        ?'<span class="pill purple">Gradio 文生视频</span>'
+        :(ep.kind==='ollama'?'<span class="pill">Ollama</span>':''));
+    const onlinePill=ep.kind==='gradio'
+      ?'<span class="pill green">在线</span>'
+      :'<span class="pill green">在线 · '+(ep.models||[]).length+' 个模型</span>';
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">'+
       '<div style="display:flex;align-items:center;gap:8px">'+
       '<span style="font-weight:550;font-size:13px">'+esc(ep.label||ep.base)+'</span>'+
       '<span class="pill '+(ep.role==='primary'?'purple':'blue')+'">'+(ep.role==='primary'?'主推理':'备用/快速')+'</span>'+
-      (ep.online?'<span class="pill green">在线 · '+(ep.models||[]).length+' 个模型</span>':'<span class="pill">离线</span>')+
+      kindPill+
+      (ep.online?onlinePill:'<span class="pill">离线</span>')+
       '<span style="flex:1"></span>'+
       '<button class="iconbtn danger" title="删除端点" onclick="removeEndpoint(\''+ep.id+'\')">🗑</button></div>'+
       '<div style="font-size:11px;color:var(--faint);font-family:Menlo,monospace;margin-top:4px">'+esc(ep.base)+'</div>'+
@@ -1836,23 +2214,38 @@ function renderLocalModels(eps){
   const rows=[];
   eps.forEach(ep=>{if(ep.online)(ep.models||[]).forEach(m=>rows.push({...m,ep}));});
   if(!rows.length){
-    el.innerHTML='<div class="dashed">模型列表为空。端点在线时会自动列出其模型，或用上方「部署新模型」拉取模型。</div>';
+    el.innerHTML='<div class="dashed">模型列表为空。端点在线时会自动列出其模型；支持 Ollama、局域网 OpenAI 兼容服务，以及 Gradio 文生视频（如 WAN）。</div>';
     return;
   }
   el.innerHTML=rows.map(m=>{
-    const status=m.running?'<span class="pill green">running</span>':'<span class="pill">stopped</span>';
-    return '<div class="card" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;padding:13px 16px">'+
-      '<div><div style="display:flex;align-items:center;gap:8px">'+
-      '<span style="font-weight:550;cursor:pointer" title="设为当前模型" onclick="pickModel(\''+m.ref+'\')">'+esc(m.name)+'</span>'+
+    const isGradio=m.ep.kind==='gradio';
+    const manageable=m.manageable!==false && m.ep.kind!=='openai' && !isGradio;
+    const status=isGradio
+      ?'<span class="pill purple">文生视频</span>'
+      :(m.ep.kind==='openai'
+        ?'<span class="pill green">可用</span>'
+        :(m.running?'<span class="pill green">running</span>':'<span class="pill">stopped</span>'));
+    return '<div class="card" style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:9px;padding:13px 16px">'+
+      '<div style="flex:1"><div style="display:flex;align-items:center;gap:8px">'+
+      '<span style="font-weight:550;cursor:pointer" '+
+      (isGradio?'title="设为当前文生视频模型"':'title="设为当前模型"')+
+      ' onclick="pickModel(\''+m.ref+'\')"'+
+      '>'+esc(m.name)+'</span>'+
       (m.active?'<span class="pill green">当前</span>':'')+status+
-      '<span class="pill">'+esc(m.quant)+'</span></div>'+
-      '<div style="font-size:11px;color:var(--faint);margin-top:4px">'+esc(m.params)+' · '+esc(m.size)+
+      (m.quant&&m.quant!=='-'?'<span class="pill">'+esc(m.quant)+'</span>':'')+
+      '</div>'+
+      '<div style="font-size:11px;color:var(--faint);margin-top:4px">'+esc(m.params)+
+      (m.size&&m.size!=='-'?' · '+esc(m.size):'')+
       ' · '+esc(m.ep.label||m.ep.base)+'</div></div>'+
       '<div style="display:flex;gap:6px">'+
-      (m.running
-        ?'<button class="btn" style="padding:5px 12px;font-size:11.5px" onclick="setLoaded(\''+m.ep.id+'\',\''+esc(m.name)+'\',false)">■ 停止</button>'
-        :'<button class="btn primary" style="padding:5px 12px;font-size:11.5px" onclick="setLoaded(\''+m.ep.id+'\',\''+esc(m.name)+'\',true)">▶ 启动</button>')+
-      '<button class="iconbtn danger" title="删除模型" onclick="delLocal(\''+m.ep.id+'\',\''+esc(m.name)+'\')">🗑</button>'+
+      (manageable
+        ?(m.running
+          ?'<button class="btn" style="padding:5px 12px;font-size:11.5px" onclick="setLoaded(\''+m.ep.id+'\',\''+esc(m.name)+'\',false)">■ 停止</button>'
+          :'<button class="btn primary" style="padding:5px 12px;font-size:11.5px" onclick="setLoaded(\''+m.ep.id+'\',\''+esc(m.name)+'\',true)">▶ 启动</button>')+
+         '<button class="iconbtn danger" title="删除模型" onclick="delLocal(\''+m.ep.id+'\',\''+esc(m.name)+'\')">🗑</button>'
+        :(isGradio
+          ?'<button class="btn primary" style="padding:5px 12px;font-size:11.5px" onclick="go(\'videoops\')">去视频运营</button>'
+          :'<button class="btn primary" style="padding:5px 12px;font-size:11.5px" onclick="pickModel(\''+m.ref+'\')">选用</button>'))+
       '</div></div>';
   }).join('');
 }
@@ -1882,10 +2275,17 @@ function pullModel(){
 function removeEndpoint(id){
   pywebview.api.remove_endpoint(id).then(ok=>{if(ok)loadModelsPage();});
 }
+function normalizeEndpointBase(raw){
+  let s=(raw||'').trim().replace(/：/g,':').replace(/／/g,'/');
+  if(!s)return '';
+  if(!/^https?:\/\//i.test(s)) s='http://'+s;
+  return s.replace(/\/+$/,'');
+}
 function addEndpoint(){
-  const label=$('ep_label').value.trim(), base=$('ep_base').value.trim();
-  if(!label||!/^https?:\/\/[\w.-]+:\d{1,5}$/.test(base)){
-    toast('请填写名称与合法地址，如 http://127.0.0.1:11434'); return;
+  const label=$('ep_label').value.trim();
+  const base=normalizeEndpointBase($('ep_base').value);
+  if(!label||!/^https?:\/\/[\w.-]+:\d{1,5}$/i.test(base)){
+    toast('请填写名称与合法地址，如 http://192.168.3.6:9000'); return;
   }
   pywebview.api.add_endpoint(base,label,$('ep_role').value).then(r=>{
     if(!r.ok){toast(r.error);return;}
@@ -1918,6 +2318,12 @@ function detectModels(){
     if(r.kind==='unknown'){
       $('am_detect_hint').textContent='识别失败：'+(r.error||'端点不可达')+'。仍可手动填写添加';
       // 列不出模型时降级为手动输入框
+      $('am_model_wrap').innerHTML=
+        '<input id="am_model" placeholder="模型名（手动填写）" style="width:100%">';
+      return;
+    }
+    if(r.kind==='gradio'){
+      $('am_detect_hint').textContent='识别到 Gradio：'+(r.models[0]||'')+'。这是文生视频/UI 服务，不能作为对话模型添加。请到「本地模型」用该地址添加端点。';
       $('am_model_wrap').innerHTML=
         '<input id="am_model" placeholder="模型名（手动填写）" style="width:100%">';
       return;
@@ -2448,6 +2854,43 @@ function resolveConfirm(ok){
   _confirmId='';
 }
 
+/* ---------- 隐私条款 ---------- */
+function renderPrivacySections(sections){
+  return (sections||[]).map(s=>
+    '<div class="privacy-sec"><h4>'+esc(s.heading)+'</h4><p>'+esc(s.body)+'</p></div>'
+  ).join('');
+}
+function loadPrivacy(){
+  pywebview.api.get_privacy_policy().then(p=>{
+    $('privacyDlgTitle').textContent=p.title||'隐私条款';
+    $('privacyVerPill').textContent='版本 '+p.version;
+    $('privacySub').textContent='版本 '+p.version+(p.accepted?' · 已同意':' · 待确认');
+    const html=renderPrivacySections(p.sections);
+    $('privacyBody').innerHTML=html;
+    $('privacyDlgBody').innerHTML=html;
+    $('privacyAcceptPill').style.display=p.accepted?'inline-flex':'none';
+    $('privacyAcceptBtn').style.display=p.accepted?'none':'inline-flex';
+    if(!p.accepted)$('privacyDialog').classList.add('open');
+    else $('privacyDialog').classList.remove('open');
+  });
+}
+function acceptPrivacy(){
+  pywebview.api.accept_privacy().then(r=>{
+    if(!r.ok){toast(r.error||'确认失败');return;}
+    $('privacyDialog').classList.remove('open');
+    toast('已同意隐私条款');
+    loadPrivacy();
+  });
+}
+function ensurePrivacyAccepted(){
+  pywebview.api.get_privacy_policy().then(p=>{
+    if(p.accepted)return;
+    $('privacyDlgTitle').textContent=p.title||'隐私条款';
+    $('privacyDlgBody').innerHTML=renderPrivacySections(p.sections);
+    $('privacyDialog').classList.add('open');
+  });
+}
+
 /* ---------- settings ---------- */
 function loadSettings(){
   pywebview.api.get_state().then(st=>{
@@ -2554,6 +2997,7 @@ loadModelAssets();
 loadProjects();
 loadConversations();
 loadNavStatus();
+ensurePrivacyAccepted();
 setInterval(loadNavStatus, 30000);
 </script>
 </body>

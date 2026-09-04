@@ -5,7 +5,7 @@
 用统一接口构建能读写代码、执行命令、搜索代码库的 AI Agent，支持多模型切换；另提供桌面图形版（聊天 / 项目 / 停止生成 / 安装包）。
 
 仓库：https://github.com/LunarCoreAgent/codeagent  
-许可证：[MIT](./LICENSE)
+许可证：[MIT](./LICENSE) · 隐私条款：[PRIVACY.md](./PRIVACY.md)
 
 ## 特性
 
@@ -812,4 +812,4 @@ pytest
 
 ## License
 
-[MIT](./LICENSE) © 2026 LunarCoreAgent
+[MIT](./LICENSE) © 2026 LunarCoreAgent · [隐私条款](./PRIVACY.md)

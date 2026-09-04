@@ -479,7 +479,7 @@ wheels = [
 
 [[package]]
 name = "codeagent"
-version = "0.24.0"
+version = "0.26.0"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
@@ -494,6 +494,7 @@ all = [
     { name = "curl-cffi" },
     { name = "edge-tts" },
     { name = "faster-whisper" },
+    { name = "gradio-client" },
     { name = "httpx" },
     { name = "mcp" },
     { name = "openai" },
@@ -509,6 +510,7 @@ anthropic = [
     { name = "anthropic" },
 ]
 desktop = [
+    { name = "httpx" },
     { name = "pywebview" },
 ]
 dev = [
@@ -541,6 +543,10 @@ scrape = [
     { name = "playwright" },
     { name = "scrapling" },
 ]
+video = [
+    { name = "gradio-client" },
+    { name = "httpx" },
+]
 voice = [
     { name = "edge-tts" },
 ]
@@ -568,8 +574,12 @@ requires-dist = [
     { name = "edge-tts", marker = "extra == 'voice-full'", specifier = ">=6.1" },
     { name = "faster-whisper", marker = "extra == 'all'", specifier = ">=1.0" },
     { name = "faster-whisper", marker = "extra == 'voice-full'", specifier = ">=1.0" },
+    { name = "gradio-client", marker = "extra == 'all'", specifier = ">=1.4" },
+    { name = "gradio-client", marker = "extra == 'video'", specifier = ">=1.4" },
     { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27" },
+    { name = "httpx", marker = "extra == 'desktop'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'mcp'", specifier = ">=0.27" },
+    { name = "httpx", marker = "extra == 'video'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'xiaozhi'", specifier = ">=0.27" },
     { name = "mcp", marker = "extra == 'all'", specifier = ">=1.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
@@ -600,7 +610,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.12" },
     { name = "websockets", marker = "extra == 'xiaozhi'", specifier = ">=12" },
 ]
-provides-extras = ["anthropic", "openai", "ollama", "mcp", "voice", "voice-full", "scrape", "xiaozhi", "ocr", "ocr-easy", "desktop", "all", "dev", "packaging"]
+provides-extras = ["anthropic", "openai", "ollama", "mcp", "voice", "voice-full", "scrape", "xiaozhi", "ocr", "ocr-easy", "desktop", "video", "all", "dev", "packaging"]
 
 [[package]]
 name = "colorama"
@@ -1059,6 +1069,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/00/78/f34251dadb8f3921264a1d9b8946f5e542014ee2614b285261b4e40e6775/fsspec-2026.7.0.tar.gz", hash = "sha256:c803c40f4cf860b49dea58ee3e1c33cb9c790520e233537e1340049f89b82a88", size = 317040, upload-time = "2026-07-28T16:34:51.052Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/3c/6a2bf344106328fd04963664a60b9bb6496fc25df8e962fcdc1367285fb9/fsspec-2026.7.0-py3-none-any.whl", hash = "sha256:b57ddbafedfaef7018c1ecab32aa200a9d7ca26b77965f64e48b70061249d279", size = 206583, upload-time = "2026-07-28T16:34:49.538Z" },
+]
+
+[[package]]
+name = "gradio-client"
+version = "2.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fsspec" },
+    { name = "httpx" },
+    { name = "huggingface-hub" },
+    { name = "packaging" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/85/32/ec28ca6b19b22c7ea7f4232078f856790e565f5e87f32cb15a5e406b0ba1/gradio_client-2.6.1.tar.gz", hash = "sha256:0e605bf8683a27583868b933a083e84706b974404815d9795370ef8a62584f4e", size = 61673, upload-time = "2026-08-24T20:49:48.07Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/1b/e31b3776a4892fac8e2f980265a462f642df84bf488d5d667ef821a801af/gradio_client-2.6.1-py3-none-any.whl", hash = "sha256:df3752925fbaaa56f7bfeeb0064ae23591ec3976432443748dd663a9729ef23b", size = 62558, upload-time = "2026-08-24T20:49:46.346Z" },
 ]
 
 [[package]]

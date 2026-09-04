@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -45,8 +46,9 @@ from codeagent.desktop.models import (
     detect_service,
     load_secret,
     mask_secret,
+    normalize_endpoint_base,
     probe_all,
-    probe_endpoint_details,
+    probe_endpoint_info,
     pull_ollama_model,
     running_models,
     save_secret,
@@ -80,6 +82,7 @@ from codeagent.llm.registry import list_providers
 from codeagent.log import get_logger, setup_logging, tail_log
 from codeagent.releases import changelog_text, latest
 from codeagent.settings import Settings
+from codeagent.desktop.privacy import PRIVACY_VERSION, privacy_document
 from codeagent.tools import default_tools
 
 log = get_logger("desktop")
@@ -105,7 +108,9 @@ class DesktopConfig:
     thinking: str = "medium"  # low | medium | high（思考强度）
     # JSON list of {"name","provider","model","description"} for leader mode
     workers_json: str = ""
-
+    # Accepted privacy policy version (empty = never accepted)
+    privacy_accepted_version: str = ""
+    privacy_accepted_at: str = ""  # ISO timestamp when last accepted
     @classmethod
     def load(cls, path: Path | None = None) -> "DesktopConfig":
         path = Path(path or DESKTOP_CONFIG_PATH).expanduser()
@@ -203,6 +208,35 @@ class DesktopAPI:
             "active_label": self._active_label(),
             "project": (self.projects.get(self.projects.active).name
                         if self.projects.get(self.projects.active) else ""),
+            "privacy_version": PRIVACY_VERSION,
+            "privacy_accepted": (
+                self.config.privacy_accepted_version == PRIVACY_VERSION
+            ),
+        }
+
+    def get_privacy_policy(self) -> dict[str, Any]:
+        """Current privacy policy + whether this install has accepted it."""
+        doc = privacy_document()
+        doc["accepted"] = self.config.privacy_accepted_version == PRIVACY_VERSION
+        doc["accepted_version"] = self.config.privacy_accepted_version
+        doc["accepted_at"] = self.config.privacy_accepted_at
+        return doc
+
+    def accept_privacy(self) -> dict[str, Any]:
+        """Record acceptance of the current privacy policy version."""
+        from datetime import datetime, timezone
+
+        self.config.privacy_accepted_version = PRIVACY_VERSION
+        self.config.privacy_accepted_at = (
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        )
+        self.config.save()
+        log.info("privacy accepted: version=%s", PRIVACY_VERSION)
+        return {
+            "ok": True,
+            "privacy_version": PRIVACY_VERSION,
+            "privacy_accepted": True,
+            "accepted_at": self.config.privacy_accepted_at,
         }
 
     @staticmethod
@@ -283,12 +317,20 @@ class DesktopAPI:
     def get_model_assets(self) -> dict[str, Any]:
         probed = asyncio.run(probe_all(self.assets.endpoints))
         by_id = {e["id"]: e for e in probed["endpoints"]}
+        endpoints: list[dict[str, Any]] = []
+        for e in self.assets.endpoints:
+            rec = {
+                **by_id.get(e.id, {"id": e.id, "ok": False, "models": []}),
+                "label": e.label, "role": e.role, "base": e.base,
+            }
+            rec["kind"] = rec.get("kind") or e.kind
+            models = list(rec.get("models") or [])
+            if rec.get("kind") == "gradio" and not models:
+                models = [(e.label or "").strip() or "WAN 文生视频"]
+            rec["models"] = models
+            endpoints.append(rec)
         return {
-            "endpoints": [
-                {**by_id.get(e.id, {"id": e.id, "ok": False, "models": []}),
-                 "label": e.label, "role": e.role, "base": e.base}
-                for e in self.assets.endpoints
-            ],
+            "endpoints": endpoints,
             "api_models": [self._api_model_dict(m) for m in self.assets.api_models],
             "mixtures": [self._mixture_dict(x) for x in self.assets.mixtures],
             "active": self.assets.active,
@@ -326,12 +368,26 @@ class DesktopAPI:
             "active": self.assets.active == f"mix:{x.id}",
         }
 
+    def _active_video_ep(self) -> OllamaEndpoint | None:
+        ref = (self.assets.active or "").strip()
+        if not ref.startswith("local:") or "@" not in ref:
+            return None
+        _, ep_id = ref[6:].rsplit("@", 1)
+        ep = next((e for e in self.assets.endpoints if e.id == ep_id), None)
+        if ep is None or ep.kind != "gradio":
+            return None
+        return ep
+
     def _active_label(self) -> str:
+        ep = self._active_video_ep()
+        if ep is not None:
+            model = self.assets.active[6:].rsplit("@", 1)[0]
+            return f"{model}（文生视频）"
         resolved = self.assets.resolve_active()
         if resolved is None:
             return f"{self.config.provider} · {self.config.model or '默认'}"
         kind, kwargs = resolved
-        if kind == "local":
+        if kind in ("local", "local_openai"):
             return f"{kwargs['model']}（本地）"
         if kind == "mix":
             return f"聚合池 · {kwargs['mixture'].name}"
@@ -340,9 +396,11 @@ class DesktopAPI:
         return am.display if am else "API 模型"
 
     def add_endpoint(self, base: str, label: str = "", role: str = "backup") -> dict[str, Any]:
-        base = (base or "").strip().rstrip("/")
+        base = normalize_endpoint_base(base or "")
         if not base:
             return {"ok": False, "error": "地址为空"}
+        if not re.match(r"^https?://[\w.-]+:\d{1,5}$", base, re.I):
+            return {"ok": False, "error": "地址格式应为 http://IP:端口"}
         if any(e.base == base for e in self.assets.endpoints):
             return {"ok": False, "error": "端点已存在"}
         self.assets.endpoints.append(OllamaEndpoint(
@@ -400,8 +458,12 @@ class DesktopAPI:
         return True
 
     def set_active_model(self, ref: str) -> dict[str, Any]:
-        """ref: 'local:model@endpoint_id' | 'api:{id}' | '' (legacy config)."""
-        self.assets.active = (ref or "").strip()
+        """ref: 'local:model@endpoint_id' | 'api:{id}' | '' (legacy config).
+
+        Gradio 端点可选为当前「文生视频」模型，但不能作为对话 LLM。
+        """
+        ref = (ref or "").strip()
+        self.assets.active = ref
         self.assets.save()
         self._agent = None  # rebuild on next chat
         log.info("active model: %s", self.assets.active or "(legacy)")
@@ -436,26 +498,55 @@ class DesktopAPI:
     def get_models_page(self) -> dict[str, Any]:
         """Local tab data: endpoints with detailed tags + running status."""
 
+        dirty = False
+
         async def _probe(ep: OllamaEndpoint) -> dict[str, Any]:
-            details = await probe_endpoint_details(ep.base)
-            running = await running_models(ep.base) if details is not None else set()
+            nonlocal dirty
+            info = await probe_endpoint_info(ep.base)
+            kind = (info or {}).get("kind", "") or ep.kind
+            if info is not None and kind and ep.kind != kind:
+                ep.kind = kind
+                dirty = True
+            details = (info or {}).get("models") or []
+            running: set[str] = set()
+            if info is not None and kind == "ollama":
+                running = await running_models(ep.base)
             models = [
-                {**d, "running": d["name"] in running,
-                 "ref": f"local:{d['name']}@{ep.id}",
-                 "active": self.assets.active == f"local:{d['name']}@{ep.id}"}
-                for d in (details or [])
+                {
+                    **d,
+                    "running": True if kind in ("openai", "gradio") else d["name"] in running,
+                    "ref": f"local:{d['name']}@{ep.id}",
+                    "active": self.assets.active == f"local:{d['name']}@{ep.id}",
+                    "manageable": kind == "ollama",
+                }
+                for d in details
             ]
+            if (kind or ep.kind) == "gradio" and not models:
+                name = (ep.label or "").strip() or "WAN 文生视频"
+                models = [{
+                    "name": name,
+                    "params": "Gradio 文生视频",
+                    "quant": "文生视频",
+                    "size": "-",
+                    "running": info is not None,
+                    "ref": f"local:{name}@{ep.id}",
+                    "active": self.assets.active == f"local:{name}@{ep.id}",
+                    "manageable": False,
+                }]
             return {
                 "id": ep.id, "label": ep.label, "base": ep.base, "role": ep.role,
-                "online": details is not None, "models": models,
+                "kind": kind or ep.kind, "online": info is not None, "models": models,
             }
 
         async def _all() -> list[dict[str, Any]]:
             return list(await asyncio.gather(
                 *(_probe(e) for e in self.assets.endpoints)))
 
+        endpoints = asyncio.run(_all())
+        if dirty:
+            self.assets.save()
         return {
-            "endpoints": asyncio.run(_all()),
+            "endpoints": endpoints,
             "api_models": [self._api_model_dict(m) for m in self.assets.api_models],
             "mixtures": [self._mixture_dict(x) for x in self.assets.mixtures],
             "active": self.assets.active,
@@ -466,6 +557,8 @@ class DesktopAPI:
         ep = next((e for e in self.assets.endpoints if e.id == endpoint_id), None)
         if ep is None:
             return {"ok": False, "error": "端点不存在"}
+        if ep.kind in ("openai", "gradio"):
+            return {"ok": False, "error": "该端点不支持显存启停（Ollama 专用）"}
         try:
             asyncio.run(set_model_loaded(ep.base, model, load))
             return {"ok": True}
@@ -476,6 +569,8 @@ class DesktopAPI:
         ep = next((e for e in self.assets.endpoints if e.id == endpoint_id), None)
         if ep is None:
             return {"ok": False, "error": "端点不存在"}
+        if ep.kind in ("openai", "gradio"):
+            return {"ok": False, "error": "该端点不支持删除模型（Ollama 专用）"}
         try:
             asyncio.run(delete_ollama_model(ep.base, model))
         except Exception as exc:  # noqa: BLE001
@@ -1010,12 +1105,9 @@ class DesktopAPI:
         return text[:300]
 
     def _load_skills(self):
-        directory = DEFAULT_SKILLS_DIR.expanduser()
-        if not directory.is_dir():
-            return None
-        from codeagent.skills import SkillLibrary
+        from codeagent.videoops import load_all_skills
 
-        return SkillLibrary.load(directory)
+        return load_all_skills(DEFAULT_SKILLS_DIR)
 
     THINKING_HINTS = {
         "low": "思考强度=低：快速直接作答，跳过冗长分析，结论优先，能一句说清不写两句",
@@ -1048,7 +1140,7 @@ class DesktopAPI:
         )
         return Agent(
             provider=self._build_provider(),
-            tools=default_tools(self.root),
+            tools=self._agent_tools(),
             permissions=policy,
             budget=Budget(max_total_tokens=500_000),
             skills=self._load_skills(),
@@ -1270,7 +1362,13 @@ class DesktopAPI:
         self._conv_seed = msgs[-10:]  # 继续对话时作为上下文带入
         return {"ok": True, "messages": msgs}
 
-    def send(self, text: str) -> bool:
+    def send(
+        self,
+        text: str,
+        resolution: str = "720p",
+        num_frames: int = 60,
+        num_inference_steps: int = 50,
+    ) -> bool:
         text = (text or "").strip()
         if not text and not self._attachments:
             return False
@@ -1299,7 +1397,14 @@ class DesktopAPI:
             if not self._conv_id:
                 self._conv_id = new_conversation_id()
             append_message(proj, self._conv_id, "user", display)
-        threading.Thread(target=self._run_chat, args=(text,), daemon=True).start()
+        if self._active_video_ep() is not None:
+            threading.Thread(
+                target=self._run_video_gen,
+                args=(text, resolution, int(num_frames), int(num_inference_steps)),
+                daemon=True,
+            ).start()
+        else:
+            threading.Thread(target=self._run_chat, args=(text,), daemon=True).start()
         return True
 
     def stop(self) -> bool:
@@ -1379,6 +1484,75 @@ class DesktopAPI:
                     append_message(proj, self._conv_id, "assistant", "（已停止）")
                 self._push("stopped", text="已停止")
 
+    def _run_video_gen(
+        self,
+        prompt: str,
+        resolution: str,
+        num_frames: int,
+        num_inference_steps: int,
+    ) -> None:
+        import time as time_mod
+
+        from codeagent.videoops import (
+            VideoOpsConfig,
+            append_pipeline,
+            bootstrap_workspace,
+        )
+        from codeagent.videoops.gradio import generate_wan_video
+
+        stopped = False
+        try:
+            if self._cancel.is_set():
+                stopped = True
+                return
+            ep = self._active_video_ep()
+            if ep is None:
+                self._push("error", text="当前不是文生视频模型")
+                return
+            cfg = VideoOpsConfig.load()
+            root = cfg.workspace()
+            bootstrap_workspace(root)
+            dest = root / "02-generate" / f"wan-{int(time_mod.time())}.mp4"
+            self._push("status", text="正在生成视频…")
+            result = asyncio.run(generate_wan_video(
+                ep.base, prompt, resolution, num_frames, num_inference_steps,
+                dest=dest,
+            ))
+            if self._cancel.is_set():
+                stopped = True
+                return
+            if not result.get("ok"):
+                self._push("error", text=result.get("error") or "视频生成失败")
+                return
+            path = str(result.get("path") or dest)
+            append_pipeline(root, f"WAN 生成 {Path(path).name}（{resolution} / {num_frames}帧 / {num_inference_steps}步）")
+            answer = f"视频已生成：{path}"
+            proj = self.projects.get(self.projects.active)
+            if proj is not None and self._conv_id:
+                append_message(proj, self._conv_id, "assistant", answer)
+            self._push("done", text=answer)
+        except Exception as exc:  # noqa: BLE001 — surface to the UI
+            if self._cancel.is_set():
+                stopped = True
+                return
+            log.exception("video gen failed")
+            self._push("error", text=self._diagnose(exc))
+        finally:
+            with self._lock:
+                self._busy = False
+            if stopped:
+                self._push("stopped", text="已停止")
+
+    def _agent_tools(self):
+        """Default tools + knowledge vault + video ops when configured."""
+        from codeagent.knowledge.tools import knowledge_tools
+        from codeagent.videoops.tools import video_ops_tools
+
+        registry = default_tools(self.root)
+        for tool in knowledge_tools() + video_ops_tools():
+            registry.register(tool)
+        return registry
+
     def _build_agent_with(self, provider) -> Agent:
         """一次性路由 agent：不缓存（规则目标随消息而变）。"""
         from codeagent.security.policy import PermissionPolicy
@@ -1390,7 +1564,7 @@ class DesktopAPI:
         )
         return Agent(
             provider=provider,
-            tools=default_tools(self.root),
+            tools=self._agent_tools(),
             permissions=policy,
             budget=Budget(max_total_tokens=500_000),
             skills=self._load_skills(),
@@ -1571,6 +1745,297 @@ class DesktopAPI:
             return bool(asyncio.run(self._memory_store().delete(memory_id)))
         except Exception:  # noqa: BLE001
             return False
+
+    # ------------------------------------------------------------------
+    # knowledge base (Obsidian / LLM Wiki vault)
+    # ------------------------------------------------------------------
+
+    def get_knowledge(self) -> dict[str, Any]:
+        from dataclasses import asdict
+
+        from codeagent.knowledge import KnowledgeConfig, list_pages, vault_status
+
+        cfg = KnowledgeConfig.load()
+        st = vault_status(cfg.vault_path())
+        pages = []
+        if st["ready"]:
+            pages = [
+                {
+                    "rel": p.rel,
+                    "title": p.title,
+                    "preview": p.preview,
+                    "mtime": p.mtime,
+                    "size": p.size,
+                }
+                for p in list_pages(cfg.vault_path(), limit=40)
+            ]
+        return {"config": asdict(cfg), "status": st, "pages": pages}
+
+    def save_knowledge_config(
+        self,
+        path: str = "",
+        mode: str = "local",
+        backend: str = "obsidian",
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        from dataclasses import asdict
+
+        from codeagent.knowledge import KnowledgeConfig, vault_status
+
+        cfg = KnowledgeConfig.load()
+        cfg.path = (path or "").strip() or cfg.path
+        cfg.mode = mode if mode in ("local", "shared") else cfg.mode
+        cfg.backend = backend if backend in ("obsidian", "llmwiki") else cfg.backend
+        cfg.enabled = bool(enabled)
+        cfg.save()
+        self._agent = None
+        return {
+            "ok": True,
+            "config": asdict(cfg),
+            "status": vault_status(cfg.vault_path()),
+        }
+
+    def bootstrap_knowledge(self) -> dict[str, Any]:
+        """One-click create Obsidian / LLM Wiki structure at configured path."""
+        from dataclasses import asdict
+
+        from codeagent.knowledge import KnowledgeConfig, bootstrap_vault, vault_status
+
+        cfg = KnowledgeConfig.load()
+        root = cfg.vault_path()
+        try:
+            result = bootstrap_vault(root)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)[:200]}
+        cfg.bootstrapped = True
+        cfg.enabled = True
+        cfg.save()
+        self._agent = None
+        result["config"] = asdict(cfg)
+        result["status"] = vault_status(root)
+        log.info("knowledge vault bootstrapped: %s", root)
+        return result
+
+    def search_knowledge(self, query: str = "") -> list[dict[str, Any]]:
+        from codeagent.knowledge import KnowledgeConfig, list_pages
+
+        cfg = KnowledgeConfig.load()
+        return [
+            {
+                "rel": p.rel,
+                "title": p.title,
+                "preview": p.preview,
+                "mtime": p.mtime,
+                "size": p.size,
+            }
+            for p in list_pages(cfg.vault_path(), query=query or "", limit=60)
+        ]
+
+    def read_knowledge_page(self, rel: str) -> dict[str, Any]:
+        from codeagent.knowledge import KnowledgeConfig, read_page
+
+        cfg = KnowledgeConfig.load()
+        page = read_page(cfg.vault_path(), rel or "")
+        return page or {"ok": False, "error": "页面不存在"}
+
+    def ingest_knowledge(self, title: str, content: str) -> dict[str, Any]:
+        from codeagent.knowledge import KnowledgeConfig, ingest_text, is_vault_ready
+
+        cfg = KnowledgeConfig.load()
+        root = cfg.vault_path()
+        if not is_vault_ready(root):
+            return {"ok": False, "error": "请先一键布置知识库"}
+        title = (title or "").strip()
+        content = (content or "").strip()
+        if not title or not content:
+            return {"ok": False, "error": "标题与内容必填"}
+        try:
+            return ingest_text(root, title, content)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)[:200]}
+
+    def open_knowledge_folder(self) -> dict[str, Any]:
+        import subprocess
+        import sys
+
+        from codeagent.knowledge import KnowledgeConfig
+
+        root = KnowledgeConfig.load().vault_path()
+        if not root.exists():
+            return {"ok": False, "error": "路径不存在，请先一键布置"}
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(root)])
+            elif sys.platform == "win32":
+                subprocess.Popen(["explorer", str(root)])
+            else:
+                subprocess.Popen(["xdg-open", str(root)])
+            return {"ok": True, "path": str(root)}
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)[:200]}
+
+    # ------------------------------------------------------------------
+    # video ops (generate / edit / analyze / publish drafts)
+    # ------------------------------------------------------------------
+
+    def get_video_ops(self) -> dict[str, Any]:
+        from dataclasses import asdict
+
+        from codeagent.videoops import (
+            BUNDLED_SKILLS,
+            VideoOpsConfig,
+            workspace_status,
+        )
+
+        cfg = VideoOpsConfig.load()
+        from codeagent.videoops.gradio import probe_gradio_app, resolve_gradio_base
+
+        base = resolve_gradio_base(cfg)
+        gradio: dict[str, Any] = {"base": base, "online": False, "title": "", "endpoints": []}
+        if base:
+            info = asyncio.run(probe_gradio_app(base))
+            if info:
+                gradio = {
+                    "base": base,
+                    "online": True,
+                    "title": info.get("title") or "",
+                    "endpoints": info.get("endpoints") or [],
+                }
+        return {
+            "config": asdict(cfg),
+            "status": workspace_status(cfg.workspace()),
+            "gradio": gradio,
+            "skills": [
+                {"name": n, "description": d}
+                for n, (d, _) in BUNDLED_SKILLS.items()
+            ],
+        }
+
+    def save_video_ops_config(
+        self,
+        path: str = "",
+        enabled: bool = True,
+        gradio_base: str | None = None,
+    ) -> dict[str, Any]:
+        from dataclasses import asdict
+
+        from codeagent.desktop.models import normalize_endpoint_base
+        from codeagent.videoops import VideoOpsConfig, workspace_status
+        from codeagent.videoops.gradio import probe_gradio_app
+
+        cfg = VideoOpsConfig.load()
+        cfg.path = (path or "").strip() or cfg.path
+        cfg.enabled = bool(enabled)
+        if gradio_base is not None:
+            cfg.gradio_base = normalize_endpoint_base(gradio_base)
+        cfg.save()
+        if cfg.gradio_base:
+            self._ensure_gradio_endpoint(cfg.gradio_base)
+        self._agent = None
+        gradio: dict[str, Any] = {
+            "base": cfg.gradio_base, "online": False, "title": "", "endpoints": [],
+        }
+        if cfg.gradio_base:
+            info = asyncio.run(probe_gradio_app(cfg.gradio_base))
+            if info:
+                gradio = {
+                    "base": cfg.gradio_base,
+                    "online": True,
+                    "title": info.get("title") or "",
+                    "endpoints": info.get("endpoints") or [],
+                }
+        return {
+            "ok": True,
+            "config": asdict(cfg),
+            "status": workspace_status(cfg.workspace()),
+            "gradio": gradio,
+        }
+
+    def _ensure_gradio_endpoint(self, base: str) -> None:
+        from codeagent.desktop.models import OllamaEndpoint, normalize_endpoint_base
+
+        base = normalize_endpoint_base(base)
+        if not base:
+            return
+        for ep in self.assets.endpoints:
+            if ep.base.rstrip("/") == base:
+                if ep.kind != "gradio":
+                    ep.kind = "gradio"
+                    self.assets.save()
+                return
+        self.assets.endpoints.append(OllamaEndpoint(
+            base=base, label="WAN 文生视频", kind="gradio", role="backup",
+        ))
+        self.assets.save()
+
+    def bootstrap_video_ops(self) -> dict[str, Any]:
+        from dataclasses import asdict
+
+        from codeagent.videoops import (
+            VideoOpsConfig,
+            bootstrap_workspace,
+            install_bundled_skills,
+            workspace_status,
+        )
+
+        cfg = VideoOpsConfig.load()
+        try:
+            result = bootstrap_workspace(cfg.workspace())
+            installed = install_bundled_skills()
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)[:200]}
+        cfg.bootstrapped = True
+        cfg.skills_installed = True
+        cfg.enabled = True
+        cfg.save()
+        self._agent = None
+        result["config"] = asdict(cfg)
+        result["status"] = workspace_status(cfg.workspace())
+        result["skills_installed"] = installed
+        log.info("video ops bootstrapped: %s", cfg.workspace())
+        return result
+
+    def save_video_ops_draft(
+        self,
+        title: str = "",
+        description: str = "",
+        tags: str = "",
+        video_path: str = "",
+        cover_path: str = "",
+    ) -> dict[str, Any]:
+        from codeagent.videoops import VideoOpsConfig, is_workspace_ready, save_publish_draft
+
+        cfg = VideoOpsConfig.load()
+        root = cfg.workspace()
+        if not is_workspace_ready(root):
+            return {"ok": False, "error": "请先一键布置视频运营工作区"}
+        return save_publish_draft(root, {
+            "title": title,
+            "description": description,
+            "tags": tags,
+            "video_path": video_path,
+            "cover_path": cover_path,
+        })
+
+    def open_video_ops_folder(self) -> dict[str, Any]:
+        import subprocess
+        import sys
+
+        from codeagent.videoops import VideoOpsConfig
+
+        root = VideoOpsConfig.load().workspace()
+        if not root.exists():
+            return {"ok": False, "error": "路径不存在，请先一键布置"}
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(root)])
+            elif sys.platform == "win32":
+                subprocess.Popen(["explorer", str(root)])
+            else:
+                subprocess.Popen(["xdg-open", str(root)])
+            return {"ok": True, "path": str(root)}
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)[:200]}
 
     # ------------------------------------------------------------------
     # skills / harnesses / logs
