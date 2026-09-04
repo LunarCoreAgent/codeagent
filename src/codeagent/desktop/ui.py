@@ -51,6 +51,7 @@ body {
 #sidebar {
   width: 216px; background: var(--sidebar); border-right: 1px solid var(--border);
   display: flex; flex-direction: column; flex-shrink: 0; padding: 14px 10px;
+  min-height: 0; overflow-y: auto;
 }
 #sidebar .brand {
   display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px;
@@ -99,7 +100,8 @@ body.light #sidebar .brand .mark {
   background: var(--ok); }
 
 /* ---------- pages ---------- */
-#main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0;
+        min-height: 0; overflow: hidden; }
 .page { flex: 1; display: none; flex-direction: column; min-height: 0; }
 .page.active { display: flex; }
 .page-head {
@@ -112,7 +114,8 @@ body.light #sidebar .brand .mark {
                   white-space: nowrap; }
 .page-head .spacer { flex: 1; min-width: 8px; }
 .page-head select, .page-head .btn { flex-shrink: 0; }
-.page-body { flex: 1; overflow-y: auto; padding: 20px 26px; }
+.page-body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px 26px;
+             min-height: 0; -webkit-overflow-scrolling: touch; }
 
 /* ---------- primitives (shadcn) ---------- */
 .card { background: var(--card); border: 1px solid var(--border);

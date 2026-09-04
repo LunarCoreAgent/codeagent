@@ -533,6 +533,12 @@ def test_ui_has_all_pages_and_bridge():
     assert "CodeCoreAgent 就绪" in HTML
     assert 'alt="CCA"' in HTML
     assert "__BRAND_MARK_SRC__" in HTML
+    # 设置页/侧栏展开后内容超出窗口须能滚动，不能被 body overflow 裁死
+    assert "#main { flex: 1; display: flex; flex-direction: column; min-width: 0;" in HTML
+    assert "min-height: 0; overflow: hidden;" in HTML
+    assert ".page-body { flex: 1; overflow-y: auto;" in HTML
+    assert "min-height: 0; -webkit-overflow-scrolling: touch;" in HTML
+    assert "min-height: 0; overflow-y: auto;" in HTML  # #sidebar
 
 
 # ---------------------------------------------------------------------------
