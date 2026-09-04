@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 
 from codeagent.desktop.api import DesktopAPI, DesktopConfig
+from codeagent.desktop.brand import APP_NAME
+from codeagent.desktop.brand_mark import MARK_URI
 from codeagent.desktop.ui import HTML
 
 
@@ -30,9 +32,10 @@ def _themed_html() -> str:
     重启即清（甚至抛异常），服务端注入是唯一可靠的启动主题来源。"""
     theme = DesktopConfig.load().theme
     light = theme == "light" or (theme == "auto" and _system_light())
+    html = HTML.replace("__BRAND_MARK_SRC__", MARK_URI)
     if light:
-        return HTML.replace("<body>", '<body class="light">', 1)
-    return HTML
+        return html.replace("<body>", '<body class="light">', 1)
+    return html
 
 
 def run_desktop(root: Path | None = None) -> int:
@@ -41,7 +44,7 @@ def run_desktop(root: Path | None = None) -> int:
         from codeagent.releases import latest
 
         rel = latest()
-        print(f"codeagent-desktop v{rel.version}")
+        print(f"{APP_NAME} v{rel.version}")
         return 0
 
     try:
@@ -56,7 +59,7 @@ def run_desktop(root: Path | None = None) -> int:
 
     api = DesktopAPI(root=root)
     window = webview.create_window(
-        "codeagent",
+        APP_NAME,
         html=_themed_html(),
         js_api=api,
         width=1280,

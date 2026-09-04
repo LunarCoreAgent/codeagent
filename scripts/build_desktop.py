@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the codeagent desktop app and package it for the current platform.
 
-macOS:  dist/desktop/codeagent.app  →  dist/codeagent-desktop-macos-<arch>.dmg
+macOS:  dist/desktop/CodeCoreAgent.app  →  dist/codeagent-desktop-macos-<arch>.dmg
         (dmg contains the .app + an Applications shortcut for drag-install)
 Windows: dist/desktop/codeagent.exe →  dist/codeagent-desktop-windows-<arch>.zip
 
@@ -25,9 +25,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / "packaging" / "codeagent-desktop.spec"
 DIST = ROOT / "dist"
 
-README_TXT = """codeagent 桌面版
+README_TXT = """CodeCoreAgent 桌面版
 
-【macOS 安装】把 codeagent.app 拖到「应用程序」(Applications) 文件夹，
+【macOS 安装】把 CodeCoreAgent.app 拖到「应用程序」(Applications) 文件夹，
 首次打开如提示"无法验证开发者"：右键 App → 打开 → 打开。
 
 【Windows 安装】运行 codeagent-desktop-windows-amd64-setup.exe，
@@ -61,7 +61,8 @@ def smoke_test(app_binary: Path) -> bool:
         [str(app_binary), "--version"], capture_output=True, text=True, timeout=120
     )
     print(result.stdout.strip())
-    return result.returncode == 0 and "codeagent" in result.stdout
+    out = (result.stdout or "").lower()
+    return result.returncode == 0 and ("codecoreagent" in out or "codeagent" in out)
 
 
 def build_dmg(app_path: Path, target: str) -> Path:
@@ -69,11 +70,11 @@ def build_dmg(app_path: Path, target: str) -> Path:
     with tempfile.TemporaryDirectory() as staging:
         stage = Path(staging)
         # symlinks=True: preserve framework symlink structure (signature seals it)
-        shutil.copytree(app_path, stage / "codeagent.app", symlinks=True)
+        shutil.copytree(app_path, stage / "CodeCoreAgent.app", symlinks=True)
         os.symlink("/Applications", stage / "Applications")
         (stage / "使用说明.txt").write_text(README_TXT, encoding="utf-8")
         subprocess.run(
-            ["hdiutil", "create", "-volname", "codeagent",
+            ["hdiutil", "create", "-volname", "CodeCoreAgent",
              "-srcfolder", str(stage), "-ov", "-format", "UDZO", str(dmg)],
             check=True, capture_output=True,
         )
@@ -129,7 +130,7 @@ def main() -> int:
 
     target = target_name()
     if sys.platform == "darwin":
-        app = dist_dir / "codeagent.app"
+        app = dist_dir / "CodeCoreAgent.app"
         if not smoke_test(app / "Contents" / "MacOS" / "codeagent"):
             print("smoke test FAILED", file=sys.stderr)
             return 1

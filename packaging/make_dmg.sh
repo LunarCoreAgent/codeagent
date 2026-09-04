@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${1:-$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')}"
-APP="dist/desktop/codeagent.app"
+APP="dist/desktop/CodeCoreAgent.app"
 DMG="dist/desktop/codeagent-${VERSION}.dmg"
 STAGE="dist/desktop/dmg-stage"
 

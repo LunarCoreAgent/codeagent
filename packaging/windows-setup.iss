@@ -5,8 +5,8 @@
 #ifndef MyAppVersion
 #define MyAppVersion "0.24.0"
 #endif
-#define MyAppName "codeagent"
-#define MyAppPublisher "codeagent"
+#define MyAppName "CodeCoreAgent"
+#define MyAppPublisher "CodeCoreAgent"
 #define MyAppExeName "codeagent.exe"
 
 [Setup]
@@ -45,4 +45,4 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch codeagent"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch CodeCoreAgent"; Flags: nowait postinstall skipifsilent

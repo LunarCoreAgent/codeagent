@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "codeagent"
 version = "0.24.0"
-description = "A professional framework for building code development agents with multi-model support"
+description = "CodeCoreAgent — open-source coding agent framework with multi-model support and a desktop app"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "stone" }]
-keywords = ["agent", "llm", "coding", "ai", "anthropic", "openai"]
+authors = [{ name = "LunarCoreAgent" }]
+keywords = ["agent", "llm", "coding", "ai", "anthropic", "openai", "codecoreagent"]
 dependencies = [
     "pydantic>=2.0",
     "typer>=0.12",

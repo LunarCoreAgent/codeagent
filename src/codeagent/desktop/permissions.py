@@ -170,6 +170,15 @@ class Confirmer:
         ev.set()
         return True
 
+    def cancel_all(self) -> int:
+        """Reject every pending confirm so a stopped run can unwind."""
+        with self._lock:
+            ids = list(self._pending)
+            for cid in ids:
+                self._decisions[cid] = False
+                self._pending[cid].set()
+        return len(ids)
+
 
 class CapabilityPolicy(PermissionPolicy):
     """Per-capability levels: confirm tools always ask (before auto-approve),

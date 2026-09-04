@@ -160,6 +160,8 @@ class DesktopAPI:
         self._agent: Agent | None = None
         self._lock = threading.Lock()
         self._busy = False
+        self._cancel = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._attachments: list[dict[str, Any]] = []
         self._conv_seed: list[dict[str, Any]] = []
         setup_logging()
@@ -1276,6 +1278,7 @@ class DesktopAPI:
             if self._busy:
                 return False
             self._busy = True
+            self._cancel.clear()
         proj = self.projects.get(self.projects.active)
         display = text
         if self._attachments:  # 附件内容拼到消息前面，发送后清空
@@ -1299,9 +1302,35 @@ class DesktopAPI:
         threading.Thread(target=self._run_chat, args=(text,), daemon=True).start()
         return True
 
+    def stop(self) -> bool:
+        """Interrupt the in-flight chat (or lead) from the UI stop button."""
+        with self._lock:
+            if not self._busy:
+                return False
+            self._cancel.set()
+            loop = self._loop
+        self.confirmer.cancel_all()
+        if loop is not None and loop.is_running():
+            def _cancel_all() -> None:
+                for task in asyncio.all_tasks(loop):
+                    task.cancel()
+
+            try:
+                loop.call_soon_threadsafe(_cancel_all)
+            except RuntimeError:
+                pass
+        return True
+
     def _run_chat(self, text: str) -> None:
+        stopped = False
         try:
+            if self._cancel.is_set():
+                stopped = True
+                return
             provider, decision = self._provider_for_message(text)
+            if self._cancel.is_set():
+                stopped = True
+                return
             if decision["strategy"] == "默认直连":
                 if self._agent is None:
                     self._push("status", text="正在连接模型…")
@@ -1311,18 +1340,44 @@ class DesktopAPI:
                 self._push("status",
                            text=f"路由：{decision['taskType']} → {decision['chosen']}")
                 agent = self._build_agent_with(provider)
-            answer = asyncio.run(agent.run(text))
+            if self._cancel.is_set():
+                stopped = True
+                return
+
+            async def _go() -> str:
+                self._loop = asyncio.get_running_loop()
+                try:
+                    return await agent.run(text)
+                finally:
+                    self._loop = None
+
+            try:
+                answer = asyncio.run(_go())
+            except asyncio.CancelledError:
+                stopped = True
+                return
+            if self._cancel.is_set():
+                stopped = True
+                return
             proj = self.projects.get(self.projects.active)
             if proj is not None and self._conv_id:
                 append_message(proj, self._conv_id, "assistant", answer)
             self._push("done", text=answer)
             self._speak(answer)
         except Exception as exc:  # noqa: BLE001 — surface to the UI
+            if self._cancel.is_set():
+                stopped = True
+                return
             log.exception("chat failed")
             self._push("error", text=self._diagnose(exc))
         finally:
             with self._lock:
                 self._busy = False
+            if stopped:
+                proj = self.projects.get(self.projects.active)
+                if proj is not None and self._conv_id:
+                    append_message(proj, self._conv_id, "assistant", "（已停止）")
+                self._push("stopped", text="已停止")
 
     def _build_agent_with(self, provider) -> Agent:
         """一次性路由 agent：不缓存（规则目标随消息而变）。"""
@@ -1412,10 +1467,12 @@ class DesktopAPI:
             if self._busy:
                 return False
             self._busy = True
+            self._cancel.clear()
         threading.Thread(target=self._run_lead, args=(text,), daemon=True).start()
         return True
 
     def _run_lead(self, text: str) -> None:
+        stopped = False
         try:
             from codeagent.harness import discover_harnesses
             from codeagent.leader import Leader, ProgressBoard, RunArchive
@@ -1438,15 +1495,35 @@ class DesktopAPI:
                 max_parallel=2,
                 on_event=lambda kind, data: self._push("lead", event=kind, data=data),
             )
-            reply = asyncio.run(leader.command(text))
+
+            async def _go() -> str:
+                self._loop = asyncio.get_running_loop()
+                try:
+                    return await leader.command(text)
+                finally:
+                    self._loop = None
+
+            try:
+                reply = asyncio.run(_go())
+            except asyncio.CancelledError:
+                stopped = True
+                return
+            if self._cancel.is_set():
+                stopped = True
+                return
             self._push("lead_done", text=reply)
             self._speak(reply)
         except Exception as exc:  # noqa: BLE001
+            if self._cancel.is_set():
+                stopped = True
+                return
             log.exception("lead failed")
             self._push("error", text=str(exc))
         finally:
             with self._lock:
                 self._busy = False
+            if stopped:
+                self._push("stopped", text="已停止")
 
     def get_runs(self) -> list[dict[str, Any]]:
         from codeagent.leader import RunArchive

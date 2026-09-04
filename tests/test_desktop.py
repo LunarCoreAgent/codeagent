@@ -296,6 +296,37 @@ def test_reset_clears_agent(api):
     assert api._agent is None
 
 
+def test_stop_when_idle_is_noop(api):
+    assert api.stop() is False
+    assert api._busy is False
+
+
+def test_stop_cancels_in_flight_chat(api, monkeypatch):
+    from codeagent.core.types import LLMResponse
+
+    class SlowProvider:
+        name = "slow"
+        model = "slow"
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            await asyncio.sleep(30)
+            return LLMResponse(content="should not finish")
+
+    monkeypatch.setattr(
+        "codeagent.desktop.api.parse_provider_spec",
+        lambda *a, **k: SlowProvider(),
+    )
+    assert api.send("请写很长的回复") is True
+    deadline = time.time() + 2
+    while time.time() < deadline and api._loop is None:
+        time.sleep(0.02)
+    assert api.stop() is True
+    ev = wait_for(api._window, "stopped", timeout=4.0)
+    assert ev["text"] == "已停止"
+    assert api._busy is False
+    assert "done" not in api._window.kinds()
+
+
 # ---------------------------------------------------------------------------
 # leader command center
 # ---------------------------------------------------------------------------
@@ -409,6 +440,7 @@ def test_ui_has_all_pages_and_bridge():
                  "automation", "cron", "learning", "evolution", "project"):
         assert f'id="page-{page}"' in HTML
     assert "pywebview.api.send" in HTML
+    assert "pywebview.api.stop" in HTML
     assert "pywebview.api.lead" in HTML
     assert "pywebview.api.get_overview" in HTML
     assert "pywebview.api.get_memories" in HTML
@@ -429,6 +461,11 @@ def test_ui_has_all_pages_and_bridge():
     assert "pywebview.api.approve_skill" in HTML
     assert "pywebview.api.get_nav_status" in HTML
     assert "window._onEvent" in HTML
+    assert "CodeCoreAgent" in HTML
+    assert '<div class="name">codeagent</div>' not in HTML
+    assert "CodeCoreAgent 就绪" in HTML
+    assert 'alt="CCA"' in HTML
+    assert "__BRAND_MARK_SRC__" in HTML
 
 
 # ---------------------------------------------------------------------------
@@ -1097,6 +1134,10 @@ def test_ui_chat_composer_features():
     assert "msg-actions" in HTML and "copy_text" in HTML
     assert "export_message" in HTML
     assert "pick_attachments" in HTML
+    assert 'id="stopBtn"' in HTML and "stopChat()" in HTML
+    assert "setChatBusy" in HTML
+    assert "ev.kind==='stopped'" in HTML
+    assert "hidden>停止" not in HTML
 
 
 # ---------------------------------------------------------------------------

@@ -52,12 +52,12 @@ if sys.platform == "darwin":
     coll = COLLECT(exe, a.binaries, a.datas, name="codeagent")
     app = BUNDLE(
         coll,
-        name="codeagent.app",
+        name="CodeCoreAgent.app",
         icon="icon.icns",
         bundle_identifier="com.codeagent.desktop",
         info_plist={
-            "CFBundleName": "codeagent",
-            "CFBundleDisplayName": "codeagent",
+            "CFBundleName": "CodeCoreAgent",
+            "CFBundleDisplayName": "CodeCoreAgent",
             "CFBundleShortVersionString": "0.24.0",
             "NSHighResolutionCapable": True,
         },

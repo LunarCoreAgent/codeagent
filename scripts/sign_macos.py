@@ -30,7 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
-APP = DIST / "desktop" / "codeagent.app"
+APP = DIST / "desktop" / "CodeCoreAgent.app"
 
 IDENTITY = "Developer ID Application: lin tong (FXC38NGJH7)"
 TEAM_ID = "FXC38NGJH7"
@@ -67,12 +67,12 @@ def rebuild_dmg() -> Path:
         # symlinks=True is critical: the bundle seals symlinks like
         # Frameworks/Python -> Python.framework/...; dereferencing them
         # invalidates the signature.
-        shutil.copytree(APP, stage / "codeagent.app", symlinks=True)
+        shutil.copytree(APP, stage / "CodeCoreAgent.app", symlinks=True)
         os.symlink("/Applications", stage / "Applications")
         readme = ROOT / "scripts" / "_dmg_readme.txt"
         if readme.is_file():
             shutil.copy(readme, stage / "使用说明.txt")
-        run(["hdiutil", "create", "-volname", "codeagent", "-srcfolder", str(stage),
+        run(["hdiutil", "create", "-volname", "CodeCoreAgent", "-srcfolder", str(stage),
              "-ov", "-format", "UDZO", str(dmg)])
     # sign the dmg itself too
     run(["codesign", "--force", "--timestamp", "--sign", IDENTITY, str(dmg)])

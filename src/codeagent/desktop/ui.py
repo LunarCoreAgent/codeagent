@@ -8,7 +8,7 @@ HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>codeagent</title>
+<title>CodeCoreAgent</title>
 <style>
 :root {
   /* shadcn/ui dark (zinc) — 默认主题 */
@@ -57,16 +57,15 @@ body {
   border-bottom: 1px solid var(--border); margin-bottom: 12px;
 }
 #sidebar .brand .mark {
-  width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
-  background: var(--primary); color: var(--primary-fg);
-  display: grid; place-items: center;
+  width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
+  overflow: hidden; background: #1a120c;
+  border: 1px solid rgba(255,255,255,.08);
 }
-/* 浅色主题下 logo 保持浅色方块：白底 + 深色图形 + 细边框 */
 body.light #sidebar .brand .mark {
-  background: #ffffff; color: #18181b;
-  border: 1px solid var(--border);
+  background: #1a120c;
+  border: 1px solid rgba(0,0,0,.12);
 }
-#sidebar .brand .mark svg { width: 18px; height: 18px; }
+#sidebar .brand .mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
 #sidebar .brand .name { font-weight: 650; font-size: 14px; letter-spacing: .2px; }
 #sidebar .brand .ver { font-size: 10.5px; color: var(--faint); }
 .nav-group { margin-bottom: 14px; }
@@ -207,6 +206,11 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
            font-weight: 600; cursor: pointer; transition: opacity .12s; }
 .sendbtn:hover { opacity: .88; }
 .sendbtn:disabled { opacity: .35; cursor: default; }
+.stopbtn { background: var(--elev); color: var(--bad); border: 1px solid var(--bad);
+           height: 34px; border-radius: 9px; padding: 0 20px; font-size: 12.5px;
+           font-weight: 600; cursor: pointer; }
+.stopbtn:hover { opacity: .88; }
+.stopbtn:disabled { opacity: .35; cursor: default; }
 
 /* 消息操作条：悬停显示 复制 / 分享 */
 .msg-wrap { display: flex; flex-direction: column; max-width: 85%; }
@@ -476,15 +480,11 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 
 <nav id="sidebar">
   <div class="brand">
-    <div class="mark">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="4.5"/>
-        <ellipse cx="12" cy="12" rx="10" ry="3.4" transform="rotate(-18 12 12)"/>
-        <circle cx="19.5" cy="8.5" r="1.3" fill="currentColor" stroke="none"/>
-      </svg>
+    <div class="mark" title="CodeCoreAgent">
+      <img alt="CCA" src="__BRAND_MARK_SRC__">
     </div>
     <div>
-      <div class="name">codeagent</div>
+      <div class="name">CodeCoreAgent</div>
       <div class="ver" id="brandVer"></div>
     </div>
   </div>
@@ -642,7 +642,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
             onclick="newChat()">＋ 新对话</button>
   </div>
   <div id="chat"><div class="chat-col" id="chatCol">
-    <div class="chip status">codeagent 就绪 — 开始对话</div>
+    <div class="chip status">CodeCoreAgent 就绪 — 开始对话</div>
   </div></div>
   <div id="composer"><div class="composer-inner">
     <div id="attRow"></div>
@@ -657,6 +657,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
         <option value="high">思考 · 高</option>
       </select>
       <span class="spacer"></span>
+      <button class="stopbtn" id="stopBtn" onclick="stopChat()" disabled title="生成过程中可中断当前回复">停止</button>
       <button class="sendbtn" id="sendBtn" onclick="sendChat()">发送</button>
     </div>
   </div></div>
@@ -1528,15 +1529,23 @@ function setThinking(v){
     toast('思考强度：'+{low:'低',medium:'中',high:'高'}[v]));
 }
 
+function setChatBusy(on){
+  $('sendBtn').disabled=!!on;
+  $('stopBtn').disabled=!on;
+}
 function sendChat(){
   const text=$('input').value.trim();
   if(!text&&!atts.length)return;
   addMsg('user',text||atts.map(a=>'📎 '+a.name).join('、'));
-  $('input').value=''; $('sendBtn').disabled=true; curBot=null;
+  $('input').value=''; setChatBusy(true); curBot=null;
   pywebview.api.send(text).then(ok=>{
-    if(!ok){addChip('error','上一条还在处理中');$('sendBtn').disabled=false;}
+    if(!ok){addChip('error','上一条还在处理中');setChatBusy(false);}
     else{atts=[];renderAtts();}
   });
+}
+function stopChat(){
+  $('stopBtn').disabled=true;
+  pywebview.api.stop().then(ok=>{ if(!ok)setChatBusy(false); });
 }
 $('input').addEventListener('keydown',e=>{
   if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat();}
@@ -2506,12 +2515,17 @@ window._onEvent=function(ev){
   }else if(ev.kind==='status'){
     addChip('status',ev.text);
   }else if(ev.kind==='done'){
-    curBot=null; $('sendBtn').disabled=false;
+    curBot=null; setChatBusy(false);
     addFeedbackRow();
     loadConversations();  // 刷新历史对话计数
+  }else if(ev.kind==='stopped'){
+    curBot=null; setChatBusy(false); $('leadBtn').disabled=false;
+    $('confirmDialog').classList.remove('open'); _confirmId='';
+    addChip('status','已停止');
+    loadConversations();
   }else if(ev.kind==='error'){
     addChip('error','出错了：'+ev.text);
-    curBot=null; $('sendBtn').disabled=false; $('leadBtn').disabled=false;
+    curBot=null; setChatBusy(false); $('leadBtn').disabled=false;
   }else if(ev.kind==='task'){
     upsertTask(ev);
   }else if(ev.kind==='lead_done'){

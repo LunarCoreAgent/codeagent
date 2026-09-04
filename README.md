@@ -1,9 +1,15 @@
-# codeagent
+# CodeCoreAgent
 
-一个专业的代码开发 Agent 框架 —— 用统一的接口构建能够读写代码、执行命令、搜索代码库的 AI Agent，支持多模型自由切换。
+开源的代码开发 Agent —— 产品名 **CodeCoreAgent**（简称 CCA），Python 包与 CLI 仍为 `codeagent`。
+
+用统一接口构建能读写代码、执行命令、搜索代码库的 AI Agent，支持多模型切换；另提供桌面图形版（聊天 / 项目 / 停止生成 / 安装包）。
+
+仓库：https://github.com/LunarCoreAgent/codeagent  
+许可证：[MIT](./LICENSE)
 
 ## 特性
 
+- **桌面版 CodeCoreAgent**：原生窗口、对话停止按钮、项目归档、本地配置；macOS DMG / Windows 安装包由 Actions 构建
 - **多模型支持**：Anthropic Claude、OpenAI、Ollama（本地模型），统一接口，一行切换；可注册自定义 Provider
 - **三路模型接入**：云端 API（Claude/OpenAI）+ 本地部署（Ollama/LM Studio/vLLM/llama.cpp，免 key）+ 聚合网关（OpenRouter/硅基流动/AiHubMix/One-API·sub2api 自建中转，一把 key 用遍所有模型）
 - **聚合模式**：`--provider ollama,openrouter` 逗号串联多后端——fallback 故障转移（本地优先、云端兜底、坏了自动跳过）或 round-robin 轮询分流，工人名册同样支持
@@ -534,15 +540,15 @@ codeagent settings clear   # 清除
 
 不想装 Python？直接用安装包（无需安装 Python 环境）：
 
-**桌面版（图形窗口，推荐）**
+**桌面版 CodeCoreAgent（图形窗口，推荐）**
 
 | 平台 | 安装包 | 用法 |
 |---|---|---|
-| macOS (Apple Silicon) | `codeagent-desktop-macos-arm64.dmg` | 挂载 → 拖 `codeagent.app` 到 Applications |
+| macOS (Apple Silicon) | `codeagent-desktop-macos-arm64.dmg` | 挂载 → 拖 `CodeCoreAgent.app` 到 Applications |
 | macOS (Intel) | `codeagent-desktop-macos-amd64.dmg` | 同上 |
-| Windows (x64) | `codeagent-desktop-windows-amd64.zip` | 解压双击 `codeagent.exe` |
+| Windows (x64) | `codeagent-desktop-windows-amd64.zip` / `*-setup.exe` | 解压或运行安装程序 |
 
-桌面版内含：聊天窗口（气泡/流式/工具调用指示）、图形设置面板
+桌面版内含：聊天窗口（含停止生成）、项目归档、图形设置面板
 （模型连接 + 聚合策略 + 个性化）、版本与更新日志页。
 源码运行：`pip install -e ".[desktop]"` 然后 `codeagent desktop`。
 
@@ -558,10 +564,10 @@ codeagent settings clear   # 清除
 
 ```bash
 pip install -e ".[anthropic,openai,mcp,voice,desktop,packaging]"
-python packaging/make_icon.py    # 生成卫星环 Logo（icon.png/icns/ico）
+python packaging/make_icon.py    # 从 packaging/logo-art.png 生成 icon.png/icns/ico + 侧栏 mark
 python scripts/build_binary.py   # CLI 单文件 → dist/binary/，自动冒烟测试
 python scripts/build_dmg.py      # CLI 打包成 dist/*.dmg（macOS）
-python scripts/build_desktop.py  # 桌面版 .app/.exe + DMG/ZIP
+python scripts/build_desktop.py  # 桌面版 CodeCoreAgent.app / .exe + DMG/ZIP
 python scripts/sign_macos.py     # Developer ID 签名 + 公证（macOS）
 ```
 
@@ -806,4 +812,4 @@ pytest
 
 ## License
 
-MIT
+[MIT](./LICENSE) © 2026 LunarCoreAgent
