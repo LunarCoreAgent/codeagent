@@ -88,6 +88,8 @@ def build_worker_agent(
     if project_context:
         system += f"\n\n[项目概况]\n{project_context}"
 
+    from codeagent.skills.runtime import workspace_skill_hints
+
     return Agent(
         provider=provider,
         tools=registry or default_tools(root),
@@ -97,4 +99,5 @@ def build_worker_agent(
         skills=skills,
         settings=settings,
         on_event=on_event,
+        workspace_hints=workspace_skill_hints(root, extra=project_context),
     )

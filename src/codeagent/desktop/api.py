@@ -196,6 +196,10 @@ class DesktopAPI:
             self._push("text", text=str(event.data))
         elif event.type == "tool_call":
             self._push("tool", name=event.data.name)
+        elif event.type == "skills_activated":
+            names = event.data if isinstance(event.data, list) else []
+            if names:
+                self._push("status", text="自动启用技能：" + "、".join(str(n) for n in names))
 
     # ------------------------------------------------------------------
     # state & settings
@@ -203,6 +207,12 @@ class DesktopAPI:
 
     def get_state(self) -> dict[str, Any]:
         rel = latest()
+        try:
+            from codeagent.skills.fusion import ensure_fusion_skills
+
+            ensure_fusion_skills(DEFAULT_SKILLS_DIR)
+        except OSError:
+            pass
         return {
             "version": rel.version,
             "date": rel.date,
@@ -258,14 +268,25 @@ class DesktopAPI:
     def get_changelog(self) -> str:
         return changelog_text()
 
-    def get_nav_status(self) -> dict[str, int]:
-        """侧栏底部状态区：本地运行数 / API 在线数 / 聚合池启用数。"""
+    def get_nav_status(self) -> dict[str, Any]:
+        """侧栏底部：本地端点/探测模型、API 在线、聚合池启用、当前激活。"""
+        local_eps = [e for e in self.assets.endpoints if e.kind != "gradio"]
         running = 0
         if self._probe_cache is not None:
-            running = sum(len(v) for v in self._probe_cache[1].values())
-        online = sum(1 for m in self.assets.api_models if m.status == "online")
-        active_mix = sum(1 for x in self.assets.mixtures if x.enabled)
-        return {"running": running, "online": online, "mixtures": active_mix}
+            chat_ids = {e.id for e in local_eps}
+            running = sum(
+                len(models)
+                for eid, models in self._probe_cache[1].items()
+                if eid in chat_ids
+            )
+        return {
+            "running": running,
+            "local": len(local_eps),
+            "online": sum(1 for m in self.assets.api_models if m.status == "online"),
+            "api": len(self.assets.api_models),
+            "mixtures": sum(1 for x in self.assets.mixtures if x.enabled),
+            "active": self._active_label(),
+        }
 
     def get_overview(self) -> dict[str, Any]:
         """Dashboard stats: counts of skills, memories, runs, harnesses."""
@@ -281,6 +302,7 @@ class DesktopAPI:
             "version": rel.version,
             "date": rel.date,
             "provider": self.config.provider,
+            "active_label": self._active_label(),
             "model": self.config.model or "默认",
             "skills": len(skills),
             "memories": memories,
@@ -348,6 +370,9 @@ class DesktopAPI:
 
     @staticmethod
     def _api_model_dict(m: ApiModel) -> dict[str, Any]:
+        from codeagent.videoops.cloud import is_video_api_model, video_backend
+
+        video = is_video_api_model(m.model, m.base_url, m.provider)
         return {
             "id": m.id,
             "label": m.display,
@@ -359,6 +384,8 @@ class DesktopAPI:
             "cost_per_1k": m.cost_per_1k,
             "has_key": bool(load_secret(m.secret_key)),
             "key_masked": mask_secret(load_secret(m.secret_key)),
+            "video": video,
+            "video_kind": video_backend(m.model, m.base_url, m.provider) if video else "",
         }
 
     def _mixture_dict(self, x: Mixture) -> dict[str, Any]:
@@ -387,13 +414,32 @@ class DesktopAPI:
             return None
         return ep
 
+    def _active_video_job(self) -> dict[str, Any] | None:
+        """Active selection that should run text-to-video instead of chat."""
+        if self._active_video_ep() is not None:
+            return {"backend": "wan"}
+        ref = (self.assets.active or "").strip()
+        if not ref.startswith("api:"):
+            return None
+        from codeagent.videoops.cloud import is_video_api_model, video_backend
+
+        am = next((m for m in self.assets.api_models if m.id == ref[4:]), None)
+        if am is None or not is_video_api_model(am.model, am.base_url, am.provider):
+            return None
+        return {
+            "backend": video_backend(am.model, am.base_url, am.provider) or "minimax",
+            "model": am.model,
+        }
+
     def _active_label(self) -> str:
         if is_free_route(self.assets.active):
             return FREE_ROUTE_LABEL
-        ep = self._active_video_ep()
-        if ep is not None:
-            model = self.assets.active[6:].rsplit("@", 1)[0]
-            return f"{model}（文生视频）"
+        job = self._active_video_job()
+        if job is not None:
+            if job.get("backend") == "wan":
+                model = self.assets.active[6:].rsplit("@", 1)[0]
+                return f"{model}（文生视频）"
+            return f"{job.get('model') or job['backend']}（文生视频）"
         resolved = self.assets.resolve_active()
         if resolved is None:
             return f"{self.config.provider} · {self.config.model or '默认'}"
@@ -1090,9 +1136,10 @@ class DesktopAPI:
     # ------------------------------------------------------------------
 
     def _build_provider(self):
-        asset_provider = build_active_provider(self.assets)
-        if asset_provider is not None:
-            return asset_provider
+        if not is_free_route(self.assets.active):
+            asset_provider = build_active_provider(self.assets)
+            if asset_provider is not None:
+                return asset_provider
         kwargs: dict[str, Any] = {}
         if self.config.model:
             kwargs["model"] = self.config.model
@@ -1100,9 +1147,15 @@ class DesktopAPI:
             kwargs["api_key"] = self.config.api_key
         if self.config.base_url:
             kwargs["base_url"] = self.config.base_url
-        return parse_provider_spec(
-            self.config.provider, strategy=self.config.strategy, **kwargs
-        )
+        spec = (self.config.provider or "").strip()
+        if not spec:
+            if is_free_route(self.assets.active):
+                raise ValueError(
+                    "自由路由未命中可用模型，且偏好设置里没有默认 Provider。"
+                    "请在「自由路由」添加空关键词的兜底规则，或在对话里选一个具体模型。"
+                )
+            raise ValueError("没有可用的模型——请在对话里选一个模型，或在偏好设置填写 Provider。")
+        return parse_provider_spec(spec, strategy=self.config.strategy, **kwargs)
 
     @staticmethod
     def _diagnose(exc: Exception) -> str:
@@ -1118,11 +1171,19 @@ class DesktopAPI:
             return "API Key 无效或权限不足——请在设置页检查密钥。"
         if "404" in text:
             return "模型或接口不存在（404）——请确认模型名与 Base URL。"
+        if "empty provider spec" in low or "自由路由未命中" in text:
+            return ("自由路由没有可用模型——请在「自由路由」加一条关键词留空的兜底规则，"
+                    "或在对话里改选一个具体模型/聚合池。")
         return text[:300]
 
     def _load_skills(self):
+        from codeagent.skills.fusion import ensure_fusion_skills
         from codeagent.videoops import load_all_skills
 
+        try:
+            ensure_fusion_skills(DEFAULT_SKILLS_DIR)
+        except OSError:
+            pass
         return load_all_skills(DEFAULT_SKILLS_DIR)
 
     THINKING_HINTS = {
@@ -1162,7 +1223,17 @@ class DesktopAPI:
             skills=self._load_skills(),
             settings=self._settings_with_patches(),
             on_event=self._on_event,
+            workspace_hints=self._workspace_skill_hints(),
         )
+
+    def _implicit_free_route_target(self) -> str:
+        """No keyword/fallback rule: first enabled mixture, else first API model."""
+        mix = next((m for m in self.assets.mixtures if m.enabled), None)
+        if mix is not None:
+            return f"mix:{mix.id}"
+        if self.assets.api_models:
+            return f"api:{self.assets.api_models[0].id}"
+        return ""
 
     def _provider_for_message(self, text: str):
         """自由路由时按规则分发；钉死具体模型则直连，不改道。"""
@@ -1176,26 +1247,30 @@ class DesktopAPI:
                 "candidates": [],
             }
             return self._build_provider(), decision
-        target = next(
-            (r.target for r in self.router.sorted_rules()
-             if r.enabled and r.target
-             and any(k.strip().lower() in text.lower()
-                     for k in r.keywords.split(",") if k.strip())),
-            None,
-        )
-        if target is None:
-            fb = next((r for r in self.router.sorted_rules()
-                       if r.enabled and not r.keywords.strip() and r.target), None)
-            target = fb.target if fb else None
-        if target is None:
-            return self._build_provider(), decision
-        saved = self.assets.active
-        self.assets.active = target
-        try:
-            provider = build_active_provider(self.assets)
-        finally:
-            self.assets.active = saved
-        return (provider or self._build_provider()), decision
+        target = (decision.get("target") or "").strip()
+        if not target:
+            target = self._implicit_free_route_target()
+            if target:
+                label = self._target_label(target)
+                decision = {
+                    **decision,
+                    "strategy": "兜底分发",
+                    "reason": "未命中关键词规则，走默认聚合池或可用模型",
+                    "target": target,
+                    "chosen": label,
+                    "candidates": [label],
+                }
+        if target:
+            saved = self.assets.active
+            self.assets.active = target
+            try:
+                provider = build_active_provider(self.assets)
+            finally:
+                self.assets.active = saved
+            if provider is not None:
+                return provider, decision
+        # 无规则/无聚合池时，退回偏好设置里的默认 Provider（兼容旧配置）
+        return self._build_provider(), decision
 
     # ------------------------------------------------------------------
     # attachments / clipboard / share (对话页)
@@ -1422,10 +1497,11 @@ class DesktopAPI:
             if not self._conv_id:
                 self._conv_id = new_conversation_id()
             append_message(proj, self._conv_id, "user", display)
-        if self._active_video_ep() is not None:
+        job = self._active_video_job()
+        if job is not None:
             threading.Thread(
                 target=self._run_video_gen,
-                args=(text, resolution, int(num_frames), int(num_inference_steps)),
+                args=(text, resolution, int(num_frames), int(num_inference_steps), job),
                 daemon=True,
             ).start()
         else:
@@ -1466,6 +1542,7 @@ class DesktopAPI:
                     self._push("status", text="正在连接模型…")
                     self._agent = self._build_agent()
                 agent = self._agent
+                agent.workspace_hints = self._workspace_skill_hints()
             else:
                 self._push("status",
                            text=f"路由：{decision['taskType']} → {decision['chosen']}")
@@ -1515,6 +1592,7 @@ class DesktopAPI:
         resolution: str,
         num_frames: int,
         num_inference_steps: int,
+        job: dict[str, Any] | None = None,
     ) -> None:
         import time as time_mod
 
@@ -1523,6 +1601,7 @@ class DesktopAPI:
             append_pipeline,
             bootstrap_workspace,
         )
+        from codeagent.videoops.cloud import generate_cloud_video
         from codeagent.videoops.gradio import generate_wan_video
 
         stopped = False
@@ -1530,19 +1609,31 @@ class DesktopAPI:
             if self._cancel.is_set():
                 stopped = True
                 return
-            ep = self._active_video_ep()
-            if ep is None:
+            job = job or self._active_video_job()
+            if job is None:
                 self._push("error", text="当前不是文生视频模型")
                 return
             cfg = VideoOpsConfig.load()
             root = cfg.workspace()
             bootstrap_workspace(root)
-            dest = root / "02-generate" / f"wan-{int(time_mod.time())}.mp4"
+            dest = root / "02-generate" / f"{job.get('backend', 'video')}-{int(time_mod.time())}.mp4"
             self._push("status", text="正在生成视频…")
-            result = asyncio.run(generate_wan_video(
-                ep.base, prompt, resolution, num_frames, num_inference_steps,
-                dest=dest,
-            ))
+            backend = job.get("backend") or "wan"
+            if backend == "wan":
+                ep = self._active_video_ep()
+                if ep is None:
+                    self._push("error", text="当前不是文生视频模型")
+                    return
+                result = asyncio.run(generate_wan_video(
+                    ep.base, prompt, resolution, num_frames, num_inference_steps,
+                    dest=dest,
+                ))
+            else:
+                result = asyncio.run(generate_cloud_video(
+                    prompt, dest, backend=backend,
+                    resolution=resolution, num_frames=num_frames,
+                    model=str(job.get("model") or ""),
+                ))
             if self._cancel.is_set():
                 stopped = True
                 return
@@ -1550,7 +1641,7 @@ class DesktopAPI:
                 self._push("error", text=result.get("error") or "视频生成失败")
                 return
             path = str(result.get("path") or dest)
-            append_pipeline(root, f"WAN 生成 {Path(path).name}（{resolution} / {num_frames}帧 / {num_inference_steps}步）")
+            append_pipeline(root, f"{backend} 生成 {Path(path).name}（{resolution}）")
             answer = f"视频已生成：{path}"
             proj = self.projects.get(self.projects.active)
             if proj is not None and self._conv_id:
@@ -1567,6 +1658,25 @@ class DesktopAPI:
                 self._busy = False
             if stopped:
                 self._push("stopped", text="已停止")
+
+    def _workspace_skill_hints(self) -> str:
+        """Project files + category so the model can recognize the work."""
+        from codeagent.skills.runtime import workspace_skill_hints
+        from codeagent.videoops import VideoOpsConfig
+
+        extra: list[str] = []
+        proj = self.projects.get(self.projects.active)
+        root = Path(self.root) if self.root else None
+        if proj is not None:
+            extra.append(f"项目 {proj.name} 分类 {proj.category}")
+            root = Path(proj.path).expanduser()
+        try:
+            vo = VideoOpsConfig.load()
+            if vo.workspace().is_dir():
+                extra.append("视频运营工作区已布置 短视频")
+        except OSError:
+            pass
+        return workspace_skill_hints(root, extra=" ".join(extra))
 
     def _agent_tools(self):
         """Default tools + knowledge vault + video ops when configured."""
@@ -1595,6 +1705,7 @@ class DesktopAPI:
             skills=self._load_skills(),
             settings=self._settings_with_patches(),
             on_event=self._on_event,
+            workspace_hints=self._workspace_skill_hints(),
         )
 
     def reset(self) -> bool:
@@ -1926,10 +2037,18 @@ class DesktopAPI:
                     "title": info.get("title") or "",
                     "endpoints": info.get("endpoints") or [],
                 }
+        comfy: dict[str, Any] = {"base": cfg.comfy_base, "online": False}
+        if cfg.comfy_base:
+            from codeagent.videoops.comfy import probe_comfy
+
+            info = asyncio.run(probe_comfy(cfg.comfy_base))
+            if info:
+                comfy = {"base": info["base"], "online": True}
         return {
             "config": asdict(cfg),
             "status": workspace_status(cfg.workspace()),
             "gradio": gradio,
+            "comfy": comfy,
             "skills": [
                 {"name": n, "description": d}
                 for n, (d, _) in BUNDLED_SKILLS.items()
@@ -1941,6 +2060,7 @@ class DesktopAPI:
         path: str = "",
         enabled: bool = True,
         gradio_base: str | None = None,
+        comfy_base: str | None = None,
     ) -> dict[str, Any]:
         from dataclasses import asdict
 
@@ -1953,6 +2073,10 @@ class DesktopAPI:
         cfg.enabled = bool(enabled)
         if gradio_base is not None:
             cfg.gradio_base = normalize_endpoint_base(gradio_base)
+        if comfy_base is not None:
+            from codeagent.videoops.comfy import normalize_comfy_base
+
+            cfg.comfy_base = normalize_comfy_base(comfy_base)
         cfg.save()
         if cfg.gradio_base:
             self._ensure_gradio_endpoint(cfg.gradio_base)
@@ -2071,7 +2195,12 @@ class DesktopAPI:
         if library is None:
             return []
         return [
-            {"name": s.name, "description": s.description}
+            {
+                "name": s.name,
+                "description": s.description,
+                "source": s.metadata.get("source", ""),
+                "pack": s.metadata.get("pack", ""),
+            }
             for s in library
         ]
 

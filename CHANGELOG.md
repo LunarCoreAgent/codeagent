@@ -2,6 +2,22 @@
 
 所有版本更新记录。数据源：`src/codeagent/releases.py`（CLI 里 `codeagent changelog` 可查）。
 
+## 0.30.0（2026-09-06）
+
+- 融合 ComfyUI：节点图 HTTP API 技能；video_generate 可调用 MiniMax Hailuo、Kimi 视频模型与本机 ComfyUI
+
+## 0.29.0（2026-09-06）
+
+- 融合 Anime.js v4（juliangarnier/anime）：时间线、交错、SVG 描边/路径，对话提到动画时自动启用
+
+## 0.28.0（2026-09-06）
+
+- 工作室模型自动识别工作内容：按任务和项目文件启用匹配技能，并可用 use_skill 独立调用全部技能与知识库/视频运营插件，无需手动点选
+
+## 0.27.0（2026-09-06）
+
+- 融合技能包写入软件本体：Impeccable/React Bits/Taste、中文去 AI 味、女娲蒸馏、Karpathy 工艺、论文脊柱、通宵研究等 18 条，对话按主题注入；技能库分页展示融合 / 视频 / 本地
+
 ## 0.26.0（2026-09-04）
 
 - 对话页眉选择模型；输入区下方仅在选用文生视频模型后开放分辨率/帧数/推理步数下拉

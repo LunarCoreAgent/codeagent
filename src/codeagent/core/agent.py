@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from codeagent.memory.store import MemoryStore
     from codeagent.settings import Settings
     from codeagent.skills.evolve import SkillEvolver
-    from codeagent.skills.skill import SkillLibrary
+    from codeagent.skills.skill import Skill, SkillLibrary
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are an expert software engineering agent. You help users with code \
@@ -42,7 +42,7 @@ Guidelines:
 
 EventType = Literal[
     "text", "tool_call", "tool_result", "iteration", "approval", "done",
-    "error", "skill_evolved",
+    "error", "skill_evolved", "skills_activated",
 ]
 EventHandler = Callable[["AgentEvent"], None | Awaitable[None]]
 
@@ -82,8 +82,10 @@ class Agent:
         Optional :class:`MemoryStore`; memories relevant to each task are
         injected into the system prompt (long-term memory recall).
     skills:
-        Optional :class:`SkillLibrary`; skill instructions are injected
-        into the system prompt.
+        Optional :class:`SkillLibrary`; skill catalog is always visible,
+        matching skills auto-activate, and ``use_skill`` can load any pack.
+    workspace_hints:
+        Optional project/file-type text used to recognize work content.
     settings:
         Optional host-wide personalization :class:`Settings`; extra
         instructions and context injected into every conversation.
@@ -109,6 +111,7 @@ class Agent:
         settings: "Settings | None" = None,
         skill_evolver: "SkillEvolver | None" = None,
         on_event: EventHandler | None = None,
+        workspace_hints: str = "",
     ) -> None:
         self.provider = provider
         self.tools = tools or ToolRegistry()
@@ -122,10 +125,14 @@ class Agent:
         self.settings = settings
         self.skill_evolver = skill_evolver
         self.on_event = on_event
+        self.workspace_hints = workspace_hints
         self.messages: list[Message] = []
         self.own_usage = Usage()
         self._children_usage = Usage()
         self._memory_context = ""
+        self._auto_skill_names: list[str] = []
+        self._invoked_skill_names: list[str] = []
+        self._bind_skill_runtime()
 
     @property
     def usage(self) -> Usage:
@@ -152,6 +159,59 @@ class Agent:
         self.messages.clear()
         self.own_usage = Usage()
         self._children_usage = Usage()
+        self._auto_skill_names.clear()
+        self._invoked_skill_names.clear()
+        self._memory_context = ""
+
+    def _bind_skill_runtime(self) -> None:
+        """Expose use_skill so the model can independently load any pack."""
+        if self.skills is None or not len(self.skills):
+            return
+        if self.tools.get("use_skill") is not None:
+            return
+        from codeagent.skills.runtime import UseSkillTool
+
+        self.tools.register(UseSkillTool(self.skills, self.invoke_skills))
+
+    def invoke_skills(self, names: list[str]) -> list["Skill"]:
+        """Mark skills as user-invoked (or model-invoked) for this session."""
+        from codeagent.skills.skill import Skill
+
+        loaded: list[Skill] = []
+        if self.skills is None:
+            return loaded
+        for name in names:
+            skill = self.skills.get(name)
+            if skill is None or skill.name in self._invoked_skill_names:
+                if skill is not None:
+                    loaded.append(skill)
+                continue
+            self._invoked_skill_names.append(skill.name)
+            loaded.append(skill)
+        return loaded
+
+    def _active_skill_names(self) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for name in (*self._auto_skill_names, *self._invoked_skill_names):
+            if name in seen:
+                continue
+            seen.add(name)
+            ordered.append(name)
+        return ordered
+
+    def _auto_activate_skills(self, task: str) -> list[str]:
+        """Recognize work content and enable matching skills without asking."""
+        if self.skills is None or not len(self.skills):
+            return []
+        from codeagent.skills.runtime import match_work_skills
+
+        hits = match_work_skills(
+            self.skills, task, hints=self.workspace_hints, limit=8,
+        )
+        names = [skill.name for skill in hits]
+        self._auto_skill_names = names
+        return names
 
     def _check_budget(self) -> None:
         if self.budget is not None and self.budget.exceeded(self.usage):
@@ -169,7 +229,21 @@ class Agent:
             if block:
                 parts.append(block)
         if self.skills is not None and len(self.skills):
-            block = self.skills.prompt_block()
+            from codeagent.skills.runtime import STUDIO_SKILL_RULES, expand_work_query
+
+            parts.append(STUDIO_SKILL_RULES)
+            query = ""
+            for msg in reversed(self.messages):
+                if msg.role == "user":
+                    query = (msg.content or "")[:800]
+                    break
+            blob = expand_work_query(" ".join(
+                x for x in (query, self.workspace_hints) if x
+            ))
+            active = self._active_skill_names()
+            if active:
+                parts.append("[已自动启用 / 已调用技能 — 必须遵守]\n" + "、".join(active))
+            block = self.skills.prompt_block(query=blob, active=active)
             if block:
                 parts.append(block)
         if self._memory_context:
@@ -202,6 +276,10 @@ class Agent:
                  self.provider.name, self.provider.model, task)
         self.messages.append(Message.user(task))
         await self._refresh_memory_context(task)
+        activated = self._auto_activate_skills(task)
+        if activated:
+            await self._emit("skills_activated", activated)
+            log.info("auto skills: %s", ", ".join(activated))
 
         for iteration in range(1, self.max_iterations + 1):
             await self._emit("iteration", iteration)

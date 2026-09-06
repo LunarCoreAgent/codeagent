@@ -111,7 +111,7 @@ from codeagent.tools import (
     web_tools,
 )
 
-__version__ = "0.26.0"
+__version__ = "0.30.0"
 
 __all__ = [
     "Agent",

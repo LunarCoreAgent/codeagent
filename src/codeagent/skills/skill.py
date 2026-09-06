@@ -121,38 +121,79 @@ class SkillLibrary:
         self.add(skill)
         return path
 
+    def names(self) -> list[str]:
+        return list(self._skills)
+
     def search(self, query: str, limit: int = 5) -> list[Skill]:
-        """Keyword-overlap search over name + description + content."""
-        words = {w.lower() for w in query.split() if len(w) > 1}
-        if not words:
+        """Keyword-overlap search over name, triggers, description, content."""
+        raw = (query or "").lower()
+        words = {w.lower() for w in raw.split() if len(w) > 1}
+        if not raw.strip():
             return []
         scored: list[tuple[int, Skill]] = []
         for skill in self._skills.values():
             haystack = f"{skill.name} {skill.description} {skill.content}".lower()
             score = sum(1 for w in words if w in haystack)
+            name_key = skill.name.replace("-", "")
+            if name_key and name_key in raw.replace(" ", "").replace("-", ""):
+                score += 5
+            triggers = skill.metadata.get("triggers", "")
+            for token in triggers.replace("，", ",").split(","):
+                token = token.strip().lower()
+                if token and token in raw:
+                    score += 3
             if score:
                 scored.append((score, skill))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [skill for _, skill in scored[:limit]]
 
-    def prompt_block(self, max_chars: int = 6000) -> str:
-        """Render skills as a system-prompt block.
-
-        Includes an index of every skill (name + description) plus the full
-        body of as many skills as fit within ``max_chars``.
-        """
+    def catalog_block(self) -> str:
+        """Compact index of every skill (name + description)."""
         if not self._skills:
             return ""
-        index_lines = [
+        lines = [
             f"- {skill.name}: {skill.description or '(no description)'}"
             for skill in self._skills.values()
         ]
-        parts = [
-            "[Available skills — follow these instructions when relevant]",
-            "\n".join(index_lines),
-        ]
-        budget_left = max_chars - sum(len(p) for p in parts)
+        return (
+            "[Available skills — follow these instructions when relevant]\n"
+            + "\n".join(lines)
+        )
+
+    def prompt_block(
+        self,
+        max_chars: int = 18000,
+        query: str = "",
+        active: list[str] | None = None,
+    ) -> str:
+        """Render skills as a system-prompt block.
+
+        Includes an index of every skill (name + description) plus the full
+        body of as many skills as fit within ``max_chars``. When ``query``
+        is set, matching skills are injected first. ``active`` names
+        (auto-routed or use_skill) always come before the rest.
+        """
+        if not self._skills:
+            return ""
+        catalog = self.catalog_block()
+        parts = [catalog]
+        ordered: list[Skill] = []
+        seen: set[str] = set()
+        for name in active or []:
+            skill = self.get(name)
+            if skill is not None and skill.name not in seen:
+                ordered.append(skill)
+                seen.add(skill.name)
+        if query.strip():
+            for skill in self.search(query, limit=8):
+                if skill.name not in seen:
+                    ordered.append(skill)
+                    seen.add(skill.name)
         for skill in self._skills.values():
+            if skill.name not in seen:
+                ordered.append(skill)
+        budget_left = max_chars - sum(len(p) for p in parts)
+        for skill in ordered:
             block = f"\n### Skill: {skill.name}\n{skill.content.strip()}"
             if budget_left - len(block) < 0:
                 break

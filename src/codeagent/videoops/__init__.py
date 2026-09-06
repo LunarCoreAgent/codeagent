@@ -74,6 +74,7 @@ class VideoOpsConfig:
     bootstrapped: bool = False
     skills_installed: bool = False
     gradio_base: str = ""  # LAN Gradio 文生视频，如 http://192.168.3.23:7860
+    comfy_base: str = ""  # ComfyUI，如 http://127.0.0.1:8188
 
     def __post_init__(self) -> None:
         if not (self.path or "").strip():
@@ -124,8 +125,12 @@ def install_bundled_skills(directory: Path | None = None) -> list[str]:
 
 
 def load_all_skills(*directories: str | Path) -> SkillLibrary:
-    """Bundled packs first, then each directory (later files override names)."""
+    """Video packs + fusion packs, then each directory (later files override)."""
+    from codeagent.skills.fusion import fusion_library
+
     library = bundled_library()
+    for skill in fusion_library():
+        library.add(skill)
     for directory in directories:
         root = Path(directory).expanduser()
         if not root.is_dir():

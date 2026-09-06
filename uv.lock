@@ -479,7 +479,7 @@ wheels = [
 
 [[package]]
 name = "codeagent"
-version = "0.26.0"
+version = "0.30.0"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },

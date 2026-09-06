@@ -65,6 +65,7 @@ def run_desktop(root: Path | None = None) -> int:
         width=1280,
         height=840,
         min_size=(960, 640),
+        text_select=True,
     )
     api._window = window
     webview.start()

@@ -287,6 +287,8 @@ def test_diagnose_messages(api):
     assert "超时" in api._diagnose(Exception("request timed out"))
     assert "Key" in api._diagnose(Exception("401 Unauthorized"))
     assert "404" in api._diagnose(Exception("404 not found"))
+    assert "兜底规则" in api._diagnose(ValueError("Empty provider spec"))
+    assert "兜底规则" in api._diagnose(ValueError("自由路由未命中可用模型"))
 
 
 def test_get_overview(api):
@@ -465,6 +467,10 @@ def test_get_skills_includes_bundled(api):
     names = {s["name"] for s in api.get_skills()}
     assert "video-ops-pipeline" in names
     assert "short-drama-script" in names
+    assert "fusion-router" in names
+    assert "stop-slop-zh" in names
+    stop = next(s for s in api.get_skills() if s["name"] == "stop-slop-zh")
+    assert "github.com/VincentOld/stop-slop-zh" in stop["source"]
 
 
 def test_get_skills_lists_pack(api, tmp_path):
@@ -507,6 +513,10 @@ def test_ui_has_all_pages_and_bridge():
     assert "pywebview.api.get_overview" in HTML
     assert "pywebview.api.get_memories" in HTML
     assert "pywebview.api.get_skills" in HTML
+    assert "融合技能" in HTML
+    assert "skillPackOf" in HTML
+    assert "use_skill" in HTML
+    assert "自动识别" in HTML
     assert "pywebview.api.get_logs" in HTML
     assert "pywebview.api.get_models_page" in HTML
     assert "pywebview.api.save_mixture" in HTML
@@ -522,6 +532,8 @@ def test_ui_has_all_pages_and_bridge():
     assert "pywebview.api.set_patch_status" in HTML
     assert "pywebview.api.approve_skill" in HTML
     assert "pywebview.api.get_nav_status" in HTML
+    assert "function bootUi" in HTML
+    assert "pywebviewready" in HTML
     assert "pywebview.api.get_privacy_policy" in HTML
     assert "pywebview.api.accept_privacy" in HTML
     assert 'id="page-privacy"' in HTML
@@ -635,6 +647,23 @@ def test_router_sandbox_keyword_hit(api):
     assert "调试池" in r["chosen"]
 
 
+def test_router_sandbox_ideographic_keywords(api):
+    """中文顿号/逗号分隔的关键词应能单独命中。"""
+    from codeagent.desktop.router import split_keywords
+
+    assert split_keywords("代码、分析、验证") == ["代码", "分析", "验证"]
+    assert split_keywords("报错，bug;fix") == ["报错", "bug", "fix"]
+    members = _two_members(api)
+    api.save_mixture("分析池", "rule", members)
+    target = f"mix:{api.assets.mixtures[0].id}"
+    api.add_route_rule("代码分析", "代码、分析、验证", target)
+    r = api.route_sandbox("请帮我分析这段日志")
+    assert r["ok"]
+    assert r["strategy"] == "规则直通"
+    assert r["target"] == target
+    assert "分析池" in r["chosen"]
+
+
 def test_router_sandbox_fallback_rule(api):
     members = _two_members(api)
     target = f"api:{api.assets.api_models[0].id}"
@@ -734,6 +763,50 @@ def test_pinned_model_skips_free_route(api, monkeypatch):
     assert api.send("这里有报错") is True
     wait_for(api._window, "done")
     assert seen["model"] == "pinned-model"
+
+
+def test_chat_free_route_falls_back_to_mixture(api, monkeypatch):
+    """自由路由未命中关键词时，走第一个启用的聚合池，而不是空 Provider。"""
+    from codeagent.core.types import LLMResponse
+
+    seen = {}
+
+    class FakeProvider:
+        def __init__(self, model):
+            self.model = model
+            self.name = "fake"
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            seen["model"] = self.model
+            return LLMResponse(content="ok")
+
+    monkeypatch.setattr(
+        "codeagent.desktop.api.parse_provider_spec",
+        lambda *a, **k: FakeProvider("legacy"),
+    )
+    monkeypatch.setattr(
+        "codeagent.llm.ollama.OllamaProvider",
+        lambda model, base_url: FakeProvider(model),
+    )
+    members = _two_members(api)
+    api.save_mixture("默认池", "cascade", members)
+    api.set_active_model("route:free")
+    api.config.provider = ""
+    api.config.model = ""
+    assert api.send("你好呀") is True
+    wait_for(api._window, "done")
+    assert seen["model"] == "qwen3:8b"
+
+
+def test_chat_free_route_empty_assets_friendly_error(api, monkeypatch):
+    """自由路由既无规则也无模型资产、偏好又为空时，给出中文提示而不是 Empty provider spec。"""
+    api.set_active_model("route:free")
+    api.config.provider = ""
+    api.config.model = ""
+    assert api.send("随便聊聊") is True
+    err = wait_for(api._window, "error")
+    assert "自由路由" in err["text"]
+    assert "Empty provider spec" not in err["text"]
 
 
 # ---------------------------------------------------------------------------
@@ -1102,7 +1175,20 @@ def test_evolution_settings_gates(api):
 
 def test_nav_status(api):
     s = api.get_nav_status()
-    assert set(s) == {"running", "online", "mixtures"}
+    assert {"running", "online", "mixtures", "local", "api", "active"} <= set(s)
+    assert s["local"] == 1  # fixture 默认本机端点
+    assert s["api"] == 0
+    assert s["mixtures"] == 0
+    assert s["active"] == "自由路由"
+
+
+def test_nav_status_counts_configured_assets(api):
+    members = _two_members(api)
+    api.save_mixture("状态池", "weighted", members)
+    s = api.get_nav_status()
+    assert s["api"] == 1
+    assert s["mixtures"] == 1
+    assert s["local"] >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -1254,7 +1340,15 @@ def test_ui_chat_composer_features():
     assert "syncVideoGenBar" in HTML
     assert "isVideoModelSelected" in HTML
     assert "composer-video" in HTML
+    assert "function renderReply" in HTML
+    assert "cls==='bot'?renderReply" in HTML
+    assert "curBot.innerHTML=renderReply" in HTML
     assert "msg-actions" in HTML and "copy_text" in HTML
+    assert "copyChatAll" in HTML and "复制全部" in HTML
+    assert "chatPlainText" in HTML
+    assert "user-select: text" in HTML
+    assert "text_select=True" in Path(
+        __file__).resolve().parents[1].joinpath("src/codeagent/desktop/app.py").read_text(encoding="utf-8")
     assert "export_message" in HTML
     assert "pick_attachments" in HTML
     assert 'id="stopBtn"' in HTML and "stopChat()" in HTML

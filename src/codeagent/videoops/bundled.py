@@ -121,7 +121,8 @@ _add(
     """
 # 局域网 WAN / Gradio 文生视频
 
-对话里调用工具 `video_generate`，不要把它当成聊天模型。
+对话里调用工具 `video_generate`（provider=wan），不要把它当成聊天模型。
+云端海螺/Kimi 用 provider=minimax 或 kimi；本机节点图用 provider=comfy。
 底层按 Gradio 官方 Python API：`Client(url).predict(..., api_name="/generate_video")`。
 该服务 MCP Tools 为 0，不要走 MCP。
 

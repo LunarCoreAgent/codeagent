@@ -129,6 +129,8 @@ def _build_agent(
     strategy: str = "fallback",
 ) -> Agent:
     budget = Budget(max_total_tokens=budget_tokens) if budget_tokens else None
+    from codeagent.skills.runtime import workspace_skill_hints
+
     return Agent(
         provider=_build_provider(provider, model, api_key, base_url, strategy),
         tools=registry,
@@ -139,6 +141,7 @@ def _build_agent(
         settings=Settings.load(),  # host-wide personalization, every chat
         skill_evolver=skill_evolver,
         on_event=_make_event_handler(verbose),
+        workspace_hints=workspace_skill_hints(root),
     )
 
 

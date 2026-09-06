@@ -27,6 +27,12 @@ def is_free_route(ref: str) -> bool:
     return (ref or "").strip() in ("", FREE_ROUTE_REF)
 
 
+def split_keywords(raw: str) -> list[str]:
+    """Split rule keywords on ASCII/Chinese commas and enumeration pauses."""
+    text = (raw or "").replace("、", ",").replace("，", ",").replace(";", ",")
+    return [k.strip() for k in text.split(",") if k.strip()]
+
+
 # 内置任务类型关键词（命中即归类，与 LCA engine 的分类器一致思路）
 BUILTIN_TASK_TYPES: dict[str, list[str]] = {
     "代码调试": ["报错", "错误", "bug", "debug", "修复", "fix", "异常", "traceback", "error"],
@@ -113,12 +119,12 @@ def route_message(text: str, store: RouterStore, resolve_label) -> dict[str, Any
 
     hit: RouteRule | None = None
     for rule in enabled:
-        keys = [k.strip() for k in rule.keywords.split(",") if k.strip()]
+        keys = split_keywords(rule.keywords)
         if keys and any(k.lower() in low for k in keys):
             hit = rule
             break
 
-    fallback_rule = next((r for r in enabled if not r.keywords.strip()), None)
+    fallback_rule = next((r for r in enabled if not split_keywords(r.keywords)), None)
 
     if hit is not None:
         task_type, target = hit.task_type, hit.target
@@ -143,6 +149,7 @@ def route_message(text: str, store: RouterStore, resolve_label) -> dict[str, Any
         "taskType": task_type,
         "strategy": strategy,
         "reason": reason,
+        "target": target,
         "candidates": [chosen] if target else [],
         "chosen": chosen,
         "latencyMs": latency + int((time.monotonic() - started) * 1000),

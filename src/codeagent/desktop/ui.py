@@ -160,6 +160,10 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 
 /* ---------- chat ---------- */
 #page-chat { padding: 0; }
+#page-chat .msg, #page-chat .chip, #page-chat .fb-row {
+  -webkit-user-select: text; user-select: text; cursor: text; }
+#page-chat .msg-actions, #page-chat .ma-btn, #page-chat .fb-btn {
+  -webkit-user-select: none; user-select: none; cursor: pointer; }
 #chat { flex: 1; overflow-y: auto; padding: 22px 0; min-height: 0; }
 .chat-col { max-width: 720px; margin: 0 auto; display: flex;
             flex-direction: column; gap: 12px; padding: 0 22px; }
@@ -179,6 +183,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
             padding: 1px 5px; font-size: .92em; }
 .msg.user code { background: var(--code-inline-user); }
 .msg pre code { background: none; padding: 0; }
+.msg strong { font-weight: 650; }
 .chip { align-self: flex-start; font-size: 11.5px; color: var(--muted);
         border: 1px dashed var(--border-hi); border-radius: 999px;
         padding: 3px 12px; animation: pop .16s ease; }
@@ -222,14 +227,14 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .stopbtn:hover { opacity: .88; }
 .stopbtn:disabled { opacity: .35; cursor: default; }
 
-/* 消息操作条：悬停显示 复制 / 分享 */
+/* 消息操作条：复制 / 分享始终可见，气泡正文可拖选 */
 .msg-wrap { display: flex; flex-direction: column; max-width: 85%; }
 .msg-wrap.user { align-self: flex-end; align-items: flex-end; }
 .msg-wrap.bot { align-self: flex-start; align-items: flex-start; }
 .msg-wrap .msg { max-width: 100%; }
-.msg-actions { display: flex; gap: 4px; margin-top: 3px; opacity: 0;
-               transition: opacity .12s; }
-.msg-wrap:hover .msg-actions { opacity: 1; }
+.chip-wrap { display: flex; align-items: center; gap: 6px; align-self: flex-start; }
+.chip-wrap .chip { align-self: auto; }
+.msg-actions { display: flex; gap: 4px; margin-top: 3px; opacity: 1; }
 .ma-btn { border: none; background: transparent; color: var(--faint);
           font-size: 11px; cursor: pointer; padding: 2px 7px;
           border-radius: 6px; }
@@ -270,6 +275,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .mem .m-del { flex-shrink: 0; background: none; border: none; color: var(--faint);
               cursor: pointer; font-size: 15px; padding: 2px 6px; }
 .mem .m-del:hover { color: var(--bad); }
+.skill-pack { max-width: 1040px; margin: 0 auto 18px; width: 100%; }
+.skill-pack h2 { font-size: 12px; color: var(--muted); font-weight: 600;
+  letter-spacing: .4px; margin: 0 0 10px; }
 .skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
               gap: 13px; max-width: 1040px; margin: 0 auto; width: 100%; }
 .skill-card b { display: block; font-size: 13px; margin-bottom: 5px; }
@@ -669,11 +677,13 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     </select>
     <select id="convPicker" class="toolsel" style="max-width:200px"
             onchange="loadConv(this.value)" title="历史对话（保存在项目文件夹）"></select>
+    <button class="btn" id="copyChatBtn" style="font-size:12px"
+            onclick="copyChatAll()" title="复制当前对话全部内容">复制全部</button>
     <button class="btn" id="newConvBtn" style="font-size:12px"
             onclick="newChat()">＋ 新对话</button>
   </div>
   <div id="chat"><div class="chat-col" id="chatCol">
-    <div class="chip status">CodeCoreAgent 就绪 — 开始对话</div>
+    <div class="chip-wrap"><div class="chip status">CodeCoreAgent 就绪 — 开始对话</div></div>
   </div></div>
   <div id="composer"><div class="composer-inner">
     <div id="attRow"></div>
@@ -839,6 +849,17 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       <div class="hint">识别为 Gradio 文生视频后，对话里可用 <code>video_generate</code> 把成片写到 02-generate/。不能当作聊天模型。</div>
     </div>
     <div class="card sect">
+      <h3>ComfyUI</h3>
+      <label>服务地址（默认本机 8188）</label>
+      <input id="vo_comfy" placeholder="http://127.0.0.1:8188">
+      <div class="hint" id="voComfyStatus">未接入</div>
+      <div class="hint">节点图后端，不是聊天模型。工具 <code>video_generate</code> 的 provider=comfy，并提供 API 格式工作流 JSON。说明见融合技能 comfyui。</div>
+    </div>
+    <div class="card sect">
+      <h3>云端视频模型（MiniMax / Kimi）</h3>
+      <div class="hint">在「模型」添加 MiniMax Hailuo（如 MiniMax-Hailuo-2.3）或 Kimi 视频模型并保存密钥。对话选中该模型会走文生视频；也可让 Agent 调用 <code>video_generate</code>，provider 填 minimax 或 kimi。</div>
+    </div>
+    <div class="card sect">
       <h3>本机工具链</h3>
       <div id="voToolchain" class="hint">检测中…</div>
       <div class="hint" style="margin-top:8px">LibTV 用于画布生成；Node+npx 用于 Remotion；ffmpeg 用于中文竖屏剪辑。未安装时 Agent 会改用已有路径并提示。</div>
@@ -865,8 +886,8 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 <!-- ============ 技能 ============ -->
 <section class="page" id="page-skills">
   <div class="page-head"><h1>技能库</h1>
-    <span class="sub">内置视频运营技能 + ~/.codeagent/skills 下的 SKILL.md，自动注入对话</span></div>
-  <div class="page-body"><div class="skill-grid" id="skillGrid"></div></div>
+    <span class="sub">工作室按任务和项目文件自动识别并启用；模型也可独立调用 use_skill 加载全部技能</span></div>
+  <div class="page-body"><div id="skillGrid"></div></div>
 </section>
 
 <!-- ============ 日志 ============ -->
@@ -959,11 +980,11 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
   <div class="page-body"><div class="page-wrap"><div class="grid-32">
     <div>
       <div class="card sect" style="margin-bottom:14px"><h3>任务类型路由规则</h3>
-        <div class="hint" style="margin-bottom:10px">按优先级从上到下匹配，命中即分发</div>
+        <div class="hint" style="margin-bottom:10px">按优先级从上到下匹配，命中即分发。关键词可用逗号、顿号或中文逗号分隔；整栏留空即为兜底规则。</div>
         <div id="ruleList"></div>
         <div style="display:grid;grid-template-columns:1fr 1.4fr 1fr auto;gap:8px;margin-top:12px">
           <input id="rl_type" placeholder="任务类型">
-          <input id="rl_keywords" placeholder="关键词，逗号分隔">
+          <input id="rl_keywords" placeholder="关键词，逗号或顿号分隔；留空=兜底">
           <select id="rl_target"></select>
           <button class="btn primary" onclick="addRule()">+</button>
         </div>
@@ -1363,6 +1384,29 @@ function render(s){
   h = h.replace(/`([^`\n]+)`/g,'<code>$1</code>');
   return h;
 }
+function renderReply(s){
+  /* 模型回复：消化 Markdown 星号/横杠，代码块原样保留 */
+  const fences=[];
+  let h=esc(String(s||''));
+  h=h.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>{
+    fences.push('<pre><code>'+c+'</code></pre>');
+    return '\x00F'+(fences.length-1)+'\x00';
+  });
+  h=h.replace(/`([^`\n]+)`/g,(_,c)=>{
+    fences.push('<code>'+c+'</code>');
+    return '\x00F'+(fences.length-1)+'\x00';
+  });
+  h=h.replace(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/gm,'');
+  h=h.replace(/^#{1,6}\s+/gm,'');
+  h=h.replace(/^[\t ]*[-*+]\s+/gm,'');
+  h=h.replace(/\*\*\*(.+?)\*\*\*/g,'<strong>$1</strong>');
+  h=h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  h=h.replace(/__(.+?)__/g,'<strong>$1</strong>');
+  h=h.replace(/(^|[^\*])\*(?!\s)([^*\n]+)\*(?!\*)/g,'$1$2');
+  h=h.replace(/\*{1,3}/g,'');
+  h=h.replace(/\x00F(\d+)\x00/g,(_,i)=>fences[i]);
+  return h;
+}
 function toast(t){const el=$('toast');el.textContent=t;el.classList.add('show');
   setTimeout(()=>el.classList.remove('show'),2200);}
 
@@ -1615,11 +1659,16 @@ function loadConv(id){
 
 /* 侧栏底部状态区 */
 function loadNavStatus(){
+  if(!window.pywebview||!window.pywebview.api)return;
   pywebview.api.get_nav_status().then(s=>{
-    $('nsLocal').textContent=s.running+' 运行中';
-    $('nsApi').textContent=s.online+' 在线';
-    $('nsMix').textContent=s.mixtures+' 启用';
-  });
+    if(!s)return;
+    const localN=s.running||0, localE=s.local||0;
+    const apiOn=s.online||0, apiN=s.api||0;
+    $('nsLocal').textContent=localN?localN+' 运行中':(localE?localE+' 已接入':'0');
+    $('nsApi').textContent=apiOn?apiOn+' 在线':(apiN?apiN+' 已接入':'0');
+    $('nsMix').textContent=(s.mixtures||0)+' 启用';
+    if(s.active)$('footProvider').textContent=s.active;
+  }).catch(()=>{});
 }
 
 /* ---------- dashboard ---------- */
@@ -1631,7 +1680,7 @@ function loadDashboard(){
     $('stModel').textContent=o.model;
     $('stSkills').textContent=o.skills+' / '+o.memories;
     $('stHarness').textContent=o.harnesses;
-    $('footProvider').textContent=o.provider+' 已连接';
+    $('footProvider').textContent=o.active_label||o.provider||'—';
     const el=$('dashRuns');
     if(!o.recent_runs.length){el.innerHTML='<div class="empty">暂无记录</div>';return;}
     el.innerHTML=o.recent_runs.map(r=>'<div class="run-item"><b>'+
@@ -1642,7 +1691,7 @@ function loadDashboard(){
 /* ---------- chat ---------- */
 function addMsg(cls,text){
   const div=document.createElement('div');
-  div.className='msg '+cls; div.innerHTML=render(text);
+  div.className='msg '+cls; div.innerHTML=cls==='bot'?renderReply(text):render(text);
   div._raw=text;
   const wrap=document.createElement('div');
   wrap.className='msg-wrap '+cls;
@@ -1650,9 +1699,7 @@ function addMsg(cls,text){
   bar.className='msg-actions';
   bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>'+
     '<button class="ma-btn" data-a="share">↗ 分享</button>';
-  bar.querySelector('[data-a=copy]').onclick=()=>{
-    pywebview.api.copy_text(div._raw||'').then(ok=>toast(ok?'已复制到剪贴板':'复制失败'));
-  };
+  bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(div.innerText||div._raw||'');
   bar.querySelector('[data-a=share]').onclick=()=>{
     pywebview.api.export_message(div._raw||'').then(r=>{
       if(r.ok)toast('已导出：'+r.path);
@@ -1663,10 +1710,39 @@ function addMsg(cls,text){
   $('chatCol').appendChild(wrap); $('chat').scrollTop=$('chat').scrollHeight;
   return div;
 }
+function copyPlain(text){
+  const t=String(text||'');
+  if(!t){toast('没有可复制的内容');return;}
+  pywebview.api.copy_text(t).then(ok=>toast(ok?'已复制到剪贴板':'复制失败'));
+}
+function chatPlainText(){
+  const parts=[];
+  Array.from($('chatCol').children).forEach(el=>{
+    if(el.classList.contains('msg-wrap')){
+      const msg=el.querySelector('.msg');
+      const raw=(msg&&(msg.innerText||msg._raw))||'';
+      if(!raw)return;
+      parts.push((el.classList.contains('user')?'你':'助手')+'：\n'+raw);
+    }else if(el.classList.contains('chip')||el.classList.contains('chip-wrap')){
+      const chip=el.classList.contains('chip')?el:el.querySelector('.chip');
+      const raw=(chip&&(chip._raw||chip.textContent))||'';
+      if(raw)parts.push(raw);
+    }
+  });
+  return parts.join('\n\n');
+}
+function copyChatAll(){ copyPlain(chatPlainText()); }
 function addChip(cls,text){
+  const wrap=document.createElement('div');
+  wrap.className='chip-wrap';
   const div=document.createElement('div');
-  div.className='chip '+cls; div.textContent=text;
-  $('chatCol').appendChild(div); $('chat').scrollTop=$('chat').scrollHeight;
+  div.className='chip '+cls; div.textContent=text; div._raw=text;
+  const bar=document.createElement('div');
+  bar.className='msg-actions';
+  bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>';
+  bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(text);
+  wrap.appendChild(div); wrap.appendChild(bar);
+  $('chatCol').appendChild(wrap); $('chat').scrollTop=$('chat').scrollHeight;
 }
 /* ---------- 附件（所有文件类型识别） ---------- */
 let atts=[];
@@ -1704,7 +1780,7 @@ function isVideoModelSelected(){
   const sel=$('modelPicker');
   if(!sel||sel.selectedIndex<0)return false;
   const opt=sel.options[sel.selectedIndex];
-  return !!(opt&&opt.dataset.kind==='gradio');
+  return !!(opt&&(opt.dataset.kind==='gradio'||opt.dataset.kind==='video-api'));
 }
 function syncVideoGenBar(){
   const on=isVideoModelSelected();
@@ -1738,6 +1814,17 @@ function stopChat(){
 }
 $('input').addEventListener('keydown',e=>{
   if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat();}
+});
+document.addEventListener('keydown',e=>{
+  if(!(e.metaKey||e.ctrlKey)||(e.key!=='a'&&e.key!=='A'))return;
+  if(!$('page-chat').classList.contains('active'))return;
+  const tag=(document.activeElement&&document.activeElement.tagName)||'';
+  if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT')return;
+  e.preventDefault();
+  const range=document.createRange();
+  range.selectNodeContents($('chatCol'));
+  const sel=window.getSelection();
+  sel.removeAllRanges(); sel.addRange(range);
 });
 
 /* 赞/踩反馈（LCA：对话页反馈即时计入活动流） */
@@ -1913,6 +2000,11 @@ function loadVideoOps(){
     $('vo_path').value=c.path||'';
     $('vo_enabled').checked=c.enabled!==false;
     $('vo_gradio').value=c.gradio_base||'';
+    if($('vo_comfy'))$('vo_comfy').value=c.comfy_base||'';
+    const cf=d.comfy||{};
+    if($('voComfyStatus'))$('voComfyStatus').innerHTML=cf.online
+      ?'<span class="pill green">在线</span> '+esc(cf.base||'')
+      :(c.comfy_base?'<span class="pill">离线</span> 打不开该地址':'未接入');
     const g=d.gradio||{};
     $('voGradioStatus').innerHTML=g.online
       ?'<span class="pill green">在线</span> '+esc(g.title||'Gradio')+(g.endpoints&&g.endpoints.length?' · '+esc(g.endpoints.join('、')):'')
@@ -1942,7 +2034,8 @@ function loadVideoOps(){
 }
 function saveVideoOpsConfig(){
   pywebview.api.save_video_ops_config(
-    $('vo_path').value.trim(),$('vo_enabled').checked,$('vo_gradio').value.trim()
+    $('vo_path').value.trim(),$('vo_enabled').checked,$('vo_gradio').value.trim(),
+    ($('vo_comfy')&&$('vo_comfy').value.trim())||''
   ).then(r=>{
     if(!r.ok){toast(r.error||'保存失败');return;}
     toast('视频运营路径已保存'); loadVideoOps();
@@ -1987,12 +2080,28 @@ function saveVideoOpsDraft(){
 }
 
 /* ---------- skills ---------- */
+function skillPackOf(s){
+  if(s.pack==='fusion')return 'fusion';
+  if(/video|wan-gradio|remotion|libtv|short-drama|ops-analyze|multi-publish/.test(s.name||''))
+    return 'video';
+  return 'user';
+}
+function skillCard(s){
+  return '<div class="card skill-card"><b>'+esc(s.name)+'</b><p>'+
+    esc(s.description||'')+'</p>'+
+    (s.source?'<p style="margin-top:6px;font-size:11px;color:var(--faint)">'+esc(s.source)+'</p>':'')+
+    '</div>';
+}
 function loadSkills(){
   pywebview.api.get_skills().then(items=>{
     const el=$('skillGrid');
-    if(!items.length){el.innerHTML='<div class="empty">~/.codeagent/skills 暂无技能包</div>';return;}
-    el.innerHTML=items.map(s=>'<div class="card skill-card"><b>'+esc(s.name)+
-      '</b><p>'+esc(s.description||'')+'</p></div>').join('');
+    if(!items.length){el.innerHTML='<div class="empty">暂无技能</div>';return;}
+    const g={fusion:[],video:[],user:[]};
+    items.forEach(s=>g[skillPackOf(s)].push(s));
+    const sec=(title,list)=>list.length
+      ?'<div class="skill-pack"><h2>'+title+' · '+list.length+'</h2><div class="skill-grid">'+
+        list.map(skillCard).join('')+'</div></div>':'';
+    el.innerHTML=sec('融合技能',g.fusion)+sec('视频运营',g.video)+sec('本地技能',g.user);
   });
 }
 
@@ -2044,6 +2153,7 @@ function loadModelsPage(){
     renderApiModels(a.api_models);
     renderMixtures(a.mixtures);
     renderPicker(a);
+    loadNavStatus();
   });
 }
 function loadModelAssets(){ // 对话页选择器只需轻量数据
@@ -2085,7 +2195,9 @@ function renderPicker(a){
   });
   (a.api_models||[]).forEach(m=>{
     const o=document.createElement('option');
-    o.value='api:'+m.id; o.textContent=m.label;
+    o.value='api:'+m.id;
+    o.dataset.kind=m.video?'video-api':'';
+    o.textContent=m.video?m.label+'（文生视频）':m.label;
     if(a.active===o.value)o.selected=true;
     sel.appendChild(o);
   });
@@ -2099,6 +2211,7 @@ function pickModel(ref){
     if(!r.ok){toast(r.error||'无法设为当前模型');return;}
     toast('当前模型：'+r.active_label);
     $('footProvider').textContent=r.active_label;
+    loadNavStatus();
     const sel=$('modelPicker');
     if(sel){
       for(const o of sel.options){ if(o.value===ref){ sel.value=ref; break; } }
@@ -2373,7 +2486,7 @@ function renderApiModels(list){
     div.style.cssText='display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;padding:13px 16px';
     div.innerHTML='<div><div style="display:flex;align-items:center;gap:8px">'+
       '<span style="font-weight:550">'+esc(m.label)+'</span>'+st+
-      '<span class="pill blue">自定义</span></div>'+
+      (m.video?'<span class="pill purple">文生视频</span>':'<span class="pill blue">自定义</span>')+'</div>'+
       '<div style="font-size:11px;color:var(--faint);margin-top:4px">延迟 '+
       (m.latency_ms||'—')+'ms · $'+m.cost_per_1k+'/1k tokens · '+esc(m.base_url)+
       ' · '+(m.has_key?esc(m.key_masked):'免鉴权')+'</div></div>'+
@@ -2954,7 +3067,7 @@ function saveAll(){
 window._onEvent=function(ev){
   if(ev.kind==='text'){
     if(!curBot)curBot=addMsg('bot','');
-    curBot.innerHTML=render(ev.text);
+    curBot.innerHTML=renderReply(ev.text);
     curBot._raw=ev.text;
     $('chat').scrollTop=$('chat').scrollHeight;
   }else if(ev.kind==='tool'){
@@ -2978,7 +3091,7 @@ window._onEvent=function(ev){
   }else if(ev.kind==='lead_done'){
     $('leadBtn').disabled=false;
     const div=document.createElement('div');
-    div.className='reply-box'; div.innerHTML=render(ev.text);
+    div.className='reply-box'; div.innerHTML=renderReply(ev.text);
     $('leadReply').innerHTML=''; $('leadReply').appendChild(div);
     loadRuns();
   }else if(ev.kind==='confirm'){
@@ -2994,15 +3107,19 @@ window._onEvent=function(ev){
   }
 };
 
-initPresets();
-loadSettings();
-loadDashboard();
-loadModelAssets();
-loadProjects();
-loadConversations();
-loadNavStatus();
-ensurePrivacyAccepted();
-setInterval(loadNavStatus, 30000);
+function bootUi(){
+  initPresets();
+  loadSettings();
+  loadDashboard();
+  loadModelAssets();
+  loadProjects();
+  loadConversations();
+  loadNavStatus();
+  ensurePrivacyAccepted();
+}
+if(window.pywebview&&window.pywebview.api) bootUi();
+else window.addEventListener('pywebviewready', bootUi);
+setInterval(loadNavStatus, 15000);
 </script>
 </body>
 </html>

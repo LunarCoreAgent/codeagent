@@ -86,6 +86,30 @@ def test_ui_has_videoops_page():
     assert "connectVideoGradio" in HTML
     assert "video_generate" in HTML
     assert "Gradio / WAN" in HTML
+    assert "MiniMax" in HTML
+    assert "Kimi" in HTML
+    assert "vo_comfy" in HTML
+    assert "comfyui" in HTML
+
+
+def test_cloud_video_classify_and_map():
+    from codeagent.videoops.cloud import (
+        api_origin,
+        is_video_api_model,
+        map_duration,
+        map_hailuo_resolution,
+        video_backend,
+    )
+
+    assert is_video_api_model("MiniMax-Hailuo-2.3")
+    assert not is_video_api_model("abab6.5s-chat")
+    assert video_backend("MiniMax-Hailuo-2.3", "https://api.minimax.chat/v1") == "minimax"
+    assert video_backend("kimi-k2.6", "https://api.moonshot.cn/v1") == "kimi"
+    assert api_origin("https://api.minimax.chat/v1") == "https://api.minimax.chat"
+    assert map_hailuo_resolution("1080p") == "1080P"
+    assert map_hailuo_resolution("720p") == "768P"
+    assert map_duration(60) == 6
+    assert map_duration(81, 10) == 10
 
 
 def test_normalize_resolution_and_sse():

@@ -95,6 +95,37 @@ def test_library_search_ranks_by_keyword_overlap(tmp_path):
     assert hits[0].name == "pytest-patterns"
 
 
+def test_fusion_pack_and_chinese_routing():
+    from codeagent.skills.fusion import FUSION_SKILLS, fusion_library
+
+    assert "impeccable-craft" in FUSION_SKILLS
+    assert "paper-craft" in FUSION_SKILLS
+    assert "anime-js" in FUSION_SKILLS
+    assert "comfyui" in FUSION_SKILLS
+    lib = fusion_library()
+    anime = lib.search("用 anime.js 做入场交错")
+    assert anime[0].name == "anime-js"
+    comfy = lib.search("用 ComfyUI 跑工作流")
+    assert comfy[0].name == "comfyui"
+    hits = lib.search("把这段中文去AI味")
+    assert {s.name for s in hits} & {"stop-slop-zh", "humanizer-zh"}
+    ui = lib.search("做个落地页")
+    assert ui[0].name == "impeccable-craft"
+    block = lib.prompt_block(query="通宵挂机调研")
+    assert "### Skill: research-overnight" in block
+
+
+def test_install_fusion_skills(tmp_path):
+    from codeagent.skills.fusion import ensure_fusion_skills, install_fusion_skills
+
+    written = install_fusion_skills(tmp_path)
+    assert "fusion-router" in written
+    assert "anime-js" in written
+    assert (tmp_path / "karpathy-craft" / "SKILL.md").is_file()
+    assert (tmp_path / "anime-js" / "SKILL.md").is_file()
+    assert "fusion-router" in ensure_fusion_skills(tmp_path)
+
+
 def test_prompt_block_contains_index_and_bodies():
     library = SkillLibrary([Skill.parse(SKILL_MD), Skill.parse(PONYTAIL_MD)])
     block = library.prompt_block()
@@ -112,6 +143,74 @@ def test_prompt_block_respects_budget():
 
 def test_empty_library_prompt_block_is_empty():
     assert SkillLibrary().prompt_block() == ""
+
+
+def test_prompt_block_active_names_come_first():
+    library = SkillLibrary([Skill.parse(SKILL_MD), Skill.parse(PONYTAIL_MD)])
+    block = library.prompt_block(max_chars=400, active=["ponytail"])
+    assert block.index("### Skill: ponytail") < block.index("### Skill: pytest-patterns")
+
+
+def test_expand_and_match_work_content():
+    from codeagent.skills.fusion import fusion_library
+    from codeagent.skills.runtime import expand_work_query, match_work_skills
+
+    assert "界面" in expand_work_query("改一下首页")
+    assert "anime" in expand_work_query("用 anime.js 做入场")
+    lib = fusion_library()
+    names = {s.name for s in match_work_skills(lib, "改一下首页")}
+    assert "impeccable-craft" in names
+    assert "anime-js" in {s.name for s in match_work_skills(lib, "用 anime.js 做入场")}
+    zh = {s.name for s in match_work_skills(lib, "把这段润色成人话")}
+    assert zh & {"stop-slop-zh", "humanizer-zh"}
+
+
+def test_workspace_hints_see_frontend_files(tmp_path):
+    from codeagent.skills.runtime import workspace_skill_hints
+
+    (tmp_path / "components").mkdir()
+    (tmp_path / "components" / "Hero.tsx").write_text("export default function Hero(){return null}")
+    hints = workspace_skill_hints(tmp_path)
+    assert "React" in hints
+    assert "界面" in hints
+
+
+async def test_use_skill_tool_loads_and_lists():
+    from codeagent.skills.runtime import UseSkillTool
+
+    library = SkillLibrary([Skill.parse(SKILL_MD)])
+    activated: list[str] = []
+    tool = UseSkillTool(library, lambda names: activated.extend(names) or [])
+    listed = await tool.execute()
+    assert "pytest-patterns" in listed
+    body = await tool.execute(name="pytest-patterns")
+    assert "tmp_path" in body
+    assert "pytest-patterns" in activated
+    missing = await tool.execute(name="no-such-skill")
+    assert "未找到" in missing
+
+
+async def test_agent_auto_activates_and_registers_use_skill():
+    captured: list[str] = []
+    events: list[str] = []
+
+    class SpyProvider(ScriptedProvider):
+        async def complete(self, messages, tools=None, system=None, **kwargs):
+            captured.append(system or "")
+            names = [t.get("name") for t in (tools or [])]
+            assert "use_skill" in names
+            return await super().complete(messages, tools, system, **kwargs)
+
+    library = SkillLibrary([Skill.parse(SKILL_MD)])
+    agent = Agent(
+        provider=SpyProvider(["final answer"]),
+        skills=library,
+        on_event=lambda e: events.append(e.type),
+    )
+    assert await agent.run("write a pytest") == "final answer"
+    assert "skills_activated" in events
+    assert "pytest-patterns" in captured[0]
+    assert "工作室技能运行时" in captured[0]
 
 
 # ---------------------------------------------------------------------------
