@@ -853,7 +853,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       <label>服务地址（默认本机 8188）</label>
       <input id="vo_comfy" placeholder="http://127.0.0.1:8188">
       <div class="hint" id="voComfyStatus">未接入</div>
-      <div class="hint">节点图后端，不是聊天模型。工具 <code>video_generate</code> 的 provider=comfy，并提供 API 格式工作流 JSON。说明见融合技能 comfyui。</div>
+      <div class="hint">节点图后端，不是聊天模型。对话里模型会自己调用 <code>comfy</code> 工具（status / queue）。也可用 <code>video_generate</code> provider=comfy + API 格式工作流 JSON。</div>
     </div>
     <div class="card sect">
       <h3>云端视频模型（MiniMax / Kimi）</h3>
@@ -1229,10 +1229,17 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
         <span>自动批准所有工具调用（含写文件/执行命令，慎用）</span></div>
     </div>
 
-    <div class="card sect"><h3>语音回复</h3>
+    <div class="card sect"><h3>语音面 Voice Surface</h3>
+      <p class="hint">LunarCore v3.3.17 契约：说问听答。豆包未配置时小智音色回退 Edge 晓晨。凭证只写不读。</p>
       <div class="checkline"><input type="checkbox" id="cfg_voice">
-        <span>朗读回复（edge-tts 免费语音包）</span></div>
-      <label>音色</label><select id="cfg_voicename"></select>
+        <span>开启语音面（打字提问也播报回答）</span></div>
+      <label>播报声音</label><select id="cfg_voicename"></select>
+      <div class="checkline"><input type="checkbox" id="cfg_cute">
+        <span>嗲音模式（放缓语速、柔化音调）</span></div>
+      <label>音调（Hz）</label>
+      <input id="cfg_pitch" type="range" min="-50" max="50" step="5" value="-10">
+      <label>语速（%）</label>
+      <input id="cfg_rate" type="range" min="-20" max="20" step="1" value="-5">
     </div>
 
     <div class="card sect"><h3>个性化（本机所有对话生效）</h3>
@@ -3023,6 +3030,9 @@ function loadSettings(){
     $('cfg_strategy').value=st.config.strategy;
     $('cfg_yes').checked=st.config.auto_yes;
     $('cfg_voice').checked=st.config.voice_enabled;
+    if($('cfg_cute'))$('cfg_cute').checked=st.config.voice_cute_tone!==false;
+    if($('cfg_pitch'))$('cfg_pitch').value=st.config.voice_pitch??-10;
+    if($('cfg_rate'))$('cfg_rate').value=st.config.voice_rate??-5;
     $('cfg_workers').value=st.config.workers_json;
     $('set_nick').value=st.settings.nickname;
     $('set_lang').value=st.settings.language;
@@ -3054,6 +3064,9 @@ function saveAll(){
       api_key:$('cfg_key').value, base_url:$('cfg_base').value,
       strategy:$('cfg_strategy').value, auto_yes:$('cfg_yes').checked,
       voice_enabled:$('cfg_voice').checked, voice_name:$('cfg_voicename').value,
+      voice_cute_tone:$('cfg_cute')?$('cfg_cute').checked:true,
+      voice_pitch:$('cfg_pitch')?$('cfg_pitch').value:-10,
+      voice_rate:$('cfg_rate')?$('cfg_rate').value:-5,
       workers_json:$('cfg_workers').value,
     }),
     pywebview.api.save_settings({

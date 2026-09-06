@@ -8,7 +8,7 @@ import pytest
 
 from codeagent.core.types import Message
 from codeagent.llm.ollama import OllamaProvider
-from codeagent.llm.openai import LLMError, OpenAIProvider
+from codeagent.llm.openai import LLMError, OpenAIProvider, is_transient_serving_error
 
 
 # ---------------------------------------------------------------------------
@@ -164,3 +164,40 @@ async def test_openai_empty_stop_raises_diagnosis():
     provider = _openai_with(_FakeChoice(content="", reasoning=None, finish="stop"))
     with pytest.raises(LLMError, match="空内容"):
         await provider.complete([Message.user("hi")])
+
+
+def test_is_transient_serving_error():
+    assert is_transient_serving_error(Exception(
+        "Error code: 500 - InternalError.Algo: model serving"
+    ))
+    assert not is_transient_serving_error(Exception("401 Unauthorized"))
+
+
+async def test_openai_retries_dashscope_500(monkeypatch):
+    calls = {"n": 0}
+
+    class Flaky:
+        async def create(self, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError(
+                    "Error code: 500 - {'error': {'message': "
+                    "'<500> InternalError.Algo: serving'}}"
+                )
+            return type("R", (), {
+                "choices": [_FakeChoice(content="ok")],
+                "usage": type("U", (), {"prompt_tokens": 1, "completion_tokens": 1})(),
+            })()
+
+    provider = OpenAIProvider(model="qwen3.8-max", api_key="k")
+    provider.client = type("C", (), {
+        "chat": type("Chat", (), {"completions": Flaky()})()
+    })()
+    monkeypatch.setattr("codeagent.llm.openai.asyncio.sleep", _instant_sleep)
+    resp = await provider.complete([Message.user("hi")])
+    assert resp.content == "ok"
+    assert calls["n"] == 2
+
+
+async def _instant_sleep(_delay):
+    return None

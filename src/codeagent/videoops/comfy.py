@@ -10,6 +10,8 @@ from urllib.parse import urlencode
 
 import httpx
 
+DEFAULT_COMFY_BASE = "http://127.0.0.1:8188"
+
 
 def normalize_comfy_base(base: str) -> str:
     raw = (base or "").strip().rstrip("/")
@@ -18,6 +20,61 @@ def normalize_comfy_base(base: str) -> str:
     if "://" not in raw:
         raw = "http://" + raw
     return raw
+
+
+def resolve_comfy_base(explicit: str = "") -> str:
+    """Configured address, else the usual local 8188."""
+    if (explicit or "").strip():
+        return normalize_comfy_base(explicit)
+    try:
+        from codeagent.videoops import VideoOpsConfig
+
+        configured = (VideoOpsConfig.load().comfy_base or "").strip()
+    except OSError:
+        configured = ""
+    return normalize_comfy_base(configured) or DEFAULT_COMFY_BASE
+
+
+def patch_workflow_prompt(workflow: dict[str, Any], prompt: str) -> int:
+    """Write ``prompt`` into the first positive text node (CLIPTextEncode)."""
+    graph = workflow.get("prompt", workflow)
+    if not isinstance(graph, dict) or not (prompt or "").strip():
+        return 0
+    candidates: list[dict[str, Any]] = []
+    for node in graph.values():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict) or "text" not in inputs:
+            continue
+        meta = node.get("_meta") if isinstance(node.get("_meta"), dict) else {}
+        title = str(meta.get("title") or node.get("class_type") or "").lower()
+        if "negative" in title or title.endswith("neg"):
+            continue
+        candidates.append(node)
+    preferred = [
+        n for n in candidates
+        if "cliptextencode" in str(n.get("class_type") or "").lower()
+    ]
+    target = (preferred or candidates)
+    if not target:
+        return 0
+    target[0]["inputs"]["text"] = prompt
+    return 1
+
+
+async def interrupt_comfy(base: str, timeout: float = 5.0) -> dict[str, Any]:
+    root = normalize_comfy_base(base)
+    if not root:
+        return {"ok": False, "error": "未配置 ComfyUI 地址"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(root + "/interrupt")
+    except (httpx.HTTPError, OSError) as exc:
+        return {"ok": False, "error": str(exc)}
+    if r.status_code >= 400:
+        return {"ok": False, "error": f"interrupt HTTP {r.status_code}"}
+    return {"ok": True}
 
 
 async def probe_comfy(base: str, timeout: float = 3.0) -> dict[str, Any] | None:

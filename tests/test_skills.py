@@ -102,11 +102,21 @@ def test_fusion_pack_and_chinese_routing():
     assert "paper-craft" in FUSION_SKILLS
     assert "anime-js" in FUSION_SKILLS
     assert "comfyui" in FUSION_SKILLS
+    assert "cpython" in FUSION_SKILLS
+    assert "browser-skill" in FUSION_SKILLS
+    assert "ego-browser" in FUSION_SKILLS
+    assert "voice-surface" in FUSION_SKILLS
     lib = fusion_library()
     anime = lib.search("用 anime.js 做入场交错")
     assert anime[0].name == "anime-js"
     comfy = lib.search("用 ComfyUI 跑工作流")
     assert comfy[0].name == "comfyui"
+    draw = lib.search("文生图 节点图 8188")
+    assert draw[0].name == "comfyui"
+    core = lib.search("改 CPython 的 ceval 和 C API")
+    assert core[0].name == "cpython"
+    brow = lib.search("用 BrowserSkill 打开已登录网页")
+    assert brow[0].name == "browser-skill"
     hits = lib.search("把这段中文去AI味")
     assert {s.name for s in hits} & {"stop-slop-zh", "humanizer-zh"}
     ui = lib.search("做个落地页")
@@ -121,8 +131,10 @@ def test_install_fusion_skills(tmp_path):
     written = install_fusion_skills(tmp_path)
     assert "fusion-router" in written
     assert "anime-js" in written
+    assert "cpython" in written
     assert (tmp_path / "karpathy-craft" / "SKILL.md").is_file()
     assert (tmp_path / "anime-js" / "SKILL.md").is_file()
+    assert (tmp_path / "cpython" / "SKILL.md").is_file()
     assert "fusion-router" in ensure_fusion_skills(tmp_path)
 
 
@@ -163,6 +175,15 @@ def test_expand_and_match_work_content():
     assert "anime-js" in {s.name for s in match_work_skills(lib, "用 anime.js 做入场")}
     zh = {s.name for s in match_work_skills(lib, "把这段润色成人话")}
     assert zh & {"stop-slop-zh", "humanizer-zh"}
+    assert "CPython" in expand_work_query("从源码编译 CPython")
+    assert "cpython" in {s.name for s in match_work_skills(lib, "给 CPython 加一个 C 模块")}
+    assert "cpython" not in {s.name for s in match_work_skills(lib, "写个读取 csv 的脚本")}
+    assert "browser" in expand_work_query("打开网页点一下登录按钮")
+    names = {s.name for s in match_work_skills(lib, "用浏览器打开已登录的后台")}
+    assert names & {"browser-skill", "ego-browser"}
+    assert "Comfy" in expand_work_query("出一张图")
+    assert "comfyui" in {s.name for s in match_work_skills(lib, "用节点图出一张图")}
+    assert "voice-surface" in {s.name for s in match_work_skills(lib, "把语音面嗲音调低一点")}
 
 
 def test_workspace_hints_see_frontend_files(tmp_path):
@@ -173,6 +194,22 @@ def test_workspace_hints_see_frontend_files(tmp_path):
     hints = workspace_skill_hints(tmp_path)
     assert "React" in hints
     assert "界面" in hints
+
+
+def test_workspace_hints_see_cpython_tree(tmp_path):
+    from codeagent.skills.fusion import fusion_library
+    from codeagent.skills.runtime import match_work_skills, workspace_skill_hints
+
+    (tmp_path / "Include").mkdir()
+    (tmp_path / "Include" / "Python.h").write_text("/* cpython */")
+    (tmp_path / "Python").mkdir()
+    (tmp_path / "Python" / "ceval.c").write_text("/* eval */")
+    (tmp_path / "Lib").mkdir()
+    (tmp_path / "Lib" / "os.py").write_text("pass\n")
+    hints = workspace_skill_hints(tmp_path)
+    assert "CPython" in hints
+    names = {s.name for s in match_work_skills(fusion_library(), "", hints=hints)}
+    assert "cpython" in names
 
 
 async def test_use_skill_tool_loads_and_lists():

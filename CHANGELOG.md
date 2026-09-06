@@ -2,9 +2,26 @@
 
 所有版本更新记录。数据源：`src/codeagent/releases.py`（CLI 里 `codeagent changelog` 可查）。
 
+## 0.34.0（2026-09-07）
+
+- 融合 LunarCore 语音面 v3.3.17：内置 voice-surface 技能；偏好设置对齐嗲音/晓晨，播报去掉 markdown
+
+## 0.33.0（2026-09-06）
+
+- ComfyUI（Comfy-Org）融合补强：内置 `comfy` 工具，对话要出图/跑节点图时模型自动调用，不把它当聊天模型
+
+## 0.32.0（2026-09-06）
+
+- 融合 BrowserSkill（Tencent/bsk）与 ego-lite（citrolabs）：蒸馏为内置技能；对话要开网页时模型自动调用 `browser` 工具
+
+## 0.31.0（2026-09-06）
+
+- 融合 CPython（python/cpython）：内核、C API、构建与贡献写入软件本体；写普通脚本不启用，打开官方源码树或提到解释器时自动启用
+
 ## 0.30.0（2026-09-06）
 
 - 融合 ComfyUI：节点图 HTTP API 技能；video_generate 可调用 MiniMax Hailuo、Kimi 视频模型与本机 ComfyUI
+- 通义等云端 500 / InternalError.Algo：中文提示、自动重试，自由路由失败后改走聚合池
 
 ## 0.29.0（2026-09-06）
 

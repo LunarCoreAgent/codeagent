@@ -30,7 +30,130 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
 - 通宵无人值守调研 / 多步研究 → research-overnight、research-skills
 - 蒸馏某个人的思维方式 → nuwa-distill
 - 从零讲清模型/系统 → karpathy-craft
-- 本地扩散工作流 / 节点图 / ComfyUI → comfyui；文生视频还可用 video_generate（wan / minimax / kimi / comfy）
+- 本地扩散工作流 / 节点图 / 文生图 / ComfyUI → comfyui，直接调用 comfy 工具；成片也可用 video_generate provider=comfy
+- CPython 内核 / C API / GIL / 从源码编 Python / 给解释器加模块 → cpython（写普通 .py 应用不要套）
+- 打开网页 / 登录站 / 点按钮 / 填表 / 操作已登录浏览器 → 直接调用 browser 工具；技能 browser-skill 或 ego-browser
+- 语音面 / 麦克风 / 播报 / 嗲音 / barge-in → voice-surface
+""",
+    ),
+    "voice-surface": (
+        "语音面：ASR/TTS/VAD 可插拔、会话状态机、嗲音与风险分级，不绑死引擎",
+        "语音面,Voice Surface,麦克风,播报,嗲音,ASR,TTS,VAD,barge-in,晓晨,小智",
+        "LunarCore Agent v3.3.17 voice-surface-source",
+        """# 语音面 Voice Surface
+来源：LunarCore Agent v3.3.17（investment-ai 语音面源码清单，2026-09-07）。
+思想受 HomeRail Voice Surface 启发。改语音对话、播报、热键听写时启用。
+自己调用 use_skill("voice-surface")。不要把豆包 token 写进文件或对话。
+
+## 分层
+- 契约：ASR / TTS / VAD 可插拔；状态 idle→listening→transcribing→executing→speaking（error）
+- 服务：16kHz 单声道 PCM、能量法 VAD（RMS>0.015 + 静音 900ms 判停）、WAV、faster-whisper
+- 会话：toggle 空闲则听，听/说/执行中则 barge-in 立刻回到 listening
+- 播报前 `to_speech_text`：去掉 markdown/代码，只留结论和数字（约 220 字）
+
+## 引擎链
+- xiaozhi：火山豆包湾湾小何（要 appid + vault 里的 token）；没有则回退 Edge 台湾晓晨
+- edge-tw：Edge TTS `zh-TW-HsiaoChenNeural`，免费免凭证
+- zh-TW / zh-CN：系统女声链（美嘉/Sandy… / 婷婷）
+- auto：Piper 优先，失败 Edge
+- 嗲音：pitch -50~+50Hz（默认 -10）、rate -20~+20%（默认 -5），对所有引擎生效
+
+## 铁律
+- query 直答；analysis 先复述再确认；trade 语音只到预填单，必须人手点确认
+- 凭证只写不读（safeStorage）；旧明文凭据迁入保险库后从状态删除
+- 缺麦克风/whisper/edge-tts 就说怎么开，不要假装已经听懂
+- CodeCoreAgent 桌面端：偏好设置「语音面」；打字提问同样播报回答
+""",
+    ),
+    "browser-skill": (
+        "BrowserSkill：用 bsk 驱动用户已登录的 Chrome/Edge，Agent 窗口不抢标签",
+        "浏览器,BrowserSkill,bsk,打开网页,填表,点按钮,已登录",
+        "https://github.com/Tencent/BrowserSkill/",
+        """# BrowserSkill
+来源：https://github.com/Tencent/BrowserSkill/
+用本机 `bsk` CLI + 浏览器扩展，在独立 Agent 窗口操作**用户已登录**的 Chrome/Edge。
+需要打开网页、点按钮、填表、读已登录页时：直接调用工具 `browser`，不要让用户去点，不要只用 web_fetch。
+禁止从页面提取 cookie、token、密码。
+
+## 本机准备
+- CLI：`curl -fsSL https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.sh | sh`（先征得用户同意再跑）
+- 扩展：Chrome 应用店 / Edge 附加组件搜 BrowserSkill
+- 自检：`browser` action=`status`；不通再 `bsk doctor`
+
+## 怎么调
+优先 `browser` 工具：navigate / observe / click / fill / press / screenshot / stop。
+会话由工具自动 `bsk session start --no-focus`，结束调用 stop。
+观察优先 `observe`（`@eN` 引用）；导航后引用作废，先再 observe 再点。
+用户自己的标签默认不许动；只有用户点名某标签才借，用完立刻还。
+验证码 / OTP / 支付：停下来让用户接管，不要硬点。
+命令不要自造，以 `bsk <cmd> --help` 为准。
+""",
+    ),
+    "ego-browser": (
+        "ego-lite：Agent 在独立 Space 里跑浏览器，复用登录态，用 JS 一次做完多步",
+        "ego,ego-lite,ego-browser,浏览器,Space,打开网页",
+        "https://github.com/citrolabs/ego-lite",
+        """# ego-lite / ego-browser
+来源：https://github.com/citrolabs/ego-lite （文档 https://lite.ego.app/document/）
+macOS 上的 Agent 浏览器：每个任务一个 Space，复用你的登录，不抢你正在看的标签。
+有 `ego-browser`、没有 `bsk` 时，`browser` 工具走这条后端。两者都有时优先 BrowserSkill。
+需要网页交互时直接调 `browser`，不要让用户点选。
+
+## 本机准备
+安装 ego lite App（或 `npx skills add citrolabs/ego-lite`）。首次可迁移 Chrome 数据。
+自检：`browser` action=`status`。
+
+## 怎么调
+简单开页/点选/填表：用 `browser` 的 navigate、observe、click、fill。
+复杂多步：`browser` action=`script`，正文是 `ego-browser nodejs` 的 JS（不要先写成 .js 文件）。
+每个 heredoc 先 `useOrCreateTaskSpace('任务名')`，结果用 `cliLog`。
+默认语义流：`snapshotText()` → `click('@N')` / `fillInput`；画布/富文本再用截图+坐标。
+登录/验证码：`handOffTaskSpace`，等用户说继续再 `takeOverTaskSpace`。
+结束：`completeTaskSpace(id, { keep: false })`，除非用户要留着页面。
+禁止读 cookie / 密码箱。Windows/Linux 请改用 BrowserSkill。
+""",
+    ),
+    "cpython": (
+        "CPython：解释器内核、C API、构建与贡献；不是写应用脚本的通用技能",
+        "CPython,cpython,C API,PyObject,GIL,ceval,字节码,解释器内核,稳定ABI,DevGuide,PCbuild",
+        "https://github.com/python/cpython",
+        """# CPython
+来源：https://github.com/python/cpython （组织 https://github.com/python/ ）。
+开发者指南 https://devguide.python.org/ ；语言文档 https://docs.python.org ；
+问题追踪 https://github.com/python/cpython/issues
+改解释器、C 扩展、GIL/字节码、从源码编译、给 CPython 提 PR 时启用。
+自己调用 use_skill("cpython")，不要让用户点选。写普通应用/脚本不要套本技能。
+不要把整个仓库拷进本软件；需要源码就 clone 到工作区再 read_file / grep。
+
+## 目录（main / 3.16+）
+- `Python/` 核心：`ceval.c` 求值循环、编译、import、GIL、线程
+- `Objects/` 内置类型：`typeobject`、`dictobject`、`listobject`、`unicodeobject`
+- `Include/` 公开头（`Python.h`、`object.h`）；`Include/internal/` 禁止扩展使用
+- `Modules/` C 扩展模块；`Lib/` 纯 Python 标准库；`Lib/test/` 回归
+- `Parser/` + `Grammar/python.gram` PEG 语法
+- `Tools/clinic` Argument Clinic；`Doc/` 文档；`Misc/NEWS.d` 新闻片段
+- Windows：`PCbuild/`；打包：`PC/layout`；macOS：`Mac/`
+
+## 构建
+- Unix/macOS：`./configure && make && make test`（安装用 `make altinstall` 以免覆盖系统 `python3`）
+- 调试：`mkdir debug && cd debug && ../configure --with-pydebug && make`（不要和顶层构建混用，先 `make clean`）
+- 发行：`./configure --enable-optimizations`（PGO）；可选 `--with-lto`
+- Windows：先读 `PCbuild/readme.txt`。依赖见 DevGuide「Install dependencies」
+- 单测：`make test TESTOPTS="-v test_os"`；资源大的用 `make buildbottest`
+
+## 内核约定
+- 值都是 `PyObject*`：`ob_refcnt` + `ob_type`。所有权写清；`Py_NewRef` / `Py_XDECREF`
+- 失败返回 `NULL` 或 `-1` 且已设异常。GIL 下跑字节码；阻塞 I/O 用 `Py_BEGIN_ALLOW_THREADS`
+- 新模块优先 Limited API（`Py_LIMITED_API`）+ 堆类型；不要碰 internal 头
+- 导出函数用 Argument Clinic（`Tools/clinic`）或 `METH_FASTCALL | METH_KEYWORDS`
+- 加纯 Python stdlib：`Lib/foo.py` + `Lib/test/test_foo.py` + `Doc/` + `Misc/NEWS.d`
+- 加 C 模块：`Modules/` + 构建配置 + 测试 + 文档。语法/语言行为先走 PEP
+
+## 同组织仓库（按需打开，勿整库融合）
+- PEP：https://github.com/python/peps
+- 开发流程：https://github.com/python/devguide
+- 类型桩 / 检查器：https://github.com/python/typeshed 、https://github.com/python/mypy
+- 不要编造未合并的 PEP 号或内部符号；不确定就对照当前 `main` 与 DevGuide
 """,
     ),
     "comfyui": (
@@ -38,19 +161,24 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
         "Comfy,ComfyUI,工作流,节点,扩散,文生图,文生视频,8188",
         "https://github.com/Comfy-Org/ComfyUI",
         """# ComfyUI
-来源思想：Comfy-Org/ComfyUI。要跑本机/局域网扩散图、图生图、视频节点（Wan/SVD/AnimateDiff）时启用。
+来源：https://github.com/Comfy-Org/ComfyUI （文档 https://docs.comfy.org/ ，模板 https://comfy.org/workflows）
+本机/局域网节点图引擎：文生图、图生图、视频、3D、音频。**不是对话 LLM**，不要拿它当 chat completions。
+出图、跑工作流时自己调用工具 `comfy`（status / queue / interrupt），不要让用户去点 Queue。
+不要把整个 ComfyUI 仓库拷进本软件。
 
-- 它是模块化 GUI + HTTP 后端，不是对话 LLM。不要拿它当 chat completions。
-- 安装（本机）：克隆仓库，按官方 README 建 venv 装依赖，`python main.py --listen 0.0.0.0 --port 8188`
-- 浏览器打开 `http://127.0.0.1:8188`。模型权重放 `models/checkpoints`（或按节点要求的目录）
-- 自动化只走 API 格式工作流：菜单 Save (API Format)，得到节点 id → 类名/输入的 JSON
-- 排队：`POST /prompt` `{"prompt": <图>, "client_id": "..."}` → `prompt_id`
-- 等完成：`GET /history/{prompt_id}`；下载：`GET /view?filename=&subfolder=&type=`
-- 探活：`GET /system_stats` 或 `GET /object_info`。取消：`POST /interrupt`
-- 改提示词：在图里找到 CLIPTextEncode（或你们工作流里的文本节点）改 `inputs.text`，不要手写一套新图除非用户要
-- 成片写入视频运营 `02-generate/`。对话里用工具 `video_generate`，`provider=comfy` 并给 `workflow_path`
-- 云端海螺/Kimi 视频模型用 `provider=minimax` 或 `kimi`，不要塞进 Comfy 图
-- 缺显卡/权重就说怎么装，不要假装已经出图
+## 本机准备
+- 桌面版：https://www.comfy.org/download （Windows / macOS）
+- 源码：clone 后按 README 建 venv，`python main.py --listen 0.0.0.0 --port 8188`
+- 打开 `http://127.0.0.1:8188`。权重放 `models/checkpoints`（或 extra_model_paths.yaml）
+- 视频运营页也可填同一地址。自检：`comfy` action=`status`
+
+## 怎么跑
+- 只吃 **API Format** JSON：Comfy 菜单 Save (API Format)。不要手写一张新图，除非用户明确要
+- `comfy` action=`queue`，`workflow_path` 指向该 JSON；`prompt` 会写入第一个正向 CLIPTextEncode
+- 成片也可 `video_generate` `provider=comfy` + `workflow_path`，写入 `02-generate/`
+- 协议：`POST /prompt` → `GET /history/{id}` → `GET /view`；取消 `POST /interrupt`
+- 云端海螺/Kimi 用 video_generate 的 minimax/kimi，不要塞进 Comfy 图
+- 缺显卡/权重/工作流就说明怎么装，不要假装已经出图
 """,
     ),
     "impeccable-craft": (

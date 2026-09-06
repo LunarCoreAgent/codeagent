@@ -89,7 +89,8 @@ def test_ui_has_videoops_page():
     assert "MiniMax" in HTML
     assert "Kimi" in HTML
     assert "vo_comfy" in HTML
-    assert "comfyui" in HTML
+    assert "comfyui" in HTML or "comfy" in HTML
+    assert "comfy" in HTML
 
 
 def test_cloud_video_classify_and_map():

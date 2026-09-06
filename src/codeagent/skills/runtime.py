@@ -19,6 +19,9 @@ STUDIO_SKILL_RULES = """\
 知识库、视频运营等插件工具（knowledge_search / knowledge_read / knowledge_ingest / \
 video_ops_status / video_ops_log / video_ops_draft / video_generate）在相关时直接调用。
 文生视频用 video_generate：wan（局域网 Gradio）、minimax（Hailuo）、kimi、comfy（ComfyUI 工作流）。
+本机 ComfyUI 出图/跑节点图：直接调用 comfy 工具（status / queue），不要把它当聊天模型。
+打开网页、登录站、点按钮、填表、截图、操作已登录浏览器时，直接调用 browser 工具，\
+不要只用 web_fetch，不要让用户自己去点浏览器。
 """
 
 # Everyday phrasing → skill-search tokens (CJK has no spaces).
@@ -32,11 +35,28 @@ _QUERY_EXPAND: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"论文|开题|投稿|审稿|latex|综述|实验表"), " 论文 投稿 脊柱"),
     (re.compile(r"短视频|短剧|剪辑|分镜|成片|口播|发布|运营|文生视频|海螺|Hailuo|ComfyUI|comfy", re.I),
      " 视频 短剧 剪辑 Comfy 文生视频"),
+    (re.compile(r"文生图|图生图|出一张图|出图|节点图|8188", re.I),
+     " Comfy 工作流 文生图"),
     (re.compile(r"通宵|挂机|调研|文献|值守"), " 研究 通宵"),
     (re.compile(r"从零|原理|nanoGPT|卡帕西|karpathy", re.I), " 原理 Karpathy"),
     (re.compile(r"蒸馏|按.+的方式|导师口吻"), " 蒸馏 女娲"),
     (re.compile(r"公众号|长文|选题|提纲|专栏"), " 写作 长文"),
     (re.compile(r"文档|README|changelog|体例"), " 文档 中文 体例"),
+    (re.compile(
+        r"cpython|C API|PyObject|稳定\s*ABI|Limited API|ceval|"
+        r"解释器内核|从源码编[译譯]? ?Python|给\s*CPython|贡献\s*CPython|"
+        r"PCbuild|DevGuide",
+        re.I,
+    ), " CPython ceval GIL CAPI 解释器"),
+    (re.compile(
+        r"浏览器|打开网页|打开网站|访问网站|填表单|点按钮|截图网页|"
+        r"已登录的|BrowserSkill|ego-lite|ego-browser|\bbsk\b|自动化浏览",
+        re.I,
+    ), " 浏览器 browser bsk"),
+    (re.compile(
+        r"语音面|Voice Surface|麦克风|播报|嗲音|faster-whisper|barge-in|Alt\+Space",
+        re.I,
+    ), " 语音面 Voice Surface 播报 TTS"),
 )
 
 _EXT_HINTS: dict[str, str] = {
@@ -66,6 +86,7 @@ _DIR_HINTS: dict[str, str] = {
     "05-publish": "发布 视频",
     "components": "React 界面 组件",
     "wiki": "知识库 文档",
+    "PCbuild": "CPython Windows 构建",
 }
 
 _SKIP_DIR = {".git", "node_modules", "__pycache__", "conversations", "dist", "build"}
@@ -95,6 +116,12 @@ def workspace_skill_hints(root: str | Path | None = None, extra: str = "") -> st
     if not path.is_dir():
         return " ".join(parts)
     parts.append(f"项目目录 {path.name}")
+    if (
+        (path / "Include" / "Python.h").is_file()
+        and (path / "Python" / "ceval.c").is_file()
+        and (path / "Lib" / "os.py").is_file()
+    ):
+        parts.append("CPython 解释器 ceval GIL C API")
     exts: Counter[str] = Counter()
     dir_hits: set[str] = set()
     try:

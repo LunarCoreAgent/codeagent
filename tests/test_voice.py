@@ -187,6 +187,19 @@ def test_voice_presets_resolve_aliases():
     assert resolve_voice("yunjhe") == "zh-TW-YunJheNeural"
     assert resolve_voice("zh-CN-XiaoxiaoNeural") == "zh-CN-XiaoxiaoNeural"  # 原样透传
     assert "hsiaochen" in VOICE_PRESETS
+    assert resolve_voice("edge-tw") == "zh-TW-HsiaoChenNeural"
+    assert resolve_voice("xiaozhi") == "zh-TW-HsiaoChenNeural"
+
+
+def test_to_speech_text_and_cute_style():
+    from codeagent.voice.speech import cute_style, to_speech_text
+
+    assert "略去代码" in to_speech_text("见 ```print(1)``` 后涨 3%")
+    assert "print" not in to_speech_text("见 `print(1)` 后涨 3%")
+    style = cute_style(-10, -5, True)
+    assert style.pitch == "-10Hz"
+    assert style.rate == "-5%"
+    assert cute_style(enabled=False).pitch == "+0Hz"
 
 
 def test_edge_tts_voice_pinning():

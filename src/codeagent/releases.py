@@ -158,6 +158,20 @@ RELEASES: tuple[Release, ...] = (
         "融合 ComfyUI：节点图 HTTP API 技能；video_generate 可调用 "
         "MiniMax Hailuo、Kimi 视频模型与本机 ComfyUI",
     )),
+    Release("0.31.0", "2026-09-06", (
+        "融合 CPython：解释器内核 / C API / 构建与贡献蒸馏为内置技能，"
+        "对话提到 CPython 或打开官方源码树时自动启用，模型可 use_skill 自调",
+    )),
+    Release("0.32.0", "2026-09-06", (
+        "融合 BrowserSkill 与 ego-lite：内置 browser 工具，检测到 bsk 或 "
+        "ego-browser 时模型自动开页/点击/填表，不抢用户标签",
+    )),
+    Release("0.33.0", "2026-09-06", (
+        "ComfyUI 融合补强：内置 comfy 工具，文生图/节点图由模型自动 queue API 工作流",
+    )),
+    Release("0.34.0", "2026-09-07", (
+        "融合 LunarCore 语音面 v3.3.17：契约技能 + 桌面嗲音/晓晨音色，播报先洗 markdown",
+    )),
 )
 
 

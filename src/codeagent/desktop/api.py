@@ -84,7 +84,8 @@ from codeagent.desktop.router import (
     is_free_route,
     route_message,
 )
-from codeagent.llm.aggregate import parse_provider_spec
+from codeagent.llm.aggregate import AggregateProvider, parse_provider_spec
+from codeagent.llm.openai import is_transient_serving_error
 from codeagent.llm.registry import list_providers
 from codeagent.log import get_logger, setup_logging, tail_log
 from codeagent.releases import changelog_text, latest
@@ -110,7 +111,10 @@ class DesktopConfig:
     strategy: str = "fallback"
     auto_yes: bool = False
     voice_enabled: bool = False
-    voice_name: str = "xiaoxiao"
+    voice_name: str = "edge-tw"
+    voice_cute_tone: bool = True
+    voice_pitch: int = -10
+    voice_rate: int = -5
     theme: str = "dark"  # dark | light | auto（跟随系统）
     thinking: str = "medium"  # low | medium | high（思考强度）
     # JSON list of {"name","provider","model","description"} for leader mode
@@ -259,9 +263,9 @@ class DesktopAPI:
     @staticmethod
     def _voice_presets() -> dict[str, str]:
         try:
-            from codeagent.voice.tts import VOICE_PRESETS
+            from codeagent.voice.tts import VOICE_LABELS, VOICE_PRESETS
 
-            return {k: v.voice for k, v in VOICE_PRESETS.items()}
+            return {k: VOICE_LABELS.get(k, v) for k, v in VOICE_PRESETS.items()}
         except Exception:  # noqa: BLE001
             return {}
 
@@ -321,9 +325,19 @@ class DesktopAPI:
             self.config.theme = "dark"
         if self.config.thinking not in ("low", "medium", "high"):
             self.config.thinking = "medium"
-        for key in ("auto_yes", "voice_enabled"):
+        for key in ("auto_yes", "voice_enabled", "voice_cute_tone"):
             if key in data:
                 setattr(self.config, key, bool(data[key]))
+        if "voice_pitch" in data:
+            try:
+                self.config.voice_pitch = max(-50, min(50, int(data["voice_pitch"])))
+            except (TypeError, ValueError):
+                pass
+        if "voice_rate" in data:
+            try:
+                self.config.voice_rate = max(-20, min(20, int(data["voice_rate"])))
+            except (TypeError, ValueError):
+                pass
         self.config.save()
         self._agent = None
         log.info("config saved: provider=%s model=%s",
@@ -1174,6 +1188,12 @@ class DesktopAPI:
         if "empty provider spec" in low or "自由路由未命中" in text:
             return ("自由路由没有可用模型——请在「自由路由」加一条关键词留空的兜底规则，"
                     "或在对话里改选一个具体模型/聚合池。")
+        if is_transient_serving_error(exc) or "internalerror.algo" in low:
+            if "providers failed" in low:
+                return ("自由路由试过的模型都失败了。云端返回了 500（服务商内部错误），"
+                        "请稍后再发，或在对话里改选本地模型 / DeepSeek。")
+            return ("云端模型服务暂时失败（500）。这是通义/网关侧故障，不是本地配置写错。"
+                    "请再发一次，或换本地模型、DeepSeek、聚合池。")
         return text[:300]
 
     def _load_skills(self):
@@ -1268,9 +1288,40 @@ class DesktopAPI:
             finally:
                 self.assets.active = saved
             if provider is not None:
+                if not target.startswith("mix:"):
+                    provider = self._with_route_backups(provider, target)
                 return provider, decision
         # 无规则/无聚合池时，退回偏好设置里的默认 Provider（兼容旧配置）
         return self._build_provider(), decision
+
+    def _with_route_backups(self, primary, target: str):
+        """Keyword-routed single model: keep it first, fail over to the mixture."""
+        from codeagent.desktop.models import _build_member
+
+        mix = next((m for m in self.assets.mixtures if m.enabled), None)
+        refs: list[str] = []
+        if mix is not None:
+            refs.extend(mix.members)
+            if mix.fallback:
+                refs.append(mix.fallback)
+        else:
+            refs.extend(f"api:{am.id}" for am in self.assets.api_models)
+        backups = []
+        seen = {f"{primary.name}:{primary.model}"}
+        for ref in refs:
+            if not ref or ref == target:
+                continue
+            extra = _build_member(self.assets, ref)
+            if extra is None:
+                continue
+            key = f"{extra.name}:{extra.model}"
+            if key in seen:
+                continue
+            seen.add(key)
+            backups.append(extra)
+        if not backups:
+            return primary
+        return AggregateProvider([primary, *backups], strategy="fallback")
 
     # ------------------------------------------------------------------
     # attachments / clipboard / share (对话页)
@@ -1724,12 +1775,24 @@ class DesktopAPI:
 
         def _play() -> None:
             try:
+                from codeagent.voice.speech import cute_style, to_speech_text
                 from codeagent.voice.tts import EdgeTTSProvider, play_audio, resolve_voice
 
-                tts = EdgeTTSProvider(voice=resolve_voice(self.config.voice_name))
+                spoken = to_speech_text(text)
+                if not spoken:
+                    return
+                tts = EdgeTTSProvider(
+                    voice=resolve_voice(self.config.voice_name),
+                    emotion_voices=False,
+                )
+                style = cute_style(
+                    self.config.voice_pitch,
+                    self.config.voice_rate,
+                    self.config.voice_cute_tone,
+                )
 
                 async def _go() -> None:
-                    path = await tts.synthesize(text)
+                    path = await tts.synthesize(spoken, style=style)
                     await play_audio(path)
 
                 asyncio.run(_go())

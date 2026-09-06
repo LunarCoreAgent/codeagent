@@ -24,6 +24,11 @@ DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
 # Friendly aliases for the free edge-tts voice pack. Values are full
 # edge-tts voice IDs; any other valid edge-tts voice ID also works.
 VOICE_PRESETS: dict[str, str] = {
+    # LunarCore 语音面别名（豆包未配置时小智回退晓晨）
+    "xiaozhi": "zh-TW-HsiaoChenNeural",
+    "edge-tw": "zh-TW-HsiaoChenNeural",
+    "zh-tw": "zh-TW-HsiaoChenNeural",
+    "zh-cn": "zh-CN-XiaoxiaoNeural",
     # 大陆普通话
     "xiaoxiao": "zh-CN-XiaoxiaoNeural",   # 晓晓：温暖亲切女声
     "xiaoyi": "zh-CN-XiaoyiNeural",       # 小艺：活泼女声
@@ -34,6 +39,21 @@ VOICE_PRESETS: dict[str, str] = {
     "hsiaochen": "zh-TW-HsiaoChenNeural", # 晓晨：台湾女声，温柔细腻
     "hsiaoyu": "zh-TW-HsiaoYuNeural",     # 晓宇：台湾女声，语调柔和
     "yunjhe": "zh-TW-YunJheNeural",       # 云哲：台湾男声
+}
+
+VOICE_LABELS: dict[str, str] = {
+    "xiaozhi": "小智·湾湾小何（无豆包时回退晓晨）",
+    "edge-tw": "台湾女声·晓晨（Edge TTS·免费）",
+    "zh-tw": "台湾女声（系统/Edge）",
+    "zh-cn": "大陆女声（系统/Edge）",
+    "xiaoxiao": "晓晓 · 温暖女声",
+    "xiaoyi": "小艺 · 活泼女声",
+    "yunxi": "云希 · 阳光男声",
+    "yunjian": "云健 · 沉稳男声",
+    "xiaochen": "晓晨 · 大陆女声",
+    "hsiaochen": "晓晨 · 台湾女声",
+    "hsiaoyu": "晓宇 · 台湾女声",
+    "yunjhe": "云哲 · 台湾男声",
 }
 
 

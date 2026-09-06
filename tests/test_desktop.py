@@ -111,6 +111,7 @@ def test_desktop_config_roundtrip(tmp_path):
     assert loaded.provider == "openrouter"
     assert loaded.voice_enabled is True
     assert loaded.voice_name == "xiaochen"
+    assert loaded.voice_cute_tone is True
     assert "ollama" in loaded.workers_json
 
 
@@ -289,6 +290,15 @@ def test_diagnose_messages(api):
     assert "404" in api._diagnose(Exception("404 not found"))
     assert "兜底规则" in api._diagnose(ValueError("Empty provider spec"))
     assert "兜底规则" in api._diagnose(ValueError("自由路由未命中可用模型"))
+    algo = api._diagnose(Exception(
+        "Error code: 500 - {'error': {'message': '<500> InternalError.Algo: "
+        "An error occurred in model serving', 'type': 'internal_server_error', "
+        "'code': 'internal_server_error'}, 'id': 'chatcmpl-xxx'}"
+    ))
+    assert "500" in algo
+    assert "服务" in algo
+    assert "再发" in algo
+    assert "chatcmpl" not in algo
 
 
 def test_get_overview(api):
@@ -468,6 +478,10 @@ def test_get_skills_includes_bundled(api):
     assert "video-ops-pipeline" in names
     assert "short-drama-script" in names
     assert "fusion-router" in names
+    assert "cpython" in names
+    assert "browser-skill" in names
+    assert "ego-browser" in names
+    assert "voice-surface" in names
     assert "stop-slop-zh" in names
     stop = next(s for s in api.get_skills() if s["name"] == "stop-slop-zh")
     assert "github.com/VincentOld/stop-slop-zh" in stop["source"]
@@ -520,6 +534,8 @@ def test_ui_has_all_pages_and_bridge():
     assert "pywebview.api.get_logs" in HTML
     assert "pywebview.api.get_models_page" in HTML
     assert "pywebview.api.save_mixture" in HTML
+    assert "语音面 Voice Surface" in HTML
+    assert "cfg_cute" in HTML
     assert "pywebview.api.route_sandbox" in HTML
     assert "pywebview.api.set_permission_level" in HTML
     assert "pywebview.api.resolve_confirm" in HTML
@@ -798,6 +814,53 @@ def test_chat_free_route_falls_back_to_mixture(api, monkeypatch):
     assert seen["model"] == "qwen3:8b"
 
 
+def test_chat_free_route_cloud_500_fails_over(api, monkeypatch):
+    """自由路由命中通义后若 500，自动改走聚合池里的本地模型。"""
+    from codeagent.core.types import LLMResponse
+
+    seen: list[str] = []
+
+    class BoomCloud:
+        name = "openai"
+
+        def __init__(self, model, **kwargs):
+            self.model = model
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            seen.append(self.model)
+            raise RuntimeError(
+                "Error code: 500 - {'error': {'message': '<500> InternalError.Algo: "
+                "An error occurred in model serving', 'code': 'internal_server_error'}}"
+            )
+
+    class LocalOk:
+        name = "ollama"
+
+        def __init__(self, model, **kwargs):
+            self.model = model
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            seen.append(self.model)
+            return LLMResponse(content="local-backup")
+
+    monkeypatch.setattr("codeagent.llm.openai.OpenAIProvider", BoomCloud)
+    monkeypatch.setattr("codeagent.llm.ollama.OllamaProvider", LocalOk)
+    r = api.add_api_model(
+        "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-boom",
+    )
+    ep = api.assets.endpoints[0]
+    api.save_mixture("默认池", "cascade", [
+        f"local:qwen3:8b@{ep.id}", f"api:{r['id']}",
+    ])
+    api.set_active_model("route:free")
+    api.add_route_rule("分析", "分析", f"api:{r['id']}")
+    assert api.send("请分析一下这个问题") is True
+    done = wait_for(api._window, "done")
+    assert done["text"] == "local-backup"
+    assert "qwen-boom" in seen
+    assert "qwen3:8b" in seen
+
+
 def test_chat_free_route_empty_assets_friendly_error(api, monkeypatch):
     """自由路由既无规则也无模型资产、偏好又为空时，给出中文提示而不是 Empty provider spec。"""
     api.set_active_model("route:free")
@@ -845,6 +908,7 @@ def test_permission_policy_mapping(api):
     assert asyncio.run(check("write_file")) == ApprovalDecision.DENY
     assert asyncio.run(check("bash")) == ApprovalDecision.DENY
     assert asyncio.run(check("web_fetch")) == ApprovalDecision.APPROVE
+    assert asyncio.run(check("browser")) == ApprovalDecision.APPROVE
     assert asyncio.run(check("delegate")) == ApprovalDecision.DENY
     # 拒绝已记入审计
     from codeagent.desktop.permissions import read_audit

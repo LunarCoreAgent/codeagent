@@ -9,11 +9,15 @@ from codeagent.tools.filesystem import (
     WriteFileTool,
 )
 from codeagent.tools.search import GlobTool, GrepTool
+from codeagent.tools.browser import BrowserTool, browser_tools
+from codeagent.tools.comfyui import ComfyTool, comfy_tools
 from codeagent.tools.shell import BashTool
 from codeagent.tools.web import WebFetchTool, WebScrapeTool, web_tools
 
 __all__ = [
     "BashTool",
+    "BrowserTool",
+    "ComfyTool",
     "DelegateTool",
     "EditFileTool",
     "GlobTool",
@@ -25,6 +29,8 @@ __all__ = [
     "WebFetchTool",
     "WebScrapeTool",
     "WriteFileTool",
+    "browser_tools",
+    "comfy_tools",
     "default_tools",
     "web_tools",
 ]
@@ -45,5 +51,7 @@ def default_tools(
             GrepTool(root_dir),
             GlobTool(root_dir),
             BashTool(root_dir, shell_timeout),
+            BrowserTool(),
+            ComfyTool(),
         ]
     )

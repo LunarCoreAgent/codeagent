@@ -102,6 +102,8 @@ from codeagent.security import (
     classify_command,
 )
 from codeagent.tools import (
+    BrowserTool,
+    ComfyTool,
     DelegateTool,
     Tool,
     ToolRegistry,
@@ -111,7 +113,7 @@ from codeagent.tools import (
     web_tools,
 )
 
-__version__ = "0.30.0"
+__version__ = "0.34.0"
 
 __all__ = [
     "Agent",
@@ -129,8 +131,10 @@ __all__ = [
     "BlueprintReport",
     "BlueprintRunner",
     "BlueprintSpecError",
+    "BrowserTool",
     "Budget",
     "BudgetExceededError",
+    "ComfyTool",
     "CompactionConfig",
     "ConversationCompactor",
     "Court",

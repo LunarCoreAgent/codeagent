@@ -52,9 +52,9 @@ CAPABILITIES: list[dict[str, Any]] = [
     {
         "id": "network",
         "capability": "网络访问",
-        "desc": "抓取网页、调用外部 API、OCR 识别",
+        "desc": "抓取网页、操作已登录浏览器、调用外部 API、OCR 识别",
         "scope": "互联网",
-        "tools": ["web_fetch", "web_scrape", "ocr"],
+        "tools": ["web_fetch", "web_scrape", "ocr", "browser", "comfy"],
         "readonly_tools": ["web_fetch", "web_scrape", "ocr"],
     },
     {

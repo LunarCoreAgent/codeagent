@@ -11,8 +11,10 @@ from codeagent.voice.emotion import (
     style_for,
 )
 from codeagent.voice.recorder import record_until_enter
+from codeagent.voice.speech import cute_style, to_speech_text
 from codeagent.voice.tts import (
     DEFAULT_VOICE,
+    VOICE_LABELS,
     VOICE_PRESETS,
     EdgeTTSProvider,
     TTSProvider,
@@ -29,13 +31,16 @@ __all__ = [
     "EdgeTTSProvider",
     "Emotion",
     "TTSProvider",
+    "VOICE_LABELS",
     "VOICE_PRESETS",
     "VoiceChatLoop",
     "VoiceStyle",
     "WhisperASRProvider",
+    "cute_style",
     "parse_emotion",
     "play_audio",
     "record_until_enter",
     "resolve_voice",
     "style_for",
+    "to_speech_text",
 ]

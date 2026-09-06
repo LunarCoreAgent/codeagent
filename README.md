@@ -425,7 +425,7 @@ print(events.sentences)           # TTS 逐句文本
 统一的技能层，兼容社区所有 SKILL.md 技能包（ponytail、taste-skill、
 darwin-skill、gsap-skills、impeccable、qaskills……）。桌面端预装**融合包**
 （设计 Impeccable/React Bits/Taste、中文去 AI 味、女娲蒸馏、论文脊柱、
-通宵研究等，源码在 `src/codeagent/skills/fusion.py`，写入
+通宵研究、CPython 内核、BrowserSkill/ego-lite 浏览器等，源码在 `src/codeagent/skills/fusion.py`，写入
 `~/.codeagent/skills`），对话时按主题优先注入。并借鉴
 SkillClaw / self-improving-agent 实现"经验 → 技能"的自进化闭环：
 
