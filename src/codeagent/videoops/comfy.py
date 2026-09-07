@@ -77,6 +77,68 @@ async def interrupt_comfy(base: str, timeout: float = 5.0) -> dict[str, Any]:
     return {"ok": True}
 
 
+def _json_body(resp: httpx.Response) -> Any:
+    try:
+        return resp.json()
+    except ValueError:
+        return None
+
+
+def _is_comfy_payload(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    if isinstance(data.get("system"), dict) or isinstance(data.get("devices"), list):
+        return True
+    for key in ("CheckpointLoaderSimple", "UnetLoaderGGUF", "UnetLoader"):
+        node = data.get(key)
+        if isinstance(node, dict) and "input" in node:
+            return True
+    return isinstance(data.get("input"), dict)
+
+
+def _names_from_folder(payload: Any) -> list[str]:
+    if isinstance(payload, list):
+        return [str(x) for x in payload if str(x).strip()]
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get("models") or payload.get("data") or payload.get("files") or []
+    if isinstance(raw, list):
+        return [str(x) for x in raw if str(x).strip()]
+    return []
+
+
+def _ckpt_names_from_object_info(data: dict[str, Any]) -> list[str]:
+    return [name for name, _label in _loader_dropdowns(data)]
+
+
+def _loader_dropdowns(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """Pull file names out of Comfy object_info dropdown fields."""
+    nodes: dict[str, Any]
+    if any(k in data for k in ("CheckpointLoaderSimple", "UnetLoaderGGUF", "UnetLoader")):
+        nodes = data
+    else:
+        nodes = {"_": data}
+    rows: list[tuple[str, str]] = []
+    for key, node in nodes.items():
+        if not isinstance(node, dict):
+            continue
+        required = (node.get("input") or {}).get("required") or {}
+        blob = f"{key} {' '.join(required)}".lower()
+        label = "GGUF" if "gguf" in blob else (
+            "VAE" if "vae" in blob else (
+                "UNET" if "unet" in blob or "diffusion" in blob else "Checkpoint"
+            )
+        )
+        for spec in required.values():
+            if not (isinstance(spec, list) and spec and isinstance(spec[0], list)):
+                continue
+            for name in spec[0]:
+                text = str(name).strip()
+                if text:
+                    rows.append((text, label))
+    return rows
+
+
 async def probe_comfy(base: str, timeout: float = 3.0) -> dict[str, Any] | None:
     root = normalize_comfy_base(base)
     if not root:
@@ -84,12 +146,65 @@ async def probe_comfy(base: str, timeout: float = 3.0) -> dict[str, Any] | None:
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.get(root + "/system_stats")
-            if r.status_code >= 400:
-                r = await client.get(root + "/object_info")
-            if r.status_code >= 400:
+            data = _json_body(r) if r.status_code < 400 else None
+            if not _is_comfy_payload(data):
+                r = await client.get(root + "/object_info/CheckpointLoaderSimple")
+                data = _json_body(r) if r.status_code < 400 else None
+            if not _is_comfy_payload(data):
+                r = await client.get(root + "/object_info/UnetLoaderGGUF")
+                data = _json_body(r) if r.status_code < 400 else None
+            if not _is_comfy_payload(data):
                 return None
-            data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
-            return {"ok": True, "base": root, "info": data if isinstance(data, dict) else {}}
+            models: list[dict[str, str]] = []
+            seen: set[str] = set()
+            for folder, label in (
+                ("diffusion_models", "UNET/GGUF"),
+                ("unet", "UNET"),
+                ("text_encoders", "CLIP/GGUF"),
+                ("vae", "VAE"),
+                ("checkpoints", "Checkpoint"),
+                ("loras", "LoRA"),
+            ):
+                try:
+                    listed = await client.get(f"{root}/models/{folder}")
+                except (httpx.HTTPError, OSError):
+                    continue
+                if listed.status_code >= 400:
+                    continue
+                for name in _names_from_folder(_json_body(listed)):
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                    kind = "GGUF" if name.lower().endswith(".gguf") else label
+                    models.append({"name": name, "folder": folder, "label": kind})
+            extra_info: dict[str, Any] = data if isinstance(data, dict) else {}
+            if not any(m["name"].lower().endswith(".gguf") for m in models):
+                try:
+                    gguf = await client.get(root + "/object_info/UnetLoaderGGUF")
+                except (httpx.HTTPError, OSError):
+                    gguf = None
+                if gguf is not None and gguf.status_code < 400:
+                    payload = _json_body(gguf)
+                    if isinstance(payload, dict):
+                        extra_info = payload
+                        for name, label in _loader_dropdowns(payload):
+                            if name in seen:
+                                continue
+                            seen.add(name)
+                            models.append({
+                                "name": name,
+                                "folder": "diffusion_models",
+                                "label": label,
+                            })
+            if not models and extra_info:
+                for name, label in _loader_dropdowns(extra_info):
+                    models.append({"name": name, "folder": "object_info", "label": label})
+            return {
+                "ok": True,
+                "base": root,
+                "info": data if isinstance(data, dict) else {},
+                "models": models,
+            }
     except (httpx.HTTPError, OSError, ValueError):
         return None
 

@@ -396,8 +396,28 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 .dashed { border: 1px dashed var(--border-hi); border-radius: 10px;
   padding: 26px; text-align: center; color: var(--faint); font-size: 12px; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.grid-32 { display: grid; grid-template-columns: 2fr 1fr; gap: 14px;
-  align-items: start; }
+.grid-32 { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
+
+/* ---------- 导演台 ---------- */
+.studio-wrap { max-width: 1100px; margin: 0 auto; width: 100%; }
+.studio-rail { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.studio-rail .step { border: 1px solid var(--border); background: var(--card);
+  color: var(--muted); border-radius: 8px; padding: 7px 12px; font-size: 12.5px;
+  cursor: pointer; }
+.studio-rail .step.on { border-color: var(--text); color: var(--text);
+  background: var(--active-bg); font-weight: 550; }
+.studio-rail .step .n { color: var(--faint); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.studio-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.shot-list { display: flex; flex-direction: column; gap: 8px; }
+.shot-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+  background: var(--card); }
+.shot-card .row { display: flex; align-items: center; gap: 8px; }
+.shot-card textarea { width: 100%; min-height: 54px; margin-top: 8px; font-size: 12.5px; }
+.shot-card .meta { font-size: 11px; color: var(--faint); margin-top: 6px;
+  font-family: Menlo, monospace; }
+.shot-card .row input, .shot-card .row select { width: auto; margin: 0; padding: 4px 8px; font-size: 12px; }
+.shot-card .st-title { flex: 1; min-width: 80px; font-weight: 550; }
+.shot-card .st-sec { width: 64px; }
 .sandbox-result { background: var(--bg); border: 1px solid var(--border);
   border-radius: 8px; padding: 12px 14px; margin-top: 12px;
   font-size: 12.5px; line-height: 1.9; }
@@ -523,6 +543,9 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     <button class="navbtn" data-page="chat">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>
       对话</button>
+    <button class="navbtn" data-page="studio">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v14M3 12h18"/><path d="M16 9l4 3-4 3"/></svg>
+      导演台</button>
     <button class="navbtn" data-page="lead">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2l3 6 6 .9-4.5 4.3 1 6.3-5.5-3-5.5 3 1-6.3L3 8.9 9 8z"/></svg>
       指挥中心</button>
@@ -631,6 +654,9 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
         <button class="quick" onclick="go('chat')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>
           开始对话<span class="q-sub">单 agent · 工具全开</span></button>
+        <button class="quick" onclick="go('studio')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v14M3 12h18"/><path d="M16 9l4 3-4 3"/></svg>
+          导演台<span class="q-sub">分镜 · Comfy 生成 · 合成</span></button>
         <button class="quick" onclick="go('lead')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2l3 6 6 .9-4.5 4.3 1 6.3-5.5-3-5.5 3 1-6.3L3 8.9 9 8z"/></svg>
           指挥中心派遣<span class="q-sub">多模型并行</span></button>
@@ -717,6 +743,84 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
         <option value="40">推理步数 · 40</option>
         <option value="50" selected>推理步数 · 50</option>
       </select>
+    </div>
+  </div></div>
+</section>
+
+<!-- ============ 导演台 ============ -->
+<section class="page" id="page-studio">
+  <div class="page-head"><h1>导演台</h1>
+    <span class="sub">企划 · 分镜 · ComfyUI 生成 · ffmpeg 合成成片</span>
+    <span class="spacer"></span>
+    <button class="btn" onclick="studioInterrupt()">停止</button>
+    <button class="btn" onclick="go('videoops')">视频运营</button>
+    <button class="btn primary" onclick="saveStudio()">保存企划</button>
+  </div>
+  <div class="page-body"><div class="studio-wrap">
+    <div class="studio-chips" id="studioChips"></div>
+    <div class="studio-rail" id="studioRail"></div>
+
+    <div class="card sect">
+      <h3>1. 企划</h3>
+      <div class="grid-2">
+        <div>
+          <label>片名</label>
+          <input id="st_title" placeholder="例如：雨巷短剧 第一集">
+        </div>
+        <div>
+          <label>画幅 / 目标时长</label>
+          <div class="grid-2">
+            <select id="st_aspect">
+              <option value="9:16">9:16 竖屏</option>
+              <option value="16:9">16:9 横屏</option>
+              <option value="1:1">1:1</option>
+            </select>
+            <input id="st_duration" type="number" min="4" max="180" value="24" placeholder="秒">
+          </div>
+        </div>
+      </div>
+      <label>一句话故事</label>
+      <textarea id="st_logline" rows="2" placeholder="开场钩子、冲突、结尾钩子"></textarea>
+      <div class="grid-2">
+        <div>
+          <label>生成引擎</label>
+          <select id="st_engine">
+            <option value="comfy">ComfyUI（局域网 8188，节点图）</option>
+            <option value="wan">Gradio WAN</option>
+            <option value="minimax">MiniMax Hailuo</option>
+            <option value="kimi">Kimi 视频</option>
+            <option value="auto">自动选择</option>
+          </select>
+        </div>
+        <div>
+          <label>Comfy API 工作流 JSON</label>
+          <input id="st_workflow" placeholder="Comfy 菜单 Save (API Format) 的文件路径">
+        </div>
+      </div>
+      <div class="hint">ComfyUI 不是聊天模型。文档 <a href="https://docs.comfy.org/zh" target="_blank" rel="noreferrer">docs.comfy.org/zh</a> ·
+        <a href="https://github.com/Comfy-Org/ComfyUI" target="_blank" rel="noreferrer">Comfy-Org/ComfyUI</a>。
+        协议：Save (API Format) → POST /prompt → /history → /view。MiniMax-H3 用 Unet Loader (GGUF)。</div>
+    </div>
+
+    <div class="card sect">
+      <h3>2. 分镜</h3>
+      <label>从剧本导入（每行「1. 画面」或「## 镜头名」）</label>
+      <textarea id="st_script" rows="4" placeholder="1. 夜雨巷，近景，女人撑伞回眸&#10;2. 路灯下积水倒影，缓推&#10;3. 转身走入深巷，远景收"></textarea>
+      <div class="savebar">
+        <button class="btn" onclick="studioImport()">导入分镜</button>
+        <button class="btn" onclick="studioAddShot()">＋ 加一镜</button>
+      </div>
+      <div id="studioShots" class="shot-list" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card sect">
+      <h3>3. 生成 · 4. 合成 · 5. 成片</h3>
+      <div class="savebar">
+        <button class="btn primary" onclick="studioGenAll()">生成未完成镜头</button>
+        <button class="btn" onclick="studioAssemble()">ffmpeg 合成成片</button>
+        <button class="btn" onclick="studioToDraft()">写入发布草稿</button>
+      </div>
+      <div class="hint" id="studioFinal">成片：—</div>
     </div>
   </div></div>
 </section>
@@ -853,7 +957,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       <label>服务地址（默认本机 8188）</label>
       <input id="vo_comfy" placeholder="http://127.0.0.1:8188">
       <div class="hint" id="voComfyStatus">未接入</div>
-      <div class="hint">节点图后端，不是聊天模型。对话里模型会自己调用 <code>comfy</code> 工具（status / queue）。也可用 <code>video_generate</code> provider=comfy + API 格式工作流 JSON。</div>
+      <div class="hint">节点图后端，不是聊天模型。完整拍片请用侧栏「导演台」。对话里模型会自己调用 <code>comfy</code> / <code>video_studio</code>。</div>
     </div>
     <div class="card sect">
       <h3>云端视频模型（MiniMax / Kimi）</h3>
@@ -1429,6 +1533,7 @@ function go(page){
   if(page==='memory')loadMemories();
   if(page==='knowledge')loadKnowledge();
   if(page==='videoops')loadVideoOps();
+  if(page==='studio')loadStudio();
   if(page==='skills')loadSkills();
   if(page==='logs')loadLogs();
   if(page==='settings')loadSettings();
@@ -2010,8 +2115,9 @@ function loadVideoOps(){
     if($('vo_comfy'))$('vo_comfy').value=c.comfy_base||'';
     const cf=d.comfy||{};
     if($('voComfyStatus'))$('voComfyStatus').innerHTML=cf.online
-      ?'<span class="pill green">在线</span> '+esc(cf.base||'')
-      :(c.comfy_base?'<span class="pill">离线</span> 打不开该地址':'未接入');
+      ?'<span class="pill green">在线</span> '+esc(cf.base||'')+
+        ((cf.models&&cf.models.length)?' · '+cf.models.length+' 个权重':' · 未扫到 checkpoints')
+      :(c.comfy_base?'<span class="pill">离线</span> 打不开该地址（需 --listen 0.0.0.0 并放行 8188）':'未接入');
     const g=d.gradio||{};
     $('voGradioStatus').innerHTML=g.online
       ?'<span class="pill green">在线</span> '+esc(g.title||'Gradio')+(g.endpoints&&g.endpoints.length?' · '+esc(g.endpoints.join('、')):'')
@@ -2086,10 +2192,173 @@ function saveVideoOpsDraft(){
   });
 }
 
+/* ---------- 导演台 ---------- */
+let _studio=null;
+function loadStudio(){
+  pywebview.api.get_studio().then(d=>{
+    _studio=d;
+    const desk=d.desk||{};
+    const cf=d.comfy||{};
+    const tc=d.toolchain||{};
+    $('st_title').value=desk.title||'';
+    $('st_logline').value=desk.logline||'';
+    $('st_aspect').value=desk.aspect||'9:16';
+    $('st_duration').value=desk.duration_sec||24;
+    $('st_engine').value=desk.engine||'comfy';
+    $('st_workflow').value=desk.workflow_path||'';
+    const chips=[];
+    chips.push(cf.online
+      ?'<span class="pill green">Comfy 在线 · '+(cf.models||[]).length+' 权重</span>'
+      :'<span class="pill">Comfy 离线</span>');
+    chips.push(tc.ffmpeg
+      ?'<span class="pill green">ffmpeg</span>'
+      :'<span class="pill amber">无 ffmpeg</span>');
+    chips.push(d.busy?'<span class="pill amber">生成中</span>':'<span class="pill">空闲</span>');
+    if(cf.base)chips.push('<span class="pill">'+esc(cf.base)+'</span>');
+    $('studioChips').innerHTML=chips.join(' ');
+    $('studioRail').innerHTML=(d.stages||[]).map((s,i)=>
+      '<button class="step'+(desk.stage===s.id?' on':'')+'" onclick="studioStage(\''+s.id+'\')">'+
+      '<span class="n">'+(i+1)+'</span>'+esc(s.label)+'</button>'
+    ).join('');
+    renderStudioShots(desk.shots||[]);
+    $('studioFinal').textContent=desk.assembled?'成片：'+desk.assembled:'成片：尚未合成';
+  });
+}
+function attrEsc(s){return esc(s).replace(/"/g,'&quot;');}
+function collectShots(){
+  return Array.from(document.querySelectorAll('#studioShots .shot-card')).map(el=>({
+    id: el.dataset.id||'',
+    title: (el.querySelector('.st-title')||{}).value||'',
+    prompt: (el.querySelector('.st-prompt')||{}).value||'',
+    seconds: parseFloat((el.querySelector('.st-sec')||{}).value||'4')||4,
+    engine: (el.querySelector('.st-eng')||{}).value||'auto',
+    status: el.dataset.status||'draft',
+    clip: el.dataset.clip||'',
+    error: el.dataset.error||'',
+  }));
+}
+function studioPayload(){
+  const p={
+    title:$('st_title').value.trim(),
+    logline:$('st_logline').value.trim(),
+    aspect:$('st_aspect').value,
+    duration_sec:parseInt($('st_duration').value,10)||24,
+    engine:$('st_engine').value,
+    workflow_path:$('st_workflow').value.trim(),
+  };
+  const cards=document.querySelectorAll('#studioShots .shot-card');
+  if(cards.length)p.shots=collectShots();
+  return p;
+}
+function saveStudio(){
+  pywebview.api.save_studio(studioPayload()).then(r=>{
+    if(!r.ok){toast(r.error||'保存失败');return;}
+    toast('企划已保存'); loadStudio();
+  });
+}
+function studioStage(id){
+  const p=studioPayload(); p.stage=id;
+  pywebview.api.save_studio(p).then(()=>loadStudio());
+}
+function studioImport(){
+  pywebview.api.save_studio(studioPayload()).then(()=>
+    pywebview.api.studio_import_script($('st_script').value)
+  ).then(r=>{
+    if(!r.ok){toast(r.error||'导入失败');return;}
+    toast('已导入 '+(r.added||0)+' 个镜头');
+    $('st_script').value='';
+    loadStudio();
+  });
+}
+function studioAddShot(){
+  const prompt=($('st_script').value.trim()||$('st_logline').value.trim());
+  if(!prompt){toast('先写画面描述或一句话故事');return;}
+  pywebview.api.save_studio(studioPayload()).then(()=>
+    pywebview.api.studio_add_shot('', prompt, 4, $('st_engine').value)
+  ).then(r=>{
+    if(!r.ok){toast(r.error||'添加失败');return;}
+    $('st_script').value='';
+    loadStudio();
+  });
+}
+function renderStudioShots(shots){
+  const el=$('studioShots');
+  if(!shots.length){
+    el.innerHTML='<div class="dashed">还没有分镜。导入剧本或点「加一镜」。</div>';
+    return;
+  }
+  const pill={draft:'',queued:'blue',running:'amber',done:'green',error:''} ;
+  el.innerHTML=shots.map((s,i)=>{
+    const st=s.status||'draft';
+    const eng=s.engine||'auto';
+    return '<div class="shot-card" data-id="'+attrEsc(s.id)+'" data-status="'+attrEsc(st)+
+      '" data-clip="'+attrEsc(s.clip||'')+'" data-error="'+attrEsc(s.error||'')+'">'+
+      '<div class="row"><span class="n" style="color:var(--faint)">'+(i+1)+'</span>'+
+      '<input class="st-title" value="'+attrEsc(s.title||'镜头')+'">'+
+      '<span class="pill '+(pill[st]||'')+'">'+esc(st)+'</span>'+
+      '<input class="st-sec" type="number" min="1" max="20" value="'+(s.seconds||4)+'" title="秒">'+
+      '<select class="st-eng"><option value="auto"'+(eng==='auto'?' selected':'')+'>自动</option>'+
+      '<option value="comfy"'+(eng==='comfy'?' selected':'')+'>Comfy</option>'+
+      '<option value="wan"'+(eng==='wan'?' selected':'')+'>WAN</option>'+
+      '<option value="minimax"'+(eng==='minimax'?' selected':'')+'>Hailuo</option>'+
+      '<option value="kimi"'+(eng==='kimi'?' selected':'')+'>Kimi</option></select>'+
+      '<button class="btn" style="padding:4px 10px;font-size:11px" onclick="studioGenOne(\''+attrEsc(s.id)+'\')">生成</button>'+
+      '<button class="iconbtn danger" onclick="studioDel(\''+attrEsc(s.id)+'\')">🗑</button></div>'+
+      '<textarea class="st-prompt" rows="2">'+esc(s.prompt||'')+'</textarea>'+
+      (s.clip?'<div class="meta">'+esc(s.clip)+'</div>':'')+
+      (s.error?'<div class="meta" style="color:var(--bad)">'+esc(s.error)+'</div>':'')+
+      '</div>';
+  }).join('');
+}
+function studioDel(id){
+  pywebview.api.studio_remove_shot(id).then(r=>{
+    if(!r.ok){toast(r.error||'删除失败');return;}
+    loadStudio();
+  });
+}
+function studioGenOne(id){
+  pywebview.api.save_studio(studioPayload()).then(()=>
+    pywebview.api.studio_generate_shot(id, false)
+  ).then(r=>{
+    if(!r.ok){toast(r.error||'无法开始');return;}
+    toast('已开始生成该镜头');
+  });
+}
+function studioGenAll(){
+  pywebview.api.save_studio(studioPayload()).then(()=>
+    pywebview.api.studio_generate_shot('', true)
+  ).then(r=>{
+    if(!r.ok){toast(r.error||'无法开始');return;}
+    toast('按分镜顺序生成未完成镜头');
+  });
+}
+function studioAssemble(){
+  toast('正在合成…');
+  pywebview.api.studio_assemble().then(r=>{
+    if(!r.ok){toast(r.error||'合成失败');return;}
+    toast('成片 '+(r.clips||'')+' 镜');
+    loadStudio();
+  });
+}
+function studioInterrupt(){
+  pywebview.api.studio_interrupt().then(()=>{toast('已请求停止');loadStudio();});
+}
+function studioToDraft(){
+  const desk=(_studio&&_studio.desk)||{};
+  if(!desk.assembled){toast('先合成成片');return;}
+  pywebview.api.save_video_ops_draft(
+    desk.title||'导演台成片', desk.logline||'', '', desk.assembled, ''
+  ).then(r=>{
+    if(!r.ok){toast(r.error||'写入失败');return;}
+    toast('已写入发布草稿');
+    go('videoops');
+  });
+}
+
 /* ---------- skills ---------- */
 function skillPackOf(s){
   if(s.pack==='fusion')return 'fusion';
-  if(/video|wan-gradio|remotion|libtv|short-drama|ops-analyze|multi-publish/.test(s.name||''))
+  if(/video|wan-gradio|remotion|libtv|short-drama|ops-analyze|multi-publish|director-desk/.test(s.name||''))
     return 'video';
   return 'user';
 }
@@ -2195,7 +2464,8 @@ function renderPicker(a){
       const o=document.createElement('option');
       o.value='local:'+name+'@'+ep.id;
       o.dataset.kind=ep.kind||'';
-      o.textContent=ep.kind==='gradio'?name+'（文生视频）':name+'（本地）';
+      o.textContent=ep.kind==='gradio'?name+'（文生视频）'
+        :(ep.kind==='comfy'?name+'（节点图）':name+'（本地）');
       if(a.active===o.value)o.selected=true;
       sel.appendChild(o);
     });
@@ -2316,10 +2586,14 @@ function renderEndpoints(eps){
       ?'<span class="pill blue">OpenAI 兼容</span>'
       :(ep.kind==='gradio'
         ?'<span class="pill purple">Gradio 文生视频</span>'
-        :(ep.kind==='ollama'?'<span class="pill">Ollama</span>':''));
+        :(ep.kind==='comfy'
+          ?'<span class="pill purple">ComfyUI 节点图</span>'
+          :(ep.kind==='ollama'?'<span class="pill">Ollama</span>':'')));
     const onlinePill=ep.kind==='gradio'
       ?'<span class="pill green">在线</span>'
-      :'<span class="pill green">在线 · '+(ep.models||[]).length+' 个模型</span>';
+      :(ep.kind==='comfy'
+        ?'<span class="pill green">在线 · '+(ep.models||[]).length+' 个权重</span>'
+        :'<span class="pill green">在线 · '+(ep.models||[]).length+' 个模型</span>');
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">'+
       '<div style="display:flex;align-items:center;gap:8px">'+
       '<span style="font-weight:550;font-size:13px">'+esc(ep.label||ep.base)+'</span>'+
@@ -2338,21 +2612,24 @@ function renderLocalModels(eps){
   const rows=[];
   eps.forEach(ep=>{if(ep.online)(ep.models||[]).forEach(m=>rows.push({...m,ep}));});
   if(!rows.length){
-    el.innerHTML='<div class="dashed">模型列表为空。端点在线时会自动列出其模型；支持 Ollama、局域网 OpenAI 兼容服务，以及 Gradio 文生视频（如 WAN）。</div>';
+    el.innerHTML='<div class="dashed">模型列表为空。端点在线时会自动列出其模型；支持 Ollama、局域网 OpenAI 兼容、Gradio 文生视频，以及 ComfyUI（:8188，节点图权重不是聊天模型）。</div>';
     return;
   }
   el.innerHTML=rows.map(m=>{
     const isGradio=m.ep.kind==='gradio';
-    const manageable=m.manageable!==false && m.ep.kind!=='openai' && !isGradio;
+    const isComfy=m.ep.kind==='comfy';
+    const manageable=m.manageable!==false && m.ep.kind!=='openai' && !isGradio && !isComfy;
     const status=isGradio
       ?'<span class="pill purple">文生视频</span>'
-      :(m.ep.kind==='openai'
+      :(isComfy
+        ?'<span class="pill purple">节点图</span>'
+        :(m.ep.kind==='openai'
         ?'<span class="pill green">可用</span>'
-        :(m.running?'<span class="pill green">running</span>':'<span class="pill">stopped</span>'));
+        :(m.running?'<span class="pill green">running</span>':'<span class="pill">stopped</span>')));
     return '<div class="card" style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:9px;padding:13px 16px">'+
       '<div style="flex:1"><div style="display:flex;align-items:center;gap:8px">'+
       '<span style="font-weight:550;cursor:pointer" '+
-      (isGradio?'title="设为当前文生视频模型"':'title="设为当前模型"')+
+      (isGradio?'title="设为当前文生视频模型"':(isComfy?'title="ComfyUI 权重，对话里由 comfy 工具调用"':'title="设为当前模型"'))+
       ' onclick="pickModel(\''+m.ref+'\')"'+
       '>'+esc(m.name)+'</span>'+
       (m.active?'<span class="pill green">当前</span>':'')+status+
@@ -2367,7 +2644,7 @@ function renderLocalModels(eps){
           ?'<button class="btn" style="padding:5px 12px;font-size:11.5px" onclick="setLoaded(\''+m.ep.id+'\',\''+esc(m.name)+'\',false)">■ 停止</button>'
           :'<button class="btn primary" style="padding:5px 12px;font-size:11.5px" onclick="setLoaded(\''+m.ep.id+'\',\''+esc(m.name)+'\',true)">▶ 启动</button>')+
          '<button class="iconbtn danger" title="删除模型" onclick="delLocal(\''+m.ep.id+'\',\''+esc(m.name)+'\')">🗑</button>'
-        :(isGradio
+        :(isGradio||isComfy
           ?'<button class="btn primary" style="padding:5px 12px;font-size:11.5px" onclick="go(\'videoops\')">去视频运营</button>'
           :'<button class="btn primary" style="padding:5px 12px;font-size:11.5px" onclick="pickModel(\''+m.ref+'\')">选用</button>'))+
       '</div></div>';
@@ -2448,6 +2725,12 @@ function detectModels(){
     }
     if(r.kind==='gradio'){
       $('am_detect_hint').textContent='识别到 Gradio：'+(r.models[0]||'')+'。这是文生视频/UI 服务，不能作为对话模型添加。请到「本地模型」用该地址添加端点。';
+      $('am_model_wrap').innerHTML=
+        '<input id="am_model" placeholder="模型名（手动填写）" style="width:100%">';
+      return;
+    }
+    if(r.kind==='comfy'){
+      $('am_detect_hint').textContent='识别到 ComfyUI：'+((r.models&&r.models.length)?r.models.length+' 个权重':'在线但 checkpoints 为空')+'。节点图不是聊天模型，请到「本地模型」或「视频运营」填写该地址。';
       $('am_model_wrap').innerHTML=
         '<input id="am_model" placeholder="模型名（手动填写）" style="width:100%">';
       return;
@@ -3113,6 +3396,9 @@ window._onEvent=function(ev){
     $('cf_risk').textContent=ev.risk;
     $('cf_args').textContent=ev.args;
     $('confirmDialog').classList.add('open');
+  }else if(ev.kind==='studio'){
+    if(ev.text)toast(ev.text);
+    if($('page-studio')&&$('page-studio').classList.contains('active'))loadStudio();
   }else if(ev.kind==='pull_done'){
     if(ev.ok){toast(ev.model+' 部署完成，可在此启动');}
     else{toast('部署失败：'+ev.error);}

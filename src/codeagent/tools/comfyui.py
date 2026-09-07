@@ -13,7 +13,9 @@ INSTALL_HINT = (
     "1) 桌面版：https://www.comfy.org/download （Windows / macOS）\n"
     "2) 源码：git clone https://github.com/Comfy-Org/ComfyUI "
     "后按 README 建 venv，运行 python main.py --listen 0.0.0.0 --port 8188\n"
-    "浏览器打开 http://127.0.0.1:8188，权重放 models/checkpoints。\n"
+    "浏览器打开 http://127.0.0.1:8188。局域网还要 --listen 0.0.0.0。\n"
+    "SD 权重放 models/checkpoints；MiniMax-H3 等 GGUF 放 models/diffusion_models，"
+    "并安装 city96/ComfyUI-GGUF，否则下拉里搜不到。\n"
     "自动化必须用菜单 Save (API Format) 的 JSON，不要用手绘一张新图。"
 )
 

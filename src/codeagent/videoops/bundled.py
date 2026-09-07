@@ -26,11 +26,12 @@ _add(
 
 ## 阶段
 
-1. **选题 / 剧本** → `01-script/`（技能 `short-drama-script`）
-2. **生成** → `02-generate/`：局域网 Gradio WAN（工具 `video_generate`）优先；否则 LibTV；再否则 Remotion
-3. **剪辑** → `03-edit/`：竖屏 1080x1920、字幕、Ken Burns、成片自检
-4. **运营分析** → `04-analyze/`：把播放/完播/互动表写成报告，再决定改脚本还是改封面
-5. **发布** → `05-publish/draft.json`：填好多平台标题描述标签，**人工点发布**
+1. **导演台** → 侧栏「导演台」（对话和指挥中心之间）：企划、分镜、Comfy/WAN 生成、ffmpeg 合成。工具 `video_studio`
+2. **选题 / 剧本** → `01-script/`（技能 `short-drama-script`）
+3. **生成** → `02-generate/`：局域网 Gradio WAN（工具 `video_generate`）优先；ComfyUI 节点图；否则 LibTV / Remotion
+4. **剪辑** → `03-edit/`：竖屏 1080x1920、字幕、Ken Burns、成片自检
+5. **运营分析** → `04-analyze/`：把播放/完播/互动表写成报告，再决定改脚本还是改封面
+6. **发布** → `05-publish/draft.json`：填好多平台标题描述标签，**人工点发布**
 
 ## 硬规则
 
@@ -260,5 +261,29 @@ tags: tag1, tag2
 ```
 
 导出到 `05-publish/article.md`。登录与排版由用户或自备 Selenium 完成；本技能只保证正文结构稳定、不上传密码。
+""",
+)
+
+_add(
+    "director-desk",
+    "导演台：企划→分镜→ComfyUI/WAN 生成→ffmpeg 合成成片，对话与指挥中心之间的创作台",
+    """
+# 导演台
+
+用户要拍短片、分镜、合成、Comfy 出视频时，打开侧栏「导演台」（在对话和指挥中心之间）。
+自己调用工具 `video_studio`（status / save / import_script / add_shot / generate / assemble）。
+不要让用户去 Comfy 网页里点 Queue，除非还没有 API Format JSON。
+
+来源：https://docs.comfy.org/zh  ·  https://github.com/Comfy-Org/ComfyUI
+Comfy 是节点图，不是聊天模型。自动化协议：Save (API Format) → POST /prompt → GET /history/{id} → GET /view。
+
+## 流程
+
+1. save：片名、一句话故事、画幅、engine（comfy/wan/minimax/kimi）
+2. import_script：把「1. 画面」或「## 镜头」剧本拆成镜头
+3. Comfy 引擎必须带 workflow_path（API JSON）。MiniMax-H3 用 Unet Loader (GGUF)
+4. generate：按镜头出片，写入 `00-desk/shots/`
+5. assemble：本机 ffmpeg 拼接成片
+6. 发布仍走视频运营草稿，人工点平台发布
 """,
 )

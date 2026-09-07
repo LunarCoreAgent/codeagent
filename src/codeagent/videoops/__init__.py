@@ -21,6 +21,7 @@ SKILLS_DIR = Path("~/.codeagent/skills")
 DEFAULT_WORKSPACE = Path("~/Documents/CodeCoreAgent-VideoOps")
 
 STAGES = (
+    ("00-desk", "导演台"),
     ("01-script", "选题剧本"),
     ("02-generate", "生成"),
     ("03-edit", "剪辑成片"),
@@ -32,6 +33,7 @@ PIPELINE_MD = """# 视频运营流水线
 
 | 阶段 | 目录 | 状态 |
 |------|------|------|
+| 导演台 | `00-desk/` | 待开始 |
 | 选题剧本 | `01-script/` | 待开始 |
 | 生成 | `02-generate/` | 待开始 |
 | 剪辑成片 | `03-edit/` | 待开始 |
@@ -43,7 +45,7 @@ PIPELINE_MD = """# 视频运营流水线
 
 AGENTS_MD = """# CodeCoreAgent 视频运营工作区
 
-按 `pipeline.md` 推进。技能包：`video-ops-pipeline`、`short-drama-script`、
+按 `pipeline.md` 推进。技能包：`director-desk`、`video-ops-pipeline`、`short-drama-script`、
 `wan-gradio`、`libtv-generate`、`remotion-video`、`video-edit-zh`、`ops-analyze`、`multi-publish`。
 
 参考来源（工作流，非内嵌上游全文）：
@@ -158,7 +160,7 @@ def bootstrap_workspace(root: Path) -> dict[str, Any]:
         "pipeline.md": PIPELINE_MD,
         "05-publish/draft.json": json.dumps(DRAFT_JSON, ensure_ascii=False, indent=2)
         + "\n",
-        "01-script/README.md": "# 选题剧本\n\n把立项状态与分集写在此目录。\n",
+        "00-desk/README.md": "# 导演台\n\n企划、分镜、生成、合成本地目录。\n",
         "02-generate/README.md": "# 生成\n\nLibTV 下载或 Remotion 工程放这里。\n",
         "03-edit/README.md": "# 剪辑成片\n\n成片 MP4 与抽帧自检图。\n",
         "04-analyze/README.md": "# 运营分析\n\n把后台导出表和 report.md 放这里。\n",

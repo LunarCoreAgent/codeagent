@@ -182,6 +182,7 @@ def test_expand_and_match_work_content():
     names = {s.name for s in match_work_skills(lib, "用浏览器打开已登录的后台")}
     assert names & {"browser-skill", "ego-browser"}
     assert "Comfy" in expand_work_query("出一张图")
+    assert "导演台" in expand_work_query("帮我拍一条短片")
     assert "comfyui" in {s.name for s in match_work_skills(lib, "用节点图出一张图")}
     assert "voice-surface" in {s.name for s in match_work_skills(lib, "把语音面嗲音调低一点")}
 

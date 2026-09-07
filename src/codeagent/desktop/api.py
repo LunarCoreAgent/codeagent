@@ -274,7 +274,7 @@ class DesktopAPI:
 
     def get_nav_status(self) -> dict[str, Any]:
         """侧栏底部：本地端点/探测模型、API 在线、聚合池启用、当前激活。"""
-        local_eps = [e for e in self.assets.endpoints if e.kind != "gradio"]
+        local_eps = [e for e in self.assets.endpoints if e.kind not in ("gradio", "comfy")]
         running = 0
         if self._probe_cache is not None:
             chat_ids = {e.id for e in local_eps}
@@ -370,6 +370,8 @@ class DesktopAPI:
             models = list(rec.get("models") or [])
             if rec.get("kind") == "gradio" and not models:
                 models = [(e.label or "").strip() or "WAN 文生视频"]
+            if rec.get("kind") == "comfy" and not models:
+                models = [(e.label or "").strip() or "ComfyUI"]
             rec["models"] = models
             endpoints.append(rec)
         active = self.assets.active
@@ -474,13 +476,17 @@ class DesktopAPI:
             return {"ok": False, "error": "地址格式应为 http://IP:端口"}
         if any(e.base == base for e in self.assets.endpoints):
             return {"ok": False, "error": "端点已存在"}
-        self.assets.endpoints.append(OllamaEndpoint(
+        ep = OllamaEndpoint(
             base=base, label=(label or "").strip(),
             role=role if role in ("primary", "backup") else "backup",
-        ))
+        )
+        if base.rstrip("/").endswith(":8188"):
+            ep.kind = "comfy"
+            self._remember_comfy_base(base)
+        self.assets.endpoints.append(ep)
         self.assets.save()
-        log.info("endpoint added: %s", base)
-        return {"ok": True}
+        log.info("endpoint added: %s kind=%s", base, ep.kind or "?")
+        return {"ok": True, "kind": ep.kind}
 
     def remove_endpoint(self, endpoint_id: str) -> bool:
         before = len(self.assets.endpoints)
@@ -588,7 +594,7 @@ class DesktopAPI:
             models = [
                 {
                     **d,
-                    "running": True if kind in ("openai", "gradio") else d["name"] in running,
+                    "running": True if kind in ("openai", "gradio", "comfy") else d["name"] in running,
                     "ref": f"local:{d['name']}@{ep.id}",
                     "active": self.assets.active == f"local:{d['name']}@{ep.id}",
                     "manageable": kind == "ollama",
@@ -607,6 +613,21 @@ class DesktopAPI:
                     "active": self.assets.active == f"local:{name}@{ep.id}",
                     "manageable": False,
                 }]
+            if (kind or ep.kind) == "comfy":
+                if info is not None:
+                    self._remember_comfy_base(ep.base)
+                if not models:
+                    name = (ep.label or "").strip() or "ComfyUI"
+                    models = [{
+                        "name": name,
+                        "params": "ComfyUI 节点图",
+                        "quant": "节点图",
+                        "size": "-",
+                        "running": info is not None,
+                        "ref": f"local:{name}@{ep.id}",
+                        "active": self.assets.active == f"local:{name}@{ep.id}",
+                        "manageable": False,
+                    }]
             return {
                 "id": ep.id, "label": ep.label, "base": ep.base, "role": ep.role,
                 "kind": kind or ep.kind, "online": info is not None, "models": models,
@@ -633,7 +654,7 @@ class DesktopAPI:
         ep = next((e for e in self.assets.endpoints if e.id == endpoint_id), None)
         if ep is None:
             return {"ok": False, "error": "端点不存在"}
-        if ep.kind in ("openai", "gradio"):
+        if ep.kind in ("openai", "gradio", "comfy"):
             return {"ok": False, "error": "该端点不支持显存启停（Ollama 专用）"}
         try:
             asyncio.run(set_model_loaded(ep.base, model, load))
@@ -645,7 +666,7 @@ class DesktopAPI:
         ep = next((e for e in self.assets.endpoints if e.id == endpoint_id), None)
         if ep is None:
             return {"ok": False, "error": "端点不存在"}
-        if ep.kind in ("openai", "gradio"):
+        if ep.kind in ("openai", "gradio", "comfy"):
             return {"ok": False, "error": "该端点不支持删除模型（Ollama 专用）"}
         try:
             asyncio.run(delete_ollama_model(ep.base, model))
@@ -2100,13 +2121,27 @@ class DesktopAPI:
                     "title": info.get("title") or "",
                     "endpoints": info.get("endpoints") or [],
                 }
-        comfy: dict[str, Any] = {"base": cfg.comfy_base, "online": False}
+        if not (cfg.comfy_base or "").strip():
+            inferred = next(
+                (e.base for e in self.assets.endpoints
+                 if e.kind == "comfy" or str(e.base).rstrip("/").endswith(":8188")),
+                "",
+            )
+            if inferred:
+                from codeagent.videoops.comfy import normalize_comfy_base
+
+                cfg.comfy_base = normalize_comfy_base(inferred)
+        comfy: dict[str, Any] = {"base": cfg.comfy_base, "online": False, "models": []}
         if cfg.comfy_base:
             from codeagent.videoops.comfy import probe_comfy
 
             info = asyncio.run(probe_comfy(cfg.comfy_base))
             if info:
-                comfy = {"base": info["base"], "online": True}
+                comfy = {
+                    "base": info["base"],
+                    "online": True,
+                    "models": [m.get("name") for m in (info.get("models") or []) if m.get("name")],
+                }
         return {
             "config": asdict(cfg),
             "status": workspace_status(cfg.workspace()),
@@ -2143,6 +2178,8 @@ class DesktopAPI:
         cfg.save()
         if cfg.gradio_base:
             self._ensure_gradio_endpoint(cfg.gradio_base)
+        if cfg.comfy_base:
+            self._ensure_comfy_endpoint(cfg.comfy_base)
         self._agent = None
         gradio: dict[str, Any] = {
             "base": cfg.gradio_base, "online": False, "title": "", "endpoints": [],
@@ -2177,6 +2214,36 @@ class DesktopAPI:
                 return
         self.assets.endpoints.append(OllamaEndpoint(
             base=base, label="WAN 文生视频", kind="gradio", role="backup",
+        ))
+        self.assets.save()
+
+    def _remember_comfy_base(self, base: str) -> None:
+        from codeagent.videoops import VideoOpsConfig
+        from codeagent.videoops.comfy import normalize_comfy_base
+
+        root = normalize_comfy_base(base)
+        if not root:
+            return
+        cfg = VideoOpsConfig.load()
+        if cfg.comfy_base == root:
+            return
+        cfg.comfy_base = root
+        cfg.save()
+
+    def _ensure_comfy_endpoint(self, base: str) -> None:
+        from codeagent.desktop.models import OllamaEndpoint, normalize_endpoint_base
+
+        base = normalize_endpoint_base(base)
+        if not base:
+            return
+        for ep in self.assets.endpoints:
+            if ep.base.rstrip("/") == base:
+                if ep.kind != "comfy":
+                    ep.kind = "comfy"
+                    self.assets.save()
+                return
+        self.assets.endpoints.append(OllamaEndpoint(
+            base=base, label="ComfyUI", kind="comfy", role="backup",
         ))
         self.assets.save()
 
@@ -2228,6 +2295,181 @@ class DesktopAPI:
             "video_path": video_path,
             "cover_path": cover_path,
         })
+
+    def get_studio(self) -> dict[str, Any]:
+        from codeagent.videoops import VideoOpsConfig, toolchain_status, workspace_status
+        from codeagent.videoops.comfy import probe_comfy
+        from codeagent.videoops.studio import (
+            STAGE_LABELS,
+            STAGES,
+            desk_dict,
+            ensure_desk_workspace,
+            load_desk,
+        )
+
+        root = ensure_desk_workspace()
+        desk = load_desk(root)
+        cfg = VideoOpsConfig.load()
+        comfy: dict[str, Any] = {"base": cfg.comfy_base, "online": False, "models": []}
+        if cfg.comfy_base:
+            info = asyncio.run(probe_comfy(cfg.comfy_base, timeout=4.0))
+            if info:
+                comfy = {
+                    "base": info["base"],
+                    "online": True,
+                    "models": [m.get("name") for m in (info.get("models") or []) if m.get("name")],
+                }
+        return {
+            "ok": True,
+            "desk": desk_dict(desk),
+            "stages": [{"id": s, "label": STAGE_LABELS[s]} for s in STAGES],
+            "comfy": comfy,
+            "toolchain": toolchain_status(),
+            "workspace": workspace_status(root),
+            "busy": self._busy,
+        }
+
+    def _studio_desk(self) -> dict[str, Any]:
+        from codeagent.videoops.studio import desk_dict, ensure_desk_workspace, load_desk
+
+        return desk_dict(load_desk(ensure_desk_workspace()))
+
+    def save_studio(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        from codeagent.videoops.studio import (
+            apply_desk_patch, load_desk, save_desk, ensure_desk_workspace,
+        )
+
+        root = ensure_desk_workspace()
+        desk = apply_desk_patch(load_desk(root), payload or {})
+        save_desk(desk, root)
+        return {"ok": True, "desk": self._studio_desk()}
+
+    def studio_import_script(self, script: str) -> dict[str, Any]:
+        from codeagent.videoops.studio import (
+            load_desk, parse_script_shots, save_desk, ensure_desk_workspace,
+        )
+
+        incoming = parse_script_shots(script or "")
+        if not incoming:
+            return {"ok": False, "error": "没有解析到镜头。用「1. 画面」或「## 镜头名」分行。"}
+        root = ensure_desk_workspace()
+        desk = load_desk(root)
+        desk.shots.extend(incoming)
+        desk.stage = "board"
+        save_desk(desk, root)
+        return {"ok": True, "added": len(incoming), "desk": self._studio_desk()}
+
+    def studio_add_shot(
+        self,
+        title: str = "",
+        prompt: str = "",
+        seconds: float = 4.0,
+        engine: str = "auto",
+    ) -> dict[str, Any]:
+        from codeagent.videoops.studio import Shot, load_desk, save_desk, ensure_desk_workspace
+
+        body = (prompt or title or "").strip()
+        if not body:
+            return {"ok": False, "error": "画面描述不能为空"}
+        root = ensure_desk_workspace()
+        desk = load_desk(root)
+        desk.shots.append(Shot(
+            title=(title or body[:24])[:80],
+            prompt=body[:2000],
+            seconds=seconds,
+            engine=engine or "auto",
+        ))
+        desk.stage = "board"
+        save_desk(desk, root)
+        return {"ok": True, "desk": self._studio_desk()}
+
+    def studio_remove_shot(self, shot_id: str) -> dict[str, Any]:
+        from codeagent.videoops.studio import load_desk, save_desk, ensure_desk_workspace
+
+        root = ensure_desk_workspace()
+        desk = load_desk(root)
+        before = len(desk.shots)
+        desk.shots = [s for s in desk.shots if s.id != shot_id]
+        if len(desk.shots) == before:
+            return {"ok": False, "error": "镜头不存在"}
+        save_desk(desk, root)
+        return {"ok": True, "desk": self._studio_desk()}
+
+    def studio_generate_shot(self, shot_id: str = "", all_pending: bool = False) -> dict[str, Any]:
+        with self._lock:
+            if self._busy:
+                return {"ok": False, "error": "正在执行其他任务，请稍后再生成"}
+            self._busy = True
+            self._cancel.clear()
+        threading.Thread(
+            target=self._run_studio_generate,
+            args=(shot_id, bool(all_pending)),
+            daemon=True,
+        ).start()
+        return {"ok": True}
+
+    def _run_studio_generate(self, shot_id: str, all_pending: bool) -> None:
+        from codeagent.videoops.studio import generate_one_shot, load_desk, ensure_desk_workspace
+
+        try:
+            root = ensure_desk_workspace()
+            desk = load_desk(root)
+            if all_pending:
+                ids = [s.id for s in desk.shots if s.status in ("draft", "error", "queued", "")]
+                if not ids:
+                    ids = [s.id for s in desk.shots if s.status != "done"]
+            else:
+                ids = [shot_id] if shot_id else (
+                    [desk.shots[0].id] if desk.shots else []
+                )
+            if not ids:
+                self._push("studio", action="error", text="没有可生成的镜头")
+                return
+            for sid in ids:
+                if self._cancel.is_set():
+                    self._push("studio", action="stopped", shot_id=sid)
+                    return
+                self._push("studio", action="running", shot_id=sid, text="正在生成镜头…")
+                result = asyncio.run(generate_one_shot(load_desk(root), sid))
+                if result.get("ok"):
+                    shot = result.get("shot") or {}
+                    self._push(
+                        "studio", action="done", shot_id=sid,
+                        clip=shot.get("clip") or "", text="镜头完成",
+                    )
+                else:
+                    self._push(
+                        "studio", action="error", shot_id=sid,
+                        text=str(result.get("error") or "生成失败"),
+                    )
+                    if not all_pending:
+                        return
+        except Exception as exc:  # noqa: BLE001
+            log.exception("studio generate failed")
+            self._push("studio", action="error", text=str(exc)[:300])
+        finally:
+            with self._lock:
+                self._busy = False
+            self._push("studio", action="idle")
+
+    def studio_assemble(self) -> dict[str, Any]:
+        from codeagent.videoops.studio import assemble_desk, load_desk, ensure_desk_workspace
+
+        desk = load_desk(ensure_desk_workspace())
+        result = assemble_desk(desk)
+        if result.get("ok"):
+            result["desk"] = self._studio_desk()
+        return result
+
+    def studio_interrupt(self) -> dict[str, Any]:
+        from codeagent.videoops import VideoOpsConfig
+        from codeagent.videoops.comfy import interrupt_comfy
+
+        self.stop()
+        cfg = VideoOpsConfig.load()
+        if cfg.comfy_base:
+            return asyncio.run(interrupt_comfy(cfg.comfy_base))
+        return {"ok": True}
 
     def open_video_ops_folder(self) -> dict[str, Any]:
         import subprocess

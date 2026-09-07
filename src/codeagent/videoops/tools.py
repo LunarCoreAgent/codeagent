@@ -122,6 +122,10 @@ class VideoGenerateTool(Tool):
                 "type": "string",
                 "description": "ComfyUI API 格式工作流 JSON 路径（provider=comfy 时）",
             },
+            "dest_dir": {
+                "type": "string",
+                "description": "成片目录，默认视频运营 02-generate/",
+            },
         },
         "required": ["prompt"],
     }
@@ -136,6 +140,7 @@ class VideoGenerateTool(Tool):
         num_inference_steps: int = 50,
         duration: int | None = None,
         workflow_path: str = "",
+        dest_dir: str = "",
         **_: Any,
     ) -> str:
         from codeagent.videoops.cloud import generate_cloud_video, list_video_credentials
@@ -146,8 +151,16 @@ class VideoGenerateTool(Tool):
         )
 
         cfg = VideoOpsConfig.load()
-        dest_dir = cfg.workspace() / "02-generate"
-        dest_dir.mkdir(parents=True, exist_ok=True)
+        root = cfg.workspace().expanduser().resolve()
+        if (dest_dir or "").strip():
+            dest_dir_path = Path(dest_dir).expanduser().resolve()
+            try:
+                dest_dir_path.relative_to(root)
+            except ValueError:
+                dest_dir_path = root / "02-generate"
+        else:
+            dest_dir_path = root / "02-generate"
+        dest_dir_path.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S")
         kind = (provider or "auto").strip().lower()
         if kind in {"hailuo", "minimax-hailuo"}:
@@ -174,7 +187,7 @@ class VideoGenerateTool(Tool):
             base = resolve_gradio_base(cfg)
             if not base:
                 return "未配置 Gradio WAN。请到「视频运营」填写地址并点「探测并接入」。"
-            dest = dest_dir / f"wan-{stamp}.mp4"
+            dest = dest_dir_path / f"wan-{stamp}.mp4"
             result = await generate_wan_video(
                 base, prompt,
                 resolution=resolution,
@@ -183,7 +196,7 @@ class VideoGenerateTool(Tool):
                 dest=dest,
             )
         elif kind in {"minimax", "kimi"}:
-            dest = dest_dir / f"{kind}-{stamp}.mp4"
+            dest = dest_dir_path / f"{kind}-{stamp}.mp4"
             result = await generate_cloud_video(
                 prompt, dest, backend=kind,
                 resolution=resolution,
@@ -203,7 +216,7 @@ class VideoGenerateTool(Tool):
                 wf = load_workflow_file(workflow_path)
             except (OSError, ValueError) as exc:
                 return f"读工作流失败：{exc}"
-            result = await queue_comfy_workflow(base, wf, dest_dir)
+            result = await queue_comfy_workflow(base, wf, dest_dir_path)
         else:
             return f"未知 provider {provider!r}，请用 auto / wan / minimax / kimi / comfy"
         if not result.get("ok"):
@@ -212,6 +225,125 @@ class VideoGenerateTool(Tool):
         if cfg.workspace().exists():
             append_pipeline(cfg.workspace(), f"{kind} 生成 {Path(path).name if path else ''}")
         return f"saved: {path}"
+
+
+class VideoStudioTool(Tool):
+    name = "video_studio"
+    description = (
+        "Director desk for video production: plan, storyboard shots, generate "
+        "via ComfyUI/WAN/Hailuo, ffmpeg assemble. Actions: status, save, "
+        "import_script, add_shot, generate, assemble. Comfy needs API-format JSON."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "description": "status | save | import_script | add_shot | generate | assemble",
+            },
+            "title": {"type": "string"},
+            "logline": {"type": "string"},
+            "script": {"type": "string", "description": "分镜/剧本，import_script 时用"},
+            "prompt": {"type": "string"},
+            "shot_id": {"type": "string"},
+            "engine": {"type": "string", "description": "auto | comfy | wan | minimax | kimi"},
+            "workflow_path": {"type": "string"},
+        },
+        "required": ["action"],
+    }
+    risk_level = RiskLevel.WRITE
+
+    def risk_for(self, arguments: dict[str, Any]) -> RiskLevel:
+        if str(arguments.get("action") or "").strip().lower() == "status":
+            return RiskLevel.READ_ONLY
+        return RiskLevel.WRITE
+
+    async def execute(
+        self,
+        action: str,
+        title: str = "",
+        logline: str = "",
+        script: str = "",
+        prompt: str = "",
+        shot_id: str = "",
+        engine: str = "",
+        workflow_path: str = "",
+        **_: Any,
+    ) -> str:
+        from codeagent.videoops.studio import (
+            apply_desk_patch,
+            assemble_desk,
+            generate_one_shot,
+            load_desk,
+            parse_script_shots,
+            save_desk,
+            Shot,
+            ensure_desk_workspace,
+        )
+
+        action = (action or "").strip().lower()
+        ensure_desk_workspace()
+        desk = load_desk()
+        if action == "status":
+            lines = [
+                f"title: {desk.title or '(未命名)'}",
+                f"stage: {desk.stage} engine: {desk.engine}",
+                f"shots: {len(desk.shots)} assembled: {desk.assembled or '-'}",
+            ]
+            for s in desk.shots:
+                lines.append(
+                    f"- {s.id} [{s.status}] {s.title or s.prompt[:24]} {s.clip or s.error}"
+                )
+            return "\n".join(lines)
+        if action == "save":
+            apply_desk_patch(desk, {
+                "title": title or desk.title,
+                "logline": logline or desk.logline,
+                "engine": engine or desk.engine,
+                "workflow_path": workflow_path or desk.workflow_path,
+            })
+            save_desk(desk)
+            return f"saved desk {desk.title or '(未命名)'} · {len(desk.shots)} 镜"
+        if action == "import_script":
+            incoming = parse_script_shots(script or prompt)
+            if not incoming:
+                return "没有解析到镜头。用「1. 画面」或「## 镜头名」分行。"
+            desk.shots.extend(incoming)
+            desk.stage = "board"
+            save_desk(desk)
+            return f"导入 {len(incoming)} 个镜头，共 {len(desk.shots)} 镜"
+        if action == "add_shot":
+            body = (prompt or script or "").strip()
+            if not body:
+                return "add_shot 需要 prompt"
+            desk.shots.append(Shot(
+                title=(title or body[:24]),
+                prompt=body,
+                engine=engine or "auto",
+            ))
+            save_desk(desk)
+            return f"added shot {desk.shots[-1].id}"
+        if action == "generate":
+            sid = (shot_id or "").strip()
+            if not sid and desk.shots:
+                pending = next(
+                    (s.id for s in desk.shots if s.status in ("draft", "error", "queued")),
+                    desk.shots[0].id,
+                )
+                sid = pending
+            if not sid:
+                return "没有镜头可生成。先 import_script 或 add_shot。"
+            result = await generate_one_shot(desk, sid)
+            if not result.get("ok"):
+                return f"生成失败：{result.get('error')}"
+            shot = result.get("shot") or {}
+            return f"shot {sid} done: {shot.get('clip') or ''}"
+        if action == "assemble":
+            result = assemble_desk(desk)
+            if not result.get("ok"):
+                return f"合成失败：{result.get('error')}"
+            return f"assembled: {result.get('path')}"
+        return "action 请用 status | save | import_script | add_shot | generate | assemble"
 
 
 def video_ops_tools(cfg: VideoOpsConfig | None = None) -> list[Tool]:
@@ -223,4 +355,5 @@ def video_ops_tools(cfg: VideoOpsConfig | None = None) -> list[Tool]:
         VideoOpsLogTool(),
         VideoOpsDraftTool(),
         VideoGenerateTool(),
+        VideoStudioTool(),
     ]

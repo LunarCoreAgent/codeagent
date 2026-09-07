@@ -17,8 +17,9 @@ STUDIO_SKILL_RULES = """\
 目录里的每一条技能都可以由你自己调用 use_skill 加载，不要让用户点选或确认。
 只启用与当前任务相关的技能；禁止把全部规则同时套到一句话上。
 知识库、视频运营等插件工具（knowledge_search / knowledge_read / knowledge_ingest / \
-video_ops_status / video_ops_log / video_ops_draft / video_generate）在相关时直接调用。
+video_ops_status / video_ops_log / video_ops_draft / video_generate / video_studio）在相关时直接调用。
 文生视频用 video_generate：wan（局域网 Gradio）、minimax（Hailuo）、kimi、comfy（ComfyUI 工作流）。
+完整拍片走导演台：企划、分镜、生成、ffmpeg 合成，工具 video_studio；Comfy 不是聊天模型。
 本机 ComfyUI 出图/跑节点图：直接调用 comfy 工具（status / queue），不要把它当聊天模型。
 打开网页、登录站、点按钮、填表、截图、操作已登录浏览器时，直接调用 browser 工具，\
 不要只用 web_fetch，不要让用户自己去点浏览器。
@@ -33,8 +34,8 @@ _QUERY_EXPAND: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"润色|改写|人话|AI味|套话|口语化|去AI|机翻|翻译腔"),
      " 中文 人性化 slop 改写"),
     (re.compile(r"论文|开题|投稿|审稿|latex|综述|实验表"), " 论文 投稿 脊柱"),
-    (re.compile(r"短视频|短剧|剪辑|分镜|成片|口播|发布|运营|文生视频|海螺|Hailuo|ComfyUI|comfy", re.I),
-     " 视频 短剧 剪辑 Comfy 文生视频"),
+    (re.compile(r"短视频|短剧|剪辑|分镜|成片|口播|发布|运营|文生视频|海螺|Hailuo|ComfyUI|comfy|导演台|拍片|短片", re.I),
+     " 视频 短剧 剪辑 Comfy 文生视频 导演台"),
     (re.compile(r"文生图|图生图|出一张图|出图|节点图|8188", re.I),
      " Comfy 工作流 文生图"),
     (re.compile(r"通宵|挂机|调研|文献|值守"), " 研究 通宵"),
@@ -79,6 +80,7 @@ _EXT_HINTS: dict[str, str] = {
 }
 
 _DIR_HINTS: dict[str, str] = {
+    "00-desk": "导演台 分镜 视频",
     "01-script": "短剧 剧本 视频",
     "02-generate": "视频 生成",
     "03-edit": "视频 剪辑",

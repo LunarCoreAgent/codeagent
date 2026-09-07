@@ -86,14 +86,14 @@ class OllamaEndpoint:
     base: str
     label: str = ""
     role: str = "backup"  # "primary" 主推理 | "backup" 备用/快速
-    # "" unknown | "ollama" | "openai" OpenAI-compatible | "gradio" 文生视频 UI
+    # "" unknown | "ollama" | "openai" | "gradio" 文生视频 | "comfy" 节点图
     kind: str = ""
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
     def __post_init__(self) -> None:
         if not self.label:
             self.label = self.base
-        if self.kind not in ("", "ollama", "openai", "gradio"):
+        if self.kind not in ("", "ollama", "openai", "gradio", "comfy"):
             self.kind = ""
 
 
@@ -194,8 +194,8 @@ class ModelAssets:
                 return None
             base = ep.base.rstrip("/")
             # OpenAI 兼容本地站已带 /v1；Ollama 用 native，仍拼 /v1 供 strip
-            if ep.kind == "gradio":
-                return None  # 文生视频，不能当对话 provider
+            if ep.kind in ("gradio", "comfy"):
+                return None  # 文生视频 / 节点图，不能当对话 provider
             if ep.kind == "openai":
                 openai_base = base if base.endswith("/v1") else base + "/v1"
                 return "local_openai", {
@@ -404,9 +404,12 @@ async def _detect_once(
                 "models": [m["name"] for m in gradio["models"]],
                 "note": "这是 Gradio 服务，不能当作对话模型使用",
             }
+        comfy = await _comfy_as_detect(native, timeout)
+        if comfy is not None:
+            return comfy
         detail = ollama_error or "无法识别"
         return {"kind": "unknown", "models": [],
-                "error": f"{detail}：既非 OpenAI/Ollama 对话接口，也非 Gradio"}
+                "error": f"{detail}：既非 OpenAI/Ollama 对话接口，也非 Gradio/ComfyUI"}
 
 
 async def test_provider(provider: LLMProvider, timeout: float = 45.0) -> dict[str, Any]:
@@ -480,6 +483,50 @@ async def _probe_gradio(
     }
 
 
+def _comfy_model_rows(raw: list[dict[str, Any]]) -> list[dict[str, str]]:
+    rows = []
+    for item in raw:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        label = str(item.get("label") or item.get("folder") or "Checkpoint")
+        rows.append({
+            "name": name,
+            "params": f"ComfyUI · {label}",
+            "quant": "节点图",
+            "size": "-",
+        })
+    return rows
+
+
+async def _comfy_as_endpoint(root: str, timeout: float) -> dict[str, Any] | None:
+    from codeagent.videoops.comfy import probe_comfy
+
+    info = await probe_comfy(root, timeout=timeout)
+    if info is None:
+        return None
+    models = _comfy_model_rows(list(info.get("models") or []))
+    if not models:
+        models = [{
+            "name": "ComfyUI",
+            "params": "在线，但 checkpoints 为空。把权重放到 models/checkpoints",
+            "quant": "节点图",
+            "size": "-",
+        }]
+    return {"kind": "comfy", "models": models}
+
+
+async def _comfy_as_detect(root: str, timeout: float) -> dict[str, Any] | None:
+    info = await _comfy_as_endpoint(root, timeout)
+    if info is None:
+        return None
+    return {
+        "kind": "comfy",
+        "models": [m["name"] for m in info["models"]],
+        "note": "这是 ComfyUI 节点图，不能当作对话模型使用。请到「本地模型」或「视频运营」填写该地址。",
+    }
+
+
 async def probe_endpoint_info(
     base: str, timeout: float = 3.0
 ) -> dict[str, Any] | None:
@@ -530,7 +577,10 @@ async def probe_endpoint_info(
             except Exception:  # noqa: BLE001 — next path
                 continue
 
-        return await _probe_gradio(client, root)
+        gradio = await _probe_gradio(client, root)
+        if gradio is not None:
+            return gradio
+        return await _comfy_as_endpoint(root, timeout)
 
 
 async def probe_endpoint_details(

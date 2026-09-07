@@ -168,8 +168,9 @@ macOS 上的 Agent 浏览器：每个任务一个 Space，复用你的登录，�
 
 ## 本机准备
 - 桌面版：https://www.comfy.org/download （Windows / macOS）
-- 源码：clone 后按 README 建 venv，`python main.py --listen 0.0.0.0 --port 8188`
-- 打开 `http://127.0.0.1:8188`。权重放 `models/checkpoints`（或 extra_model_paths.yaml）
+- 便携版：`python main.py --listen 0.0.0.0 --port 8188`（只要 `--auto-launch` 则只绑 127.0.0.1，局域网检测不到）
+- 打开 `http://127.0.0.1:8188`。SD 权重放 `models/checkpoints`
+- MiniMax-H3 等 GGUF：放 `models/diffusion_models` + `models/vae`，并安装 `city96/ComfyUI-GGUF`。内置 UNETLoader 看不到 .gguf，要用 `Unet Loader (GGUF)`
 - 视频运营页也可填同一地址。自检：`comfy` action=`status`
 
 ## 怎么跑

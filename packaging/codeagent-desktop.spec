@@ -58,7 +58,7 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleName": "CodeCoreAgent",
             "CFBundleDisplayName": "CodeCoreAgent",
-            "CFBundleShortVersionString": "0.34.0",
+            "CFBundleShortVersionString": "0.36.0",
             "NSHighResolutionCapable": True,
         },
     )

@@ -27,6 +27,7 @@ def test_bundled_skills_cover_pipeline():
         "video-edit-zh",
         "ops-analyze",
         "multi-publish",
+        "director-desk",
     }
     lib = bundled_library()
     assert len(lib) == len(BUNDLED_SKILLS)
@@ -39,6 +40,8 @@ def test_bootstrap_workspace(tmp_path):
     assert r["ok"] and r["ready"]
     assert is_workspace_ready(root)
     assert (root / "01-script").is_dir()
+    assert (root / "00-desk").is_dir()
+    assert (root / "00-desk" / "README.md").is_file()
     assert (root / "05-publish" / "draft.json").is_file()
     r2 = bootstrap_workspace(root)
     assert r2["created"] == []
@@ -91,6 +94,9 @@ def test_ui_has_videoops_page():
     assert "vo_comfy" in HTML
     assert "comfyui" in HTML or "comfy" in HTML
     assert "comfy" in HTML
+    assert 'data-page="studio"' in HTML
+    assert "video_studio" in HTML
+    assert "director-desk" in HTML
 
 
 def test_cloud_video_classify_and_map():

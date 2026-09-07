@@ -58,3 +58,86 @@ def test_default_tools_include_comfy():
     from codeagent.tools import default_tools
 
     assert default_tools().get("comfy") is not None
+
+
+async def test_probe_comfy_lists_gguf_from_unet_loader(monkeypatch):
+    from codeagent.videoops import comfy as c
+
+    class _Resp:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def get(self, url):
+            if url.endswith("/system_stats"):
+                return _Resp(200, {"system": {}, "devices": []})
+            if url.endswith("/object_info/UnetLoaderGGUF"):
+                return _Resp(200, {
+                    "UnetLoaderGGUF": {
+                        "input": {
+                            "required": {
+                                "unet_name": [[
+                                    "MiniMax-H3-FL2VA-Q4_K_M.gguf",
+                                    "MiniMax-H3-Ref2VA-Q4_K_M.gguf",
+                                ]],
+                            }
+                        }
+                    }
+                })
+            if "/models/" in url:
+                return _Resp(200, [])
+            return _Resp(404, {})
+
+        def __init__(self, **_kw):
+            pass
+
+    monkeypatch.setattr(c.httpx, "AsyncClient", _Client)
+    info = await c.probe_comfy("http://192.168.3.23:8188")
+    names = [m["name"] for m in info["models"]]
+    assert "MiniMax-H3-FL2VA-Q4_K_M.gguf" in names
+
+
+async def test_probe_comfy_lists_checkpoints(monkeypatch):
+    from codeagent.videoops import comfy as c
+
+    class _Resp:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class _Client:
+        def __init__(self, **_kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def get(self, url):
+            if url.endswith("/system_stats"):
+                return _Resp(200, {"system": {}, "devices": []})
+            if url.endswith("/models/checkpoints"):
+                return _Resp(200, ["a.safetensors"])
+            if "/models/" in url:
+                return _Resp(200, [])
+            return _Resp(404, {})
+
+    monkeypatch.setattr(c.httpx, "AsyncClient", _Client)
+    info = await c.probe_comfy("http://192.168.3.23:8188")
+    assert info and info["ok"]
+    assert info["models"][0]["name"] == "a.safetensors"

@@ -2,6 +2,14 @@
 
 所有版本更新记录。数据源：`src/codeagent/releases.py`（CLI 里 `codeagent changelog` 可查）。
 
+## 0.36.0（2026-09-07）
+
+- 导演台：对话与指挥中心之间的完整拍片流程（企划→分镜→Comfy/WAN/Hailuo 生成→ffmpeg 合成→发布草稿）
+
+## 0.35.0（2026-09-07）
+
+- ComfyUI 局域网探测：识别 :8188 / GGUF（MiniMax-H3），模型页列出权重而不当聊天模型；启动需 --listen 0.0.0.0
+
 ## 0.34.0（2026-09-07）
 
 - 融合 LunarCore 语音面 v3.3.17：内置 voice-surface 技能；偏好设置对齐嗲音/晓晨，播报去掉 markdown

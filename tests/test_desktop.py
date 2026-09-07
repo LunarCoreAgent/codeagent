@@ -80,6 +80,9 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "codeagent.desktop.projects.DEFAULT_BASE", tmp_path / "proj-base"
     )
+    monkeypatch.setattr(
+        "codeagent.videoops.CONFIG_PATH", tmp_path / "videoops.json"
+    )
     a = DesktopAPI(root=tmp_path)
     a._window = FakeWindow()
     return a
@@ -516,7 +519,7 @@ def test_get_logs_returns_list(api):
 
 
 def test_ui_has_all_pages_and_bridge():
-    for page in ("dashboard", "chat", "lead", "memory", "skills", "logs",
+    for page in ("dashboard", "chat", "studio", "lead", "memory", "skills", "logs",
                  "settings", "models", "router", "permissions", "versions",
                  "automation", "cron", "learning", "evolution", "project",
                  "knowledge", "videoops", "privacy"):
@@ -1604,6 +1607,60 @@ def test_ui_mentions_gradio_video():
     assert "Gradio 文生视频" in HTML
     assert "去视频运营" in HTML
     assert "不能作为对话模型添加" in HTML
+    assert "ComfyUI 节点图" in HTML
+
+
+def test_probe_endpoint_info_detects_comfy(monkeypatch):
+    import asyncio
+    from codeagent.desktop import models as m
+
+    _patch_client(monkeypatch, {
+        "/api/tags": _FakeResp(404),
+        "/v1/models": _FakeResp(404),
+        "/models": _FakeResp(404),
+        "/config": _FakeResp(404),
+        "/system_stats": _FakeResp(200, {"system": {"os": "win"}, "devices": []}),
+        "/models/checkpoints": _FakeResp(200, ["sdxl.safetensors"]),
+        "/models/diffusion_models": _FakeResp(200, []),
+        "/models/loras": _FakeResp(200, []),
+    })
+    info = asyncio.run(m.probe_endpoint_info("http://192.168.3.23:8188"))
+    assert info["kind"] == "comfy"
+    assert info["models"][0]["name"] == "sdxl.safetensors"
+    assert info["models"][0]["quant"] == "节点图"
+
+
+def test_detect_service_comfy(monkeypatch):
+    m = _patch_client(monkeypatch, {
+        "/models": _FakeResp(404),
+        "/v1/models": _FakeResp(404),
+        "/api/tags": _FakeResp(404),
+        "/config": _FakeResp(404),
+        "/system_stats": _FakeResp(200, {"system": {}, "devices": []}),
+        "/models/checkpoints": _FakeResp(200, ["flux.safetensors"]),
+        "/models/diffusion_models": _FakeResp(200, []),
+        "/models/loras": _FakeResp(200, []),
+    })
+    r = asyncio.run(m.detect_service("http://192.168.3.23:8188"))
+    assert r["kind"] == "comfy"
+    assert "flux.safetensors" in r["models"]
+    assert "对话" in r["note"]
+
+
+def test_comfy_endpoint_is_not_chat_provider():
+    from codeagent.desktop.models import ModelAssets, OllamaEndpoint
+
+    ep = OllamaEndpoint(base="http://192.168.3.23:8188", kind="comfy", id="c1")
+    assets = ModelAssets(endpoints=[ep], active="local:sdxl@c1")
+    assert assets.resolve_member("local:sdxl@c1") is None
+
+
+def test_add_endpoint_8188_marks_comfy(api):
+    r = api.add_endpoint("http://192.168.3.23:8188", label="3.23")
+    assert r["ok"]
+    assert r["kind"] == "comfy"
+    ep = next(e for e in api.assets.endpoints if e.base.endswith(":8188"))
+    assert ep.kind == "comfy"
 
 
 def test_detect_requires_key_hint(monkeypatch):
