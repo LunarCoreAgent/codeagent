@@ -38,7 +38,9 @@ def test_discover_harnesses_finds_available(tmp_path):
 
 def test_discover_harnesses_skips_missing(tmp_path):
     ghost = CliHarness("ghost", ("/nonexistent/path/ghost", "{prompt}"))
-    assert discover_harnesses(extra=[ghost]) == []
+    # 不存在的 binary 必须被过滤；机器上已安装的 harness 不应混入
+    found = discover_harnesses(extra=[ghost])
+    assert all(h.name != "ghost" for h in found)
 
 
 async def test_harness_run_returns_output(tmp_path):

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -85,10 +86,17 @@ def api(tmp_path, monkeypatch):
     )
     a = DesktopAPI(root=tmp_path)
     a._window = FakeWindow()
+    # 对话类集成测试需要真实模型：默认本地 Ollama，可用环境变量
+    # CODEAGENT_OLLAMA_BASE 指向局域网/远端 Ollama 端点
+    base = os.environ.get("CODEAGENT_OLLAMA_BASE", "")
+    if base:
+        a.config.base_url = base
     return a
 
 
-def wait_for(window: FakeWindow, kind: str, timeout: float = 8.0) -> dict:
+def wait_for(window: FakeWindow, kind: str, timeout: float | None = None) -> dict:
+    # 集成测试等待真实模型回复时，可用 CODEAGENT_TEST_TIMEOUT 调大超时
+    timeout = timeout if timeout is not None else float(os.environ.get("CODEAGENT_TEST_TIMEOUT", "8.0"))
     deadline = time.time() + timeout
     while time.time() < deadline:
         hit = [c for c in window.calls if c["kind"] == kind]
@@ -1774,6 +1782,21 @@ def test_project_switch_changes_root(api, tmp_path):
     assert api._conv_id is None  # 切换后开新对话
 
 
+def fake_llm(monkeypatch):
+    """让对话类测试用假 provider（确定性、不依赖真实模型）。"""
+    from codeagent.core.types import LLMResponse
+
+    class FakeProvider:
+        name = "fake"
+        model = "fake-model"
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            return LLMResponse(content="好，已记下。")
+
+    monkeypatch.setattr("codeagent.desktop.api.parse_provider_spec",
+                        lambda *a, **k: FakeProvider())
+
+
 def test_project_delete_keeps_folder(api, tmp_path):
     r = api.create_project("保留我", str(tmp_path / "b"))
     folder = Path(r["project"]["path"])
@@ -1782,7 +1805,8 @@ def test_project_delete_keeps_folder(api, tmp_path):
     assert api.projects.get(r["project"]["id"]) is None
 
 
-def test_conversation_persisted_in_project_folder(api, tmp_path):
+def test_conversation_persisted_in_project_folder(api, tmp_path, monkeypatch):
+    fake_llm(monkeypatch)
     api.create_project("记录", str(tmp_path / "b"))
     api.send("你好，记住这句话")
     wait_for(api._window, "done")
@@ -1796,7 +1820,8 @@ def test_conversation_persisted_in_project_folder(api, tmp_path):
     assert md.is_file() and "🧑 用户" in md.read_text(encoding="utf-8")
 
 
-def test_conversation_list_and_load(api, tmp_path):
+def test_conversation_list_and_load(api, tmp_path, monkeypatch):
+    fake_llm(monkeypatch)
     api.create_project("历史", str(tmp_path / "b"))
     api.send("第一条消息")
     wait_for(api._window, "done")
@@ -1815,7 +1840,8 @@ def test_conversation_list_and_load(api, tmp_path):
     api._run_chat = orig
 
 
-def test_new_conversation_starts_fresh(api, tmp_path):
+def test_new_conversation_starts_fresh(api, tmp_path, monkeypatch):
+    fake_llm(monkeypatch)
     api.create_project("多对话", str(tmp_path / "b"))
     api.send("对话一")
     wait_for(api._window, "done")

@@ -25,12 +25,16 @@ MAX_CHARS_CAP = 50_000
 
 
 def _require_scrapling():
+    # scrapling 0.4.x 把 AsyncFetcher 暴露在顶层，新版本在 scrapling.fetchers
     try:
         from scrapling.fetchers import AsyncFetcher
-    except ImportError as exc:
-        raise RuntimeError(
-            "Scrapling is required for web tools: pip install codeagent[scrape]"
-        ) from exc
+    except ImportError:
+        try:
+            from scrapling import AsyncFetcher
+        except ImportError as exc:
+            raise RuntimeError(
+                "Scrapling is required for web tools: pip install codeagent[scrape]"
+            ) from exc
     return AsyncFetcher
 
 
@@ -39,6 +43,8 @@ async def _fetch_page(url: str, stealth: bool, timeout: int):
     if stealth:
         try:
             from scrapling.fetchers import StealthyFetcher
+        except ImportError:
+            from scrapling import StealthyFetcher
         except ImportError as exc:
             raise RuntimeError(
                 "Stealth mode needs the full browser stack: "

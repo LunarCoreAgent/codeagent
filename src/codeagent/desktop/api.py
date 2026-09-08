@@ -2513,7 +2513,7 @@ class DesktopAPI:
         from codeagent.harness import discover_harnesses
 
         return [
-            {"name": h.name, "binary": h.binary, "available": h.available()}
+            {"name": h.name, "binary": h.executable, "available": h.available()}
             for h in discover_harnesses()
         ]
 
