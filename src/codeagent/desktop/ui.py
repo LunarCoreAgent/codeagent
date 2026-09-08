@@ -200,6 +200,14 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .composer-video { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .composer-video .toolsel { flex: 1; min-width: 140px; max-width: none; }
 .composer-video.is-off { display: none; }
+#dualWrap { display: flex; flex: 1; min-height: 0; }
+.dual-col { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.page-chat-dual #colA { border-right: 1px solid var(--border); }
+.dual-head { padding: 9px 22px 4px; display: flex; align-items: center; gap: 10px;
+             flex-shrink: 0; }
+.dual-label { color: var(--blue); font-size: 12px; font-weight: 600; flex-shrink: 0; }
+.dual-head .spacer { flex: 1; min-width: 6px; }
+.dual-head select, .dual-head .btn { flex-shrink: 0; }
 #modelPicker { min-width: 180px; max-width: 260px; }
 .toolbtn { background: var(--elev); border: 1px solid var(--border);
            color: var(--muted); border-radius: 9px; height: 34px;
@@ -444,6 +452,18 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
   padding: 9px 20px; border-radius: 999px; font-size: 12.5px; font-weight: 550;
   opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 50; }
 .toast.show { opacity: 1; }
+
+/* ---------- 对话右键菜单（鼠标复制粘贴） ---------- */
+.ctx-menu { position: fixed; z-index: 60; min-width: 150px;
+  background: var(--panel); border: 1px solid var(--border-hi);
+  border-radius: 8px; padding: 4px; box-shadow: 0 6px 22px rgba(0,0,0,.28);
+  display: none; }
+.ctx-menu.open { display: block; }
+.ctx-menu button { display: block; width: 100%; border: none; background: transparent;
+  color: var(--text); font-size: 12.5px; text-align: left;
+  padding: 7px 10px; border-radius: 5px; cursor: pointer; }
+.ctx-menu button:hover { background: var(--hover); }
+.ctx-menu .sep { height: 1px; background: var(--border); margin: 3px 2px; }
 
 /* ---------- LCA 卷三：四字对齐 / 底部状态区 ---------- */
 .navlabel { display: inline-block; }
@@ -701,6 +721,8 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
             title="当前对话模型" style="min-width:180px;max-width:260px">
       <option value="route:free">自由路由</option>
     </select>
+    <button class="btn" id="dualBtn" style="font-size:12px"
+            title="开启后同一项目可并行两个对话进程（A/B）">双对话</button>
     <select id="convPicker" class="toolsel" style="max-width:200px"
             onchange="loadConv(this.value)" title="历史对话（保存在项目文件夹）"></select>
     <button class="btn" id="copyChatBtn" style="font-size:12px"
@@ -708,6 +730,8 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     <button class="btn" id="newConvBtn" style="font-size:12px"
             onclick="newChat()">＋ 新对话</button>
   </div>
+  <div id="dualWrap">
+    <div class="dual-col" id="colA">
   <div id="chat"><div class="chat-col" id="chatCol">
     <div class="chip-wrap"><div class="chip status">CodeCoreAgent 就绪 — 开始对话</div></div>
   </div></div>
@@ -745,6 +769,31 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       </select>
     </div>
   </div></div>
+    </div>
+    <div class="dual-col" id="colB" style="display:none">
+      <div class="dual-head">
+        <span class="dual-label">对话 B（并行）</span>
+        <span class="spacer"></span>
+        <select id="convPickerB" class="toolsel" style="max-width:200px"
+                onchange="loadConv2(this.value)" title="历史对话（B 进程，同一项目文件夹）"></select>
+        <button class="btn" id="copyChatBtnB" style="font-size:12px"
+                onclick="copyChatAllB()" title="复制 B 对话全部内容">复制 B</button>
+        <button class="btn" id="newConvBtnB" style="font-size:12px"
+                onclick="newChatB()">＋ 新对话 B</button>
+      </div>
+      <div id="chatB"><div class="chat-col" id="chatColB">
+        <div class="chip-wrap"><div class="chip status">对话 B 就绪 — 可并行提问</div></div>
+      </div></div>
+      <div id="composerB"><div class="composer-inner">
+        <textarea id="inputB" rows="2" placeholder="B：输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+        <div class="composer-tools">
+          <span class="spacer"></span>
+          <button class="stopbtn" id="stopBtnB" onclick="stopChatB()" disabled title="中断 B 对话">停止</button>
+          <button class="sendbtn" id="sendBtnB" onclick="sendChatB()">发送</button>
+        </div>
+      </div></div>
+    </div>
+  </div>
 </section>
 
 <!-- ============ 导演台 ============ -->
@@ -1483,10 +1532,18 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="ctx-menu" id="ctxMenu">
+  <button id="ctxCopySel">复制选中</button>
+  <button id="ctxCopyMsg">复制本条</button>
+  <button id="ctxCopyAll">复制全部</button>
+  <div class="sep"></div>
+  <button id="ctxPaste">粘贴到输入框</button>
+</div>
 
 <script>
 const $ = id => document.getElementById(id);
 let curBot = null;
+let curBot2 = null;
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function render(s){
@@ -1736,10 +1793,11 @@ function openProjFolder(){
     else toast('已打开：'+r.path);
   });
 }
-function clearChat(msg){
-  $('chatCol').innerHTML='';
-  addChip('status',msg);
-  curBot=null;
+function clearChat(msg,chan){
+  const C=colOf(chan||'A');
+  C.col.innerHTML='';
+  addChip('status',msg,chan);
+  if(chan==='B')curBot2=null; else curBot=null;
 }
 function loadConversations(){
   pywebview.api.get_conversations().then(d=>{
@@ -1766,6 +1824,34 @@ function loadConv(id){
     if(!r.ok)return;
     clearChat('已载入历史对话（继续聊会自动带上前文）');
     r.messages.forEach(m=>addMsg(m.role==='user'?'user':'bot',m.text));
+  });
+}
+function loadConversations2(){
+  const sel=$('convPickerB'); if(!sel)return;
+  pywebview.api.get_conversations().then(d=>{
+    sel.innerHTML='';
+    const o0=document.createElement('option');
+    o0.value=''; o0.textContent=d.items.length?'历史对话（'+d.items.length+'）':'暂无历史对话';
+    sel.appendChild(o0);
+    d.items.forEach(c=>{
+      const o=document.createElement('option');
+      o.value=c.id; o.textContent=c.title+' · '+c.count+'条';
+      sel.appendChild(o);
+    });
+    sel.value='';
+  });
+}
+function newChatB(){
+  pywebview.api.new_conversation2().then(()=>{
+    clearChat('新对话 B 已开始','B'); loadConversations2();
+  });
+}
+function loadConv2(id){
+  if(!id)return;
+  pywebview.api.load_conversation2(id).then(r=>{
+    if(!r.ok)return;
+    clearChat('已载入历史对话（继续聊会自动带上前文）','B');
+    r.messages.forEach(m=>addMsg(m.role==='user'?'user':'bot',m.text,'B'));
   });
 }
 
@@ -1801,7 +1887,9 @@ function loadDashboard(){
 }
 
 /* ---------- chat ---------- */
-function addMsg(cls,text){
+function colOf(chan){ const b=chan==='B'; return {chat:b?$('chatB'):$('chat'), col:b?$('chatColB'):$('chatCol')}; }
+function addMsg(cls,text,chan){
+  const C=colOf(chan||'A');
   const div=document.createElement('div');
   div.className='msg '+cls; div.innerHTML=cls==='bot'?renderReply(text):render(text);
   div._raw=text;
@@ -1819,7 +1907,7 @@ function addMsg(cls,text){
     });
   };
   wrap.appendChild(div); wrap.appendChild(bar);
-  $('chatCol').appendChild(wrap); $('chat').scrollTop=$('chat').scrollHeight;
+  C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
   return div;
 }
 function copyPlain(text){
@@ -1827,9 +1915,76 @@ function copyPlain(text){
   if(!t){toast('没有可复制的内容');return;}
   pywebview.api.copy_text(t).then(ok=>toast(ok?'已复制到剪贴板':'复制失败'));
 }
-function chatPlainText(){
+
+/* ---------- 对话右键菜单（鼠标复制粘贴） ---------- */
+let _ctxMsg=null;
+function ctxText(){
+  const sel=window.getSelection();
+  if(sel && sel.rangeCount && !sel.isCollapsed && sel.toString().trim())
+    return sel.toString();
+  if(_ctxMsg)return (_ctxMsg.innerText||_ctxMsg._raw||'');
+  return '';
+}
+function hideCtx(){const m=$('ctxMenu');if(m)m.classList.remove('open');}
+function ctxCopy(what){
+  let text='';
+  if(what==='sel'){
+    const sel=window.getSelection();
+    text=sel && sel.rangeCount ? sel.toString() : (_ctxMsg?(_ctxMsg.innerText||_ctxMsg._raw):'');
+  }else if(what==='msg'){
+    text=_ctxMsg?(_ctxMsg.innerText||_ctxMsg._raw):'';
+  }else{ // all
+    text=chatPlainText();
+  }
+  if(!text){toast('没有可复制的内容');return;}
+  copyPlain(text);
+  hideCtx();
+}
+function ctxPaste(){
+  const active=document.activeElement;
+  const inp=(active&&(active.tagName==='TEXTAREA'||active.tagName==='INPUT'))?active:$('input');
+  const read=()=>{
+    if(window.navigator && navigator.clipboard && navigator.clipboard.readText)
+      return navigator.clipboard.readText().catch(()=>pywebview.api.read_clipboard());
+    if(window.pywebview)return pywebview.api.read_clipboard();
+    return Promise.resolve('');
+  };
+  read().then(t=>{
+    if(!t){toast('剪贴板为空');return;}
+    if(!inp){toast('没有输入框');return;}
+    const s=inp.selectionStart||inp.value.length;
+    const e=inp.selectionEnd||inp.value.length;
+    inp.value=inp.value.slice(0,s)+t+inp.value.slice(e);
+    inp.selectionStart=inp.selectionEnd=s+t.length;
+    inp.focus();
+    toast('已粘贴');
+  }).catch(()=>toast('读取剪贴板失败'));
+  hideCtx();
+}
+document.addEventListener('contextmenu',e=>{
+  if(!$('page-chat') || !$('page-chat').classList.contains('active'))return;
+  e.preventDefault();
+  _ctxMsg=e.target && e.target.closest ? e.target.closest('.msg') : null;
+  const m=$('ctxMenu'); if(!m)return;
+  m.style.left=Math.min(e.clientX, innerWidth-160)+'px';
+  m.style.top=Math.min(e.clientY, innerHeight-140)+'px';
+  m.classList.add('open');
+});
+document.addEventListener('click',e=>{
+  if(e.target && e.target.closest && e.target.closest('#ctxMenu'))return;
+  hideCtx();
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')hideCtx();
+});
+['ctxCopySel','ctxCopyMsg','ctxCopyAll'].forEach(id=>{
+  const el=$(id); if(el)el.onclick=()=>ctxCopy(id==='ctxCopySel'?'sel':id==='ctxCopyMsg'?'msg':'all');
+});
+const _pasteEl=$('ctxPaste'); if(_pasteEl)_pasteEl.onclick=ctxPaste;
+function chatPlainText(chan){
+  const C=colOf(chan||'A');
   const parts=[];
-  Array.from($('chatCol').children).forEach(el=>{
+  Array.from(C.col.children).forEach(el=>{
     if(el.classList.contains('msg-wrap')){
       const msg=el.querySelector('.msg');
       const raw=(msg&&(msg.innerText||msg._raw))||'';
@@ -1844,7 +1999,9 @@ function chatPlainText(){
   return parts.join('\n\n');
 }
 function copyChatAll(){ copyPlain(chatPlainText()); }
-function addChip(cls,text){
+function copyChatAllB(){ copyPlain(chatPlainText('B')); }
+function addChip(cls,text,chan){
+  const C=colOf(chan||'A');
   const wrap=document.createElement('div');
   wrap.className='chip-wrap';
   const div=document.createElement('div');
@@ -1854,7 +2011,7 @@ function addChip(cls,text){
   bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>';
   bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(text);
   wrap.appendChild(div); wrap.appendChild(bar);
-  $('chatCol').appendChild(wrap); $('chat').scrollTop=$('chat').scrollHeight;
+  C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
 }
 /* ---------- 附件（所有文件类型识别） ---------- */
 let atts=[];
@@ -1884,9 +2041,10 @@ function setThinking(v){
     toast('思考强度：'+{low:'低',medium:'中',high:'高'}[v]));
 }
 
-function setChatBusy(on){
-  $('sendBtn').disabled=!!on;
-  $('stopBtn').disabled=!on;
+function setChatBusy(on,chan){
+  const b=chan==='B';
+  $(b?'sendBtnB':'sendBtn').disabled=!!on;
+  $(b?'stopBtnB':'stopBtn').disabled=!on;
 }
 function isVideoModelSelected(){
   const sel=$('modelPicker');
@@ -1924,8 +2082,34 @@ function stopChat(){
   $('stopBtn').disabled=true;
   pywebview.api.stop().then(ok=>{ if(!ok)setChatBusy(false); });
 }
+function sendChatB(){
+  const text=$('inputB').value.trim();
+  if(!text)return;
+  addMsg('user',text,'B');
+  $('inputB').value=''; setChatBusy(true,'B'); curBot2=null;
+  pywebview.api.send2(text).then(ok=>{
+    if(!ok){addChip('error','上一条还在处理中','B');setChatBusy(false,'B');}
+  });
+}
+function stopChatB(){
+  $('stopBtnB').disabled=true;
+  pywebview.api.stop2().then(ok=>{ if(!ok)setChatBusy(false,'B'); });
+}
+let dualOn=false;
+$('dualBtn').onclick=()=>{
+  dualOn=!dualOn;
+  $('page-chat').classList.toggle('page-chat-dual',dualOn);
+  const cb=$('colB'); cb.style.display=dualOn?'flex':'none';
+  if(dualOn){
+    if(!$('chatColB').childElementCount)addChip('status','对话 B 就绪 — 可并行提问','B');
+    loadConversations2();
+  }
+};
 $('input').addEventListener('keydown',e=>{
   if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat();}
+});
+$('inputB').addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChatB();}
 });
 document.addEventListener('keydown',e=>{
   if(!(e.metaKey||e.ctrlKey)||(e.key!=='a'&&e.key!=='A'))return;
@@ -1940,7 +2124,8 @@ document.addEventListener('keydown',e=>{
 });
 
 /* 赞/踩反馈（LCA：对话页反馈即时计入活动流） */
-function addFeedbackRow(){
+function addFeedbackRow(chan){
+  const C=colOf(chan||'A');
   const row=document.createElement('div');
   row.className='fb-row';
   row.innerHTML='<button class="fb-btn" data-v="1">👍 有用</button>'+
@@ -1953,8 +2138,8 @@ function addFeedbackRow(){
       toast(up?'已记录正向反馈':'已记录：这条回复不行');
     });
   });
-  $('chatCol').appendChild(row);
-  $('chat').scrollTop=$('chat').scrollHeight;
+  C.col.appendChild(row);
+  C.chat.scrollTop=C.chat.scrollHeight;
 }
 
 /* ---------- leader ---------- */
@@ -3255,10 +3440,14 @@ function saveEvoSettings(){
 
 /* ---------- 执行前确认 ---------- */
 let _confirmId='';
+let _confirmChan='A';
 function resolveConfirm(ok){
   $('confirmDialog').classList.remove('open');
-  if(_confirmId)pywebview.api.resolve_confirm(_confirmId,ok);
-  _confirmId='';
+  if(_confirmId){
+    if(_confirmChan==='B') pywebview.api.resolve_confirm2(_confirmId,ok);
+    else pywebview.api.resolve_confirm(_confirmId,ok);
+  }
+  _confirmId=''; _confirmChan='A';
 }
 
 /* ---------- 隐私条款 ---------- */
@@ -3361,27 +3550,37 @@ function saveAll(){
 
 /* ---------- push events ---------- */
 window._onEvent=function(ev){
+  const ch=ev.chan||'A';
+  const C=colOf(ch);
   if(ev.kind==='text'){
-    if(!curBot)curBot=addMsg('bot','');
-    curBot.innerHTML=renderReply(ev.text);
-    curBot._raw=ev.text;
-    $('chat').scrollTop=$('chat').scrollHeight;
+    if(ch==='B'){
+      if(!curBot2)curBot2=addMsg('bot','',ch);
+      curBot2.innerHTML=renderReply(ev.text);
+      curBot2._raw=ev.text;
+    }else{
+      if(!curBot)curBot=addMsg('bot','',ch);
+      curBot.innerHTML=renderReply(ev.text);
+      curBot._raw=ev.text;
+    }
+    C.chat.scrollTop=C.chat.scrollHeight;
   }else if(ev.kind==='tool'){
-    addChip('','🔧 '+ev.name);
+    addChip('','🔧 '+ev.name,ch);
   }else if(ev.kind==='status'){
-    addChip('status',ev.text);
+    addChip('status',ev.text,ch);
   }else if(ev.kind==='done'){
-    curBot=null; setChatBusy(false);
-    addFeedbackRow();
-    loadConversations();  // 刷新历史对话计数
+    if(ch==='B'){curBot2=null;setChatBusy(false,'B');}else{curBot=null;setChatBusy(false,'A');}
+    addFeedbackRow(ch);
+    loadConversations(); loadConversations2();  // 刷新历史对话计数
   }else if(ev.kind==='stopped'){
-    curBot=null; setChatBusy(false); $('leadBtn').disabled=false;
-    $('confirmDialog').classList.remove('open'); _confirmId='';
-    addChip('status','已停止');
-    loadConversations();
+    if(ch==='B'){curBot2=null;setChatBusy(false,'B');}else{curBot=null;setChatBusy(false,'A');}
+    $('leadBtn').disabled=false;
+    $('confirmDialog').classList.remove('open'); _confirmId=''; _confirmChan='A';
+    addChip('status','已停止',ch);
+    loadConversations(); loadConversations2();
   }else if(ev.kind==='error'){
-    addChip('error','出错了：'+ev.text);
-    curBot=null; setChatBusy(false); $('leadBtn').disabled=false;
+    addChip('error','出错了：'+ev.text,ch);
+    if(ch==='B'){curBot2=null;setChatBusy(false,'B');}else{curBot=null;setChatBusy(false,'A');}
+    $('leadBtn').disabled=false;
   }else if(ev.kind==='task'){
     upsertTask(ev);
   }else if(ev.kind==='lead_done'){
@@ -3391,7 +3590,7 @@ window._onEvent=function(ev){
     $('leadReply').innerHTML=''; $('leadReply').appendChild(div);
     loadRuns();
   }else if(ev.kind==='confirm'){
-    _confirmId=ev.id;
+    _confirmId=ev.id; _confirmChan=ch;
     $('cf_tool').textContent=ev.tool;
     $('cf_risk').textContent=ev.risk;
     $('cf_args').textContent=ev.args;

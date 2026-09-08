@@ -180,30 +180,45 @@ class DesktopAPI:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._attachments: list[dict[str, Any]] = []
         self._conv_seed: list[dict[str, Any]] = []
+        # 第二对话进程（B）：独立并发，同一项目文件夹保留记录
+        self._conv_id2: str | None = None
+        self._agent2: Agent | None = None
+        self._lock2 = threading.Lock()
+        self._busy2 = False
+        self._cancel2 = threading.Event()
+        self._loop2: asyncio.AbstractEventLoop | None = None
+        self._conv_seed2: list[dict[str, Any]] = []
+        self._confirmer2 = Confirmer(lambda kind, data: self._push(kind, chan="B", **data))
         setup_logging()
 
     # ------------------------------------------------------------------
     # push channel
     # ------------------------------------------------------------------
 
-    def _push(self, kind: str, **data: Any) -> None:
+    def _push(self, kind: str, chan: str = "A", **data: Any) -> None:
         if self._window is None:
             return
-        payload = json.dumps({"kind": kind, **data}, ensure_ascii=False)
+        payload = json.dumps({"kind": kind, "chan": chan, **data}, ensure_ascii=False)
         try:
             self._window.evaluate_js(f"window._onEvent({payload})")
         except Exception:  # noqa: BLE001 — UI push must never crash the agent
             log.exception("push failed")
 
-    def _on_event(self, event: AgentEvent) -> None:
+    def _on_event_chan(self, chan: str, event: AgentEvent) -> None:
         if event.type == "text":
-            self._push("text", text=str(event.data))
+            self._push("text", chan=chan, text=str(event.data))
         elif event.type == "tool_call":
-            self._push("tool", name=event.data.name)
+            self._push("tool", chan=chan, name=event.data.name)
         elif event.type == "skills_activated":
             names = event.data if isinstance(event.data, list) else []
             if names:
-                self._push("status", text="自动启用技能：" + "、".join(str(n) for n in names))
+                self._push("status", chan=chan, text="自动启用技能：" + "、".join(str(n) for n in names))
+
+    def _on_event(self, event: AgentEvent) -> None:
+        self._on_event_chan("A", event)
+
+    def _on_event2(self, event: AgentEvent) -> None:
+        self._on_event_chan("B", event)
 
     # ------------------------------------------------------------------
     # state & settings
@@ -897,6 +912,9 @@ class DesktopAPI:
     def resolve_confirm(self, cid: str, approved: bool) -> bool:
         return self.confirmer.resolve(cid, bool(approved))
 
+    def resolve_confirm2(self, cid: str, approved: bool) -> bool:
+        return self._confirmer2.resolve(cid, bool(approved))
+
     # ------------------------------------------------------------------
     # versions (LCA Versions.tsx)
     # ------------------------------------------------------------------
@@ -1248,13 +1266,15 @@ class DesktopAPI:
                         if self.settings.instructions else extra)
         return replace(self.settings, instructions=instructions)
 
-    def _build_agent(self) -> Agent:
+    def _build_agent(self, chan: str = "A") -> Agent:
         from codeagent.security.policy import PermissionPolicy
 
+        confirmer = self.confirmer if chan == "A" else self._confirmer2
+        on_event = self._on_event if chan == "A" else self._on_event2
         policy = (
             PermissionPolicy.permissive()
             if self.config.auto_yes
-            else build_policy(self.perm_levels, self.confirmer)
+            else build_policy(self.perm_levels, confirmer)
         )
         return Agent(
             provider=self._build_provider(),
@@ -1263,7 +1283,7 @@ class DesktopAPI:
             budget=Budget(max_total_tokens=500_000),
             skills=self._load_skills(),
             settings=self._settings_with_patches(),
-            on_event=self._on_event,
+            on_event=on_event,
             workspace_hints=self._workspace_skill_hints(),
         )
 
@@ -1407,6 +1427,22 @@ class DesktopAPI:
         except (subprocess.SubprocessError, OSError):
             return False
 
+    def read_clipboard(self) -> str:
+        """系统剪贴板读取（pbpaste / Get-Clipboard / xclip）。"""
+        import shutil
+        import subprocess
+        import sys
+
+        cmds = {"darwin": ["pbpaste"], "win32": ["powershell", "-command", "Get-Clipboard"]}
+        cmd = cmds.get(sys.platform, ["xclip", "-selection", "clipboard", "-o"])
+        if shutil.which(cmd[0]) is None:
+            return ""
+        try:
+            res = subprocess.run(cmd, check=True, capture_output=True, timeout=5)
+            return res.stdout.decode("utf-8", errors="replace").strip()
+        except (subprocess.SubprocessError, OSError):
+            return ""
+
     def export_message(self, text: str) -> dict[str, Any]:
         """分享：把消息导出为 Markdown 文件（系统保存对话框）。"""
         if self._window is None:
@@ -1503,6 +1539,8 @@ class DesktopAPI:
                 self.root = Path.cwd()
                 self._agent = None
                 self._conv_id = None
+                self._agent2 = None
+                self._conv_id2 = None
         return ok
 
     def _activate_project(self, pid: str) -> None:
@@ -1512,6 +1550,10 @@ class DesktopAPI:
         self._agent = None       # 重建 agent 以使用新工作目录
         self._conv_id = None     # 新项目开新对话
         self._conv_seed: list[dict[str, Any]] = []
+        # 第二对话进程也随项目切换重置
+        self._agent2 = None
+        self._conv_id2 = None
+        self._conv_seed2 = []
 
     def get_conversations(self) -> dict[str, Any]:
         proj = self.projects.get(self.projects.active)
@@ -1533,6 +1575,88 @@ class DesktopAPI:
         self._conv_id = conv_id
         self._conv_seed = msgs[-10:]  # 继续对话时作为上下文带入
         return {"ok": True, "messages": msgs}
+
+    def get_second_state(self) -> dict[str, Any]:
+        """第二对话进程（B）的状态：是否忙碌、当前对话 id。"""
+        return {"busy": self._busy2, "current": self._conv_id2 or ""}
+
+    def new_conversation2(self) -> dict[str, Any]:
+        self._conv_id2 = None
+        self._conv_seed2 = []
+        return {"ok": True}
+
+    def load_conversation2(self, conv_id: str) -> dict[str, Any]:
+        proj = self.projects.get(self.projects.active)
+        if proj is None:
+            return {"ok": False, "messages": []}
+        msgs = load_conversation(proj, conv_id)
+        self._conv_id2 = conv_id
+        self._conv_seed2 = msgs[-10:]  # 继续对话时作为上下文带入
+        return {"ok": True, "messages": msgs}
+
+    def send2(
+        self,
+        text: str,
+        resolution: str = "720p",
+        num_frames: int = 60,
+        num_inference_steps: int = 50,
+    ) -> bool:
+        """第二对话进程（B）：与主对话并发，记录保留在项目文件夹。"""
+        text = (text or "").strip()
+        if not text:
+            return False
+        with self._lock2:
+            if self._busy2:
+                return False
+            self._busy2 = True
+            self._cancel2.clear()
+        proj = self.projects.get(self.projects.active)
+        display = text
+        if getattr(self, "_conv_seed2", None):  # 续接历史对话：带上下文
+            seed = "\n".join(
+                f"{'用户' if m['role'] == 'user' else '助手'}：{m['text']}"
+                for m in self._conv_seed2)
+            text = f"（本会话之前的对话记录）\n{seed}\n\n（用户新消息）\n{text}"
+            self._conv_seed2 = []
+        if proj is not None:
+            if not self._conv_id2:
+                self._conv_id2 = new_conversation_id()
+            append_message(proj, self._conv_id2, "user", display)
+        job = self._active_video_job()
+        if job is not None:
+            threading.Thread(
+                target=self._run_video_gen2,
+                args=(text, resolution, int(num_frames), int(num_inference_steps), job),
+                daemon=True,
+            ).start()
+        else:
+            threading.Thread(target=self._run_chat2, args=(text,), daemon=True).start()
+        return True
+
+    def stop2(self) -> bool:
+        """Interrupt the in-flight second conversation (B)."""
+        with self._lock2:
+            if not self._busy2:
+                return False
+            self._cancel2.set()
+            loop = self._loop2
+        self._confirmer2.cancel_all()
+        if loop is not None and loop.is_running():
+            def _cancel_all() -> None:
+                for task in asyncio.all_tasks(loop):
+                    task.cancel()
+
+            try:
+                loop.call_soon_threadsafe(_cancel_all)
+            except RuntimeError:
+                pass
+        return True
+
+    def reset2(self) -> bool:
+        if self._agent2 is not None:
+            self._agent2.reset()
+        self._agent2 = None
+        return True
 
     def send(
         self,
@@ -1600,63 +1724,76 @@ class DesktopAPI:
         return True
 
     def _run_chat(self, text: str) -> None:
+        self._run_chat_chan(text, "A")
+
+    def _run_chat2(self, text: str) -> None:
+        self._run_chat_chan(text, "B")
+
+    def _run_chat_chan(self, text: str, chan: str) -> None:
+        is_a = chan == "A"
+        lock = self._lock if is_a else self._lock2
+        cancel = self._cancel if is_a else self._cancel2
+        busy_attr = "_busy" if is_a else "_busy2"
+        agent_attr = "_agent" if is_a else "_agent2"
+        loop_attr = "_loop" if is_a else "_loop2"
+        conv_id = self._conv_id if is_a else self._conv_id2
         stopped = False
         try:
-            if self._cancel.is_set():
+            if cancel.is_set():
                 stopped = True
                 return
             provider, decision = self._provider_for_message(text)
-            if self._cancel.is_set():
+            if cancel.is_set():
                 stopped = True
                 return
             if decision["strategy"] == "默认直连":
-                if self._agent is None:
-                    self._push("status", text="正在连接模型…")
-                    self._agent = self._build_agent()
-                agent = self._agent
+                if getattr(self, agent_attr) is None:
+                    self._push("status", chan=chan, text="正在连接模型…")
+                    setattr(self, agent_attr, self._build_agent(chan=chan))
+                agent = getattr(self, agent_attr)
                 agent.workspace_hints = self._workspace_skill_hints()
             else:
-                self._push("status",
+                self._push("status", chan=chan,
                            text=f"路由：{decision['taskType']} → {decision['chosen']}")
-                agent = self._build_agent_with(provider)
-            if self._cancel.is_set():
+                agent = self._build_agent_with(provider, chan=chan)
+            if cancel.is_set():
                 stopped = True
                 return
 
             async def _go() -> str:
-                self._loop = asyncio.get_running_loop()
+                setattr(self, loop_attr, asyncio.get_running_loop())
                 try:
                     return await agent.run(text)
                 finally:
-                    self._loop = None
+                    setattr(self, loop_attr, None)
 
             try:
                 answer = asyncio.run(_go())
             except asyncio.CancelledError:
                 stopped = True
                 return
-            if self._cancel.is_set():
+            if cancel.is_set():
                 stopped = True
                 return
             proj = self.projects.get(self.projects.active)
-            if proj is not None and self._conv_id:
-                append_message(proj, self._conv_id, "assistant", answer)
-            self._push("done", text=answer)
+            if proj is not None and conv_id:
+                append_message(proj, conv_id, "assistant", answer)
+            self._push("done", chan=chan, text=answer)
             self._speak(answer)
         except Exception as exc:  # noqa: BLE001 — surface to the UI
-            if self._cancel.is_set():
+            if cancel.is_set():
                 stopped = True
                 return
             log.exception("chat failed")
-            self._push("error", text=self._diagnose(exc))
+            self._push("error", chan=chan, text=self._diagnose(exc))
         finally:
-            with self._lock:
-                self._busy = False
+            with lock:
+                setattr(self, busy_attr, False)
             if stopped:
                 proj = self.projects.get(self.projects.active)
-                if proj is not None and self._conv_id:
-                    append_message(proj, self._conv_id, "assistant", "（已停止）")
-                self._push("stopped", text="已停止")
+                if proj is not None and conv_id:
+                    append_message(proj, conv_id, "assistant", "（已停止）")
+                self._push("stopped", chan=chan, text="已停止")
 
     def _run_video_gen(
         self,
@@ -1665,6 +1802,27 @@ class DesktopAPI:
         num_frames: int,
         num_inference_steps: int,
         job: dict[str, Any] | None = None,
+    ) -> None:
+        self._run_video_gen_chan(prompt, resolution, num_frames, num_inference_steps, job, "A")
+
+    def _run_video_gen2(
+        self,
+        prompt: str,
+        resolution: str,
+        num_frames: int,
+        num_inference_steps: int,
+        job: dict[str, Any] | None = None,
+    ) -> None:
+        self._run_video_gen_chan(prompt, resolution, num_frames, num_inference_steps, job, "B")
+
+    def _run_video_gen_chan(
+        self,
+        prompt: str,
+        resolution: str,
+        num_frames: int,
+        num_inference_steps: int,
+        job: dict[str, Any] | None,
+        chan: str,
     ) -> None:
         import time as time_mod
 
@@ -1676,25 +1834,30 @@ class DesktopAPI:
         from codeagent.videoops.cloud import generate_cloud_video
         from codeagent.videoops.gradio import generate_wan_video
 
+        is_a = chan == "A"
+        cancel = self._cancel if is_a else self._cancel2
+        lock = self._lock if is_a else self._lock2
+        busy_attr = "_busy" if is_a else "_busy2"
+        conv_id = self._conv_id if is_a else self._conv_id2
         stopped = False
         try:
-            if self._cancel.is_set():
+            if cancel.is_set():
                 stopped = True
                 return
             job = job or self._active_video_job()
             if job is None:
-                self._push("error", text="当前不是文生视频模型")
+                self._push("error", chan=chan, text="当前不是文生视频模型")
                 return
             cfg = VideoOpsConfig.load()
             root = cfg.workspace()
             bootstrap_workspace(root)
             dest = root / "02-generate" / f"{job.get('backend', 'video')}-{int(time_mod.time())}.mp4"
-            self._push("status", text="正在生成视频…")
+            self._push("status", chan=chan, text="正在生成视频…")
             backend = job.get("backend") or "wan"
             if backend == "wan":
                 ep = self._active_video_ep()
                 if ep is None:
-                    self._push("error", text="当前不是文生视频模型")
+                    self._push("error", chan=chan, text="当前不是文生视频模型")
                     return
                 result = asyncio.run(generate_wan_video(
                     ep.base, prompt, resolution, num_frames, num_inference_steps,
@@ -1706,30 +1869,30 @@ class DesktopAPI:
                     resolution=resolution, num_frames=num_frames,
                     model=str(job.get("model") or ""),
                 ))
-            if self._cancel.is_set():
+            if cancel.is_set():
                 stopped = True
                 return
             if not result.get("ok"):
-                self._push("error", text=result.get("error") or "视频生成失败")
+                self._push("error", chan=chan, text=result.get("error") or "视频生成失败")
                 return
             path = str(result.get("path") or dest)
             append_pipeline(root, f"{backend} 生成 {Path(path).name}（{resolution}）")
             answer = f"视频已生成：{path}"
             proj = self.projects.get(self.projects.active)
-            if proj is not None and self._conv_id:
-                append_message(proj, self._conv_id, "assistant", answer)
-            self._push("done", text=answer)
+            if proj is not None and conv_id:
+                append_message(proj, conv_id, "assistant", answer)
+            self._push("done", chan=chan, text=answer)
         except Exception as exc:  # noqa: BLE001 — surface to the UI
-            if self._cancel.is_set():
+            if cancel.is_set():
                 stopped = True
                 return
             log.exception("video gen failed")
-            self._push("error", text=self._diagnose(exc))
+            self._push("error", chan=chan, text=self._diagnose(exc))
         finally:
-            with self._lock:
-                self._busy = False
+            with lock:
+                setattr(self, busy_attr, False)
             if stopped:
-                self._push("stopped", text="已停止")
+                self._push("stopped", chan=chan, text="已停止")
 
     def _workspace_skill_hints(self) -> str:
         """Project files + category so the model can recognize the work."""
@@ -1760,14 +1923,16 @@ class DesktopAPI:
             registry.register(tool)
         return registry
 
-    def _build_agent_with(self, provider) -> Agent:
+    def _build_agent_with(self, provider, chan: str = "A") -> Agent:
         """一次性路由 agent：不缓存（规则目标随消息而变）。"""
         from codeagent.security.policy import PermissionPolicy
 
+        confirmer = self.confirmer if chan == "A" else self._confirmer2
+        on_event = self._on_event if chan == "A" else self._on_event2
         policy = (
             PermissionPolicy.permissive()
             if self.config.auto_yes
-            else build_policy(self.perm_levels, self.confirmer)
+            else build_policy(self.perm_levels, confirmer)
         )
         return Agent(
             provider=provider,
@@ -1776,7 +1941,7 @@ class DesktopAPI:
             budget=Budget(max_total_tokens=500_000),
             skills=self._load_skills(),
             settings=self._settings_with_patches(),
-            on_event=self._on_event,
+            on_event=on_event,
             workspace_hints=self._workspace_skill_hints(),
         )
 

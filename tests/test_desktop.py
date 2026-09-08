@@ -1961,3 +1961,105 @@ def test_desktop_api_video_ops(api, tmp_path, monkeypatch):
     assert "http://192.168.3.23:7860" in bases
     kind = next(e.kind for e in api.assets.endpoints if e.base.endswith(":7860"))
     assert kind == "gradio"
+
+
+# ---------------------------------------------------------------------------
+# 第二对话进程（B）：同一项目可并行两个对话
+# ---------------------------------------------------------------------------
+
+
+def test_send2_pushes_events_on_channel_b(api, monkeypatch):
+    from codeagent.core.types import LLMResponse
+
+    class FakeProvider:
+        name = "fake"
+        model = "fake-model"
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            return LLMResponse(content="B 的回复")
+
+    monkeypatch.setattr(
+        "codeagent.desktop.api.parse_provider_spec",
+        lambda *a, **k: FakeProvider(),
+    )
+    assert api.send2("B 你好") is True
+    done = wait_for(api._window, "done")
+    assert done["text"] == "B 的回复"
+    assert done["chan"] == "B"
+
+
+def test_dual_conversations_run_concurrently(api, monkeypatch):
+    from codeagent.core.types import LLMResponse
+
+    class SlowProvider:
+        name = "slow"
+        model = "slow"
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            await asyncio.sleep(30)
+            return LLMResponse(content="finish")
+
+    monkeypatch.setattr(
+        "codeagent.desktop.api.parse_provider_spec",
+        lambda *a, **k: SlowProvider(),
+    )
+    assert api.send("A 长回复") is True
+    assert api.send2("B 长回复") is True
+    # 两个进程独立忙碌，互不阻塞
+    assert api._busy is True and api._busy2 is True
+    # 分别中断各自进程
+    assert api.stop2() is True
+    ev = wait_for(api._window, "stopped")
+    assert ev["chan"] == "B"
+    assert api._busy2 is False
+    assert api._busy is True  # A 仍在运行
+    assert api.stop() is True
+
+
+def test_second_conversation_management(api, tmp_path):
+    # 新对话 B 重置进程状态
+    api._conv_id2 = "20260908-test-b"
+    api.new_conversation2()
+    assert api._conv_id2 is None
+    st = api.get_second_state()
+    assert st["busy"] is False and st["current"] == ""
+
+    # 载入历史对话 B
+    from codeagent.desktop.projects import append_message, load_conversation
+
+    api.create_project("B 项目", str(tmp_path / "b"), "学习")
+    proj = api.projects.get(api.projects.active)
+    cid = "20260908-test-b2"
+    append_message(proj, cid, "user", "B 历史问题")
+    append_message(proj, cid, "assistant", "B 历史回答")
+    r = api.load_conversation2(cid)
+    assert r["ok"] is True and len(r["messages"]) == 2
+    assert api._conv_id2 == cid
+
+    # reset2 清理第二 agent
+    class StubAgent:
+        reset_called = False
+
+        def reset(self):
+            self.reset_called = True
+
+    api._agent2 = StubAgent()
+    assert api.reset2() is True
+    assert api._agent2 is None
+
+    # resolve_confirm2 走独立确认器
+    assert api.resolve_confirm2("nonexistent", True) is False
+
+
+def test_ui_dual_chat_markup():
+    # 双对话：页眉切换按钮 + B 列（chatColB / inputB / sendBtnB / 停止）
+    assert 'id="dualBtn"' in HTML
+    assert 'id="colB"' in HTML and 'id="chatColB"' in HTML
+    assert 'id="inputB"' in HTML and 'id="sendBtnB"' in HTML and 'id="stopBtnB"' in HTML
+    assert 'id="convPickerB"' in HTML and 'id="newConvBtnB"' in HTML
+    assert 'id="copyChatBtnB"' in HTML
+    assert "sendChatB" in HTML and "stopChatB" in HTML
+    assert "loadConv2" in HTML and "loadConversations2" in HTML and "newChatB" in HTML
+    assert "pywebview.api.send2" in HTML and "pywebview.api.stop2" in HTML
+    assert "pywebview.api.read_clipboard" in HTML  # 右键粘贴回退
+    assert "ev.chan" in HTML  # 事件按对话进程分流
