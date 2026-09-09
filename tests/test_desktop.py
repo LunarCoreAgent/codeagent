@@ -2063,3 +2063,86 @@ def test_ui_dual_chat_markup():
     assert "pywebview.api.send2" in HTML and "pywebview.api.stop2" in HTML
     assert "pywebview.api.read_clipboard" in HTML  # 右键粘贴回退
     assert "ev.chan" in HTML  # 事件按对话进程分流
+
+
+def test_ui_second_window_markup():
+    # 独立对话窗口（B）：chat-only 页面复用主样式
+    from codeagent.desktop.ui import CHAT_HTML
+
+    assert 'id="chatColB"' in CHAT_HTML and 'id="inputB"' in CHAT_HTML
+    assert 'id="sendBtnB"' in CHAT_HTML and 'id="stopBtnB"' in CHAT_HTML
+    assert 'id="convPickerB"' in CHAT_HTML and 'id="newConvBtnB"' in CHAT_HTML
+    assert 'id="copyChatBtnB"' in CHAT_HTML
+    assert "pywebview.api.send2" in CHAT_HTML and "pywebview.api.stop2" in CHAT_HTML
+    assert "pywebview.api.read_clipboard" in CHAT_HTML  # 右键粘贴回退
+    assert "resolve_confirm2" in CHAT_HTML  # B 通道工具确认
+    assert "window._onEvent" in CHAT_HTML and "ev.chan" in CHAT_HTML
+    assert "pywebview.api.open_second_window" in HTML  # 主窗口「新窗口」按钮
+
+
+def test_push_b_routes_to_second_window(api):
+    # B 事件同时推给主窗口与独立对话窗口，A 只推主窗口
+    win_b = FakeWindow()
+    api._window_b = win_b
+    api._push("text", chan="B", text="独立窗口内容")
+    assert len(api._window.calls) == 1 and len(win_b.calls) == 1
+    assert win_b.calls[0]["chan"] == "B" and win_b.calls[0]["text"] == "独立窗口内容"
+    api._push("tool", chan="A", name="shell")
+    assert len(api._window.calls) == 2 and len(win_b.calls) == 1
+
+
+def test_open_second_window_safe(api):
+    # 未启动 webview 时也能安全返回（后台线程捕获 ImportError）
+    r = api.open_second_window()
+    assert r["ok"] is True and r["opened"] is True
+    # 重复调用：_window_b 尚未被线程写入，仍返回可创建
+    r2 = api.open_second_window()
+    assert r2["ok"] is True
+
+
+def test_assets_probe_cache_avoids_repeat(api, monkeypatch):
+    # 对话页来回切换不应反复全量探测模型
+    calls = {"n": 0}
+
+    async def fake_probe_all(endpoints):
+        calls["n"] += 1
+        return {"endpoints": [
+            {"id": e.id, "base": e.base, "ok": False, "kind": "", "models": []}
+            for e in endpoints
+        ]}
+
+    monkeypatch.setattr("codeagent.desktop.api.probe_all", fake_probe_all)
+    api.get_model_assets()
+    api.get_model_assets()  # TTL 内命中缓存，不再探测
+    assert calls["n"] == 1
+    # 增删端点会失效缓存，下次调用重新探测
+    api.add_endpoint("http://192.168.9.9:11434", label="缓存测试")
+    api.get_model_assets()
+    assert calls["n"] == 2
+
+
+def test_set_dual_mode_resizes_window(api):
+    # 开启双对话：窗口加宽 1.5 倍；关闭还原
+    class ResizableWindow:
+        initial_width = 1280
+        initial_height = 840
+        calls = []
+
+        def resize(self, width, height):
+            self.calls.append((width, height))
+
+    w = ResizableWindow()
+    api._window = w
+    assert api.set_dual_mode(True) is True
+    assert w.calls[-1] == (1920, 840)  # 1280 * 1.5
+    assert api.set_dual_mode(False) is True
+    assert w.calls[-1] == (1280, 840)
+    # 无窗口时安全返回
+    api._window = None
+    assert api.set_dual_mode(True) is False
+
+
+def test_ui_dual_markup_has_resize_call():
+    from codeagent.desktop.ui import HTML
+
+    assert "set_dual_mode" in HTML  # 双对话切换时联动窗口缩放

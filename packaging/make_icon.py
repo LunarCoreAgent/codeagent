@@ -38,7 +38,11 @@ def render() -> Image.Image:
     if not ART.is_file():
         raise SystemExit(f"missing artwork: {ART}")
     art = fit_art(Image.open(ART), SIZE)
-    art.putalpha(rounded_mask(SIZE, int(SIZE * 0.22)))
+    # 四角透明：合并徽标自身 alpha 与圆角 mask（两者都需不透明才保留），
+    # 而不是用圆角方块整体替换，否则圆角内的空白会被底色填满。
+    from PIL import ImageChops
+    mask = rounded_mask(SIZE, int(SIZE * 0.22))
+    art.putalpha(ImageChops.multiply(art.split()[3], mask))
     return art
 
 

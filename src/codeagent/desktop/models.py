@@ -296,17 +296,25 @@ async def probe_endpoint(base: str, timeout: float = 3.0) -> list[str]:
     return [m["name"] for m in info["models"]]
 
 
-async def probe_all(endpoints: list[OllamaEndpoint]) -> dict[str, Any]:
-    """Probe every endpoint concurrently; failures are visible, not fatal."""
+async def probe_all(endpoints: list[OllamaEndpoint], cap: float = 4.0) -> dict[str, Any]:
+    """Probe every endpoint concurrently; failures are visible, not fatal.
+
+    Each endpoint is hard-capped at ``cap`` 秒：离线/慢端点不再按路径逐个等
+    timeout（/api/tags→/v1/models→/models→gradio→comfy 各 3s 会累积到
+    ~15s/端点），保证整体识别模型只慢一次、不拖垮切换。
+    """
     import asyncio
 
     async def one(ep: OllamaEndpoint) -> dict[str, Any]:
         try:
-            info = await probe_endpoint_info(ep.base)
+            info = await asyncio.wait_for(probe_endpoint_info(ep.base), timeout=cap)
             return {
                 "id": ep.id, "base": ep.base, "ok": True,
                 "kind": info["kind"], "models": [m["name"] for m in info["models"]],
             }
+        except asyncio.TimeoutError:
+            return {"id": ep.id, "base": ep.base, "ok": False,
+                    "kind": "", "models": [], "error": "探测超时"}
         except Exception as exc:  # noqa: BLE001 — failure must be visible
             return {"id": ep.id, "base": ep.base, "ok": False,
                     "kind": "", "models": [], "error": str(exc)[:120]}

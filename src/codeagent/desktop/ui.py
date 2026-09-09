@@ -58,13 +58,9 @@ body {
   border-bottom: 1px solid var(--border); margin-bottom: 12px;
 }
 #sidebar .brand .mark {
-  width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
-  overflow: hidden; background: #1a120c;
-  border: 1px solid rgba(255,255,255,.08);
-}
-body.light #sidebar .brand .mark {
-  background: #1a120c;
-  border: 1px solid rgba(0,0,0,.12);
+  width: 36px; height: 36px; flex-shrink: 0;
+  /* 内部 logo 四角透明：不垫不透明底块，让透明角直接透出侧栏背景 */
+  background: transparent;
 }
 #sidebar .brand .mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
 #sidebar .brand .name { font-weight: 650; font-size: 14px; letter-spacing: .2px; }
@@ -723,6 +719,8 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     </select>
     <button class="btn" id="dualBtn" style="font-size:12px"
             title="开启后同一项目可并行两个对话进程（A/B）">双对话</button>
+    <button class="btn" id="openWinBtn" style="font-size:12px"
+            onclick="openSecondWindow()" title="打开第二个独立对话窗口（B 进程）">新窗口</button>
     <select id="convPicker" class="toolsel" style="max-width:200px"
             onchange="loadConv(this.value)" title="历史对话（保存在项目文件夹）"></select>
     <button class="btn" id="copyChatBtn" style="font-size:12px"
@@ -2104,7 +2102,16 @@ $('dualBtn').onclick=()=>{
     if(!$('chatColB').childElementCount)addChip('status','对话 B 就绪 — 可并行提问','B');
     loadConversations2();
   }
+  // 双面板需要更宽视口：开启加宽 0.5 倍，关闭还原
+  if(window.pywebview&&window.pywebview.api)
+    pywebview.api.set_dual_mode(dualOn);
 };
+function openSecondWindow(){
+  pywebview.api.open_second_window().then(r=>{
+    if(r&&r.ok)toast(r.already?'对话 B 窗口已存在':'已打开对话 B 窗口');
+    else toast('打开对话 B 窗口失败');
+  });
+}
 $('input').addEventListener('keydown',e=>{
   if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat();}
 });
@@ -3622,3 +3629,390 @@ setInterval(loadNavStatus, 15000);
 </body>
 </html>
 """
+
+import re as _re
+
+# 提取主页面样式块，供第二个独立对话窗口复用（单一 <style>）
+_CSS = _re.search(r"(?s)<style>.*?</style>", HTML).group(0)
+
+
+CHAT_HTML = (
+    r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>CodeCoreAgent · 对话 B</title>
+""" + _CSS + r"""
+</head>
+<body>
+<script>
+// 开发预览时尽早应用缓存主题（正式包里 body class 由服务端注入，此脚本仅作兜底）
+(function(){
+  try{
+    const t=localStorage.getItem('codeagent-theme')||'dark';
+    if(t==='light'||(t==='auto'&&matchMedia('(prefers-color-scheme: light)').matches))
+      document.body.classList.add('light');
+  }catch(e){}
+})();
+</script>
+<div id="main" style="flex:1;height:100vh">
+  <section class="page active" id="page-chat">
+    <div class="page-head">
+      <h1>对话 B</h1>
+      <span class="sub">独立对话窗口 · 与主窗口同一项目，并行运行</span>
+      <span class="spacer"></span>
+      <select id="chatProjSel" class="toolsel" style="max-width:180px"
+              onchange="onChatProject(this.value)" title="当前对话所属项目"></select>
+      <select id="convPickerB" class="toolsel" style="max-width:200px"
+              onchange="loadConv2(this.value)" title="历史对话（B 进程，同一项目文件夹）"></select>
+      <button class="btn" id="copyChatBtnB" style="font-size:12px"
+              onclick="copyChatAllB()" title="复制当前对话全部内容">复制全部</button>
+      <button class="btn" id="newConvBtnB" style="font-size:12px"
+              onclick="newChatB()">＋ 新对话</button>
+    </div>
+    <div id="dualWrap">
+      <div class="dual-col" id="colB">
+        <div id="chatB"><div class="chat-col" id="chatColB">
+          <div class="chip-wrap"><div class="chip status">对话 B 就绪 — 可并行提问</div></div>
+        </div></div>
+        <div id="composerB"><div class="composer-inner">
+          <textarea id="inputB" rows="3" placeholder="B：输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+          <div class="composer-tools">
+            <span class="spacer"></span>
+            <button class="stopbtn" id="stopBtnB" onclick="stopChatB()" disabled title="中断 B 对话">停止</button>
+            <button class="sendbtn" id="sendBtnB" onclick="sendChatB()">发送</button>
+          </div>
+        </div></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- 执行前确认弹窗（LCA Permissions confirm，B 通道） -->
+<div class="modal-mask" id="confirmDialog">
+  <div class="modal">
+    <h3>执行前确认</h3>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.8">
+      Agent 请求调用工具 <b id="cf_tool" style="color:var(--text)"></b>
+      <span class="pill amber" id="cf_risk"></span>
+      <div style="margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 11px;font-family:Menlo,monospace;font-size:11px;word-break:break-all" id="cf_args"></div>
+      <div style="margin-top:8px;font-size:11px;color:var(--faint)">10 分钟未确认将自动拒绝并记入审计</div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="btn danger" style="flex:1" onclick="resolveConfirm(false)">拒绝</button>
+      <button class="btn primary" style="flex:1" onclick="resolveConfirm(true)">批准执行</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="ctx-menu" id="ctxMenu">
+  <button id="ctxCopySel">复制选中</button>
+  <button id="ctxCopyMsg">复制本条</button>
+  <button id="ctxCopyAll">复制全部</button>
+  <div class="sep"></div>
+  <button id="ctxPaste">粘贴到输入框</button>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let curBot2=null;
+let _ctxMsg=null;
+let _confirmId='';
+
+function esc(s){return String(s).replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>');}
+function render(s){
+  let h=esc(s);
+  h=h.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>'<pre><code>'+c+'</code></pre>');
+  h=h.replace(/`([^`\n]+)`/g,'<code>$1</code>');
+  return h;
+}
+function renderReply(s){
+  const fences=[];
+  let h=esc(String(s||''));
+  h=h.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>{
+    fences.push('<pre><code>'+c+'</code></pre>');
+    return '\x00F'+(fences.length-1)+'\x00';
+  });
+  h=h.replace(/`([^`\n]+)`/g,(_,c)=>{
+    fences.push('<code>'+c+'</code>');
+    return '\x00F'+(fences.length-1)+'\x00';
+  });
+  h=h.replace(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/gm,'');
+  h=h.replace(/^#{1,6}\s+/gm,'');
+  h=h.replace(/^[\t ]*[-*+]\s+/gm,'');
+  h=h.replace(/\*\*\*(.+?)\*\*\*/g,'<strong>$1</strong>');
+  h=h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  h=h.replace(/__(.+?)__/g,'<strong>$1</strong>');
+  h=h.replace(/(^|[^\*])\*(?!\s)([^*\n]+)\*(?!\*)/g,'$1$2');
+  h=h.replace(/\*{1,3}/g,'');
+  h=h.replace(/\x00F(\d+)\x00/g,(_,i)=>fences[i]);
+  return h;
+}
+function toast(t){const el=$('toast');el.textContent=t;el.classList.add('show');
+  setTimeout(()=>el.classList.remove('show'),2200);}
+
+function colOf(chan){ const b=chan==='B'; return {chat:b?$('chatB'):$('chat'), col:b?$('chatColB'):$('chatCol')}; }
+function addMsg(cls,text,chan){
+  const C=colOf(chan||'B');
+  const div=document.createElement('div');
+  div.className='msg '+cls; div.innerHTML=cls==='bot'?renderReply(text):render(text);
+  div._raw=text;
+  const wrap=document.createElement('div');
+  wrap.className='msg-wrap '+cls;
+  const bar=document.createElement('div');
+  bar.className='msg-actions';
+  bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>'+
+    '<button class="ma-btn" data-a="share">↗ 分享</button>';
+  bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(div.innerText||div._raw||'');
+  bar.querySelector('[data-a=share]').onclick=()=>{
+    pywebview.api.export_message(div._raw||'').then(r=>{
+      if(r.ok)toast('已导出：'+r.path);
+      else if(r.error)toast('导出失败：'+r.error);
+    });
+  };
+  wrap.appendChild(div); wrap.appendChild(bar);
+  C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
+  return div;
+}
+function copyPlain(text){
+  const t=String(text||'');
+  if(!t){toast('没有可复制的内容');return;}
+  pywebview.api.copy_text(t).then(ok=>toast(ok?'已复制到剪贴板':'复制失败'));
+}
+function chatPlainText(chan){
+  const C=colOf(chan||'B');
+  const parts=[];
+  Array.from(C.col.children).forEach(el=>{
+    if(el.classList.contains('msg-wrap')){
+      const msg=el.querySelector('.msg');
+      const raw=(msg&&(msg.innerText||msg._raw))||'';
+      if(!raw)return;
+      parts.push((el.classList.contains('user')?'你':'助手')+'：\n'+raw);
+    }else if(el.classList.contains('chip')||el.classList.contains('chip-wrap')){
+      const chip=el.classList.contains('chip')?el:el.querySelector('.chip');
+      const raw=(chip&&(chip._raw||chip.textContent))||'';
+      if(raw)parts.push(raw);
+    }
+  });
+  return parts.join('\n\n');
+}
+function copyChatAllB(){ copyPlain(chatPlainText('B')); }
+function addChip(cls,text,chan){
+  const C=colOf(chan||'B');
+  const wrap=document.createElement('div');
+  wrap.className='chip-wrap';
+  const div=document.createElement('div');
+  div.className='chip '+cls; div.textContent=text; div._raw=text;
+  const bar=document.createElement('div');
+  bar.className='msg-actions';
+  bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>';
+  bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(text);
+  wrap.appendChild(div); wrap.appendChild(bar);
+  C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
+}
+function setChatBusy(on,chan){
+  $('sendBtnB').disabled=!!on;
+  $('stopBtnB').disabled=!on;
+}
+function clearChat(msg,chan){
+  const C=colOf(chan||'B');
+  C.col.innerHTML='';
+  addChip('status',msg,chan);
+  curBot2=null;
+}
+function loadConversations2(){
+  const sel=$('convPickerB'); if(!sel)return;
+  pywebview.api.get_conversations().then(d=>{
+    sel.innerHTML='';
+    const o0=document.createElement('option');
+    o0.value=''; o0.textContent=d.items.length?'历史对话（'+d.items.length+'）':'暂无历史对话';
+    sel.appendChild(o0);
+    d.items.forEach(c=>{
+      const o=document.createElement('option');
+      o.value=c.id; o.textContent=c.title+' · '+c.count+'条';
+      sel.appendChild(o);
+    });
+    sel.value='';
+  });
+}
+function newChatB(){
+  pywebview.api.new_conversation2().then(()=>{
+    clearChat('新对话 B 已开始','B'); loadConversations2();
+  });
+}
+function loadConv2(id){
+  if(!id)return;
+  pywebview.api.load_conversation2(id).then(r=>{
+    if(!r.ok)return;
+    clearChat('已载入历史对话（继续聊会自动带上前文）','B');
+    r.messages.forEach(m=>addMsg(m.role==='user'?'user':'bot',m.text,'B'));
+  });
+}
+function sendChatB(){
+  const text=$('inputB').value.trim();
+  if(!text)return;
+  addMsg('user',text,'B');
+  $('inputB').value=''; setChatBusy(true,'B'); curBot2=null;
+  pywebview.api.send2(text).then(ok=>{
+    if(!ok){addChip('error','上一条还在处理中','B');setChatBusy(false,'B');}
+  });
+}
+function stopChatB(){
+  $('stopBtnB').disabled=true;
+  pywebview.api.stop2().then(ok=>{ if(!ok)setChatBusy(false,'B'); });
+}
+
+/* 项目切换：独立窗口只列已有项目（新建请到主窗口） */
+function loadChatProjects(){
+  pywebview.api.get_projects().then(d=>{
+    const sel=$('chatProjSel'); if(!sel)return;
+    sel.innerHTML='';
+    (d.projects||[]).forEach(p=>{
+      const o=document.createElement('option');
+      o.value=p.id; o.textContent=p.name; o.title=p.path;
+      if(p.id===d.active)o.selected=true;
+      sel.appendChild(o);
+    });
+    if(d.active)sel.value=d.active;
+  });
+}
+function onChatProject(pid){
+  if(!pid)return;
+  pywebview.api.switch_project(pid).then(r=>{
+    if(!r.ok){toast(r.error);return;}
+    toast('当前项目：'+r.project.name);
+    loadChatProjects(); loadConversations2();
+    clearChat('当前项目：'+r.project.name+' · 新对话 B','B');
+  });
+}
+
+/* ---------- 右键复制粘贴 ---------- */
+function ctxText(){
+  const sel=window.getSelection();
+  if(sel && sel.rangeCount && !sel.isCollapsed && sel.toString().trim())
+    return sel.toString();
+  if(_ctxMsg)return (_ctxMsg.innerText||_ctxMsg._raw||'');
+  return '';
+}
+function hideCtx(){const m=$('ctxMenu');if(m)m.classList.remove('open');}
+function ctxCopy(what){
+  let text='';
+  if(what==='sel'){
+    const sel=window.getSelection();
+    text=sel && sel.rangeCount ? sel.toString() : (_ctxMsg?(_ctxMsg.innerText||_ctxMsg._raw):'');
+  }else if(what==='msg'){
+    text=_ctxMsg?(_ctxMsg.innerText||_ctxMsg._raw):'';
+  }else{ // all
+    text=chatPlainText();
+  }
+  if(!text){toast('没有可复制的内容');return;}
+  copyPlain(text);
+  hideCtx();
+}
+function ctxPaste(){
+  const active=document.activeElement;
+  const inp=(active&&(active.tagName==='TEXTAREA'||active.tagName==='INPUT'))?active:$('inputB');
+  const read=()=>{
+    if(window.navigator && navigator.clipboard && navigator.clipboard.readText)
+      return navigator.clipboard.readText().catch(()=>pywebview.api.read_clipboard());
+    if(window.pywebview)return pywebview.api.read_clipboard();
+    return Promise.resolve('');
+  };
+  read().then(t=>{
+    if(!t){toast('剪贴板为空');return;}
+    if(!inp){toast('没有输入框');return;}
+    const s=inp.selectionStart||inp.value.length;
+    const e=inp.selectionEnd||inp.value.length;
+    inp.value=inp.value.slice(0,s)+t+inp.value.slice(e);
+    inp.selectionStart=inp.selectionEnd=s+t.length;
+    inp.focus();
+    toast('已粘贴');
+  }).catch(()=>toast('读取剪贴板失败'));
+  hideCtx();
+}
+document.addEventListener('contextmenu',e=>{
+  if(!$('page-chat'))return;
+  e.preventDefault();
+  _ctxMsg=e.target && e.target.closest ? e.target.closest('.msg') : null;
+  const m=$('ctxMenu'); if(!m)return;
+  m.style.left=Math.min(e.clientX, innerWidth-160)+'px';
+  m.style.top=Math.min(e.clientY, innerHeight-140)+'px';
+  m.classList.add('open');
+});
+document.addEventListener('click',e=>{
+  if(e.target && e.target.closest && e.target.closest('#ctxMenu'))return;
+  hideCtx();
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')hideCtx();
+});
+['ctxCopySel','ctxCopyMsg','ctxCopyAll'].forEach(id=>{
+  const el=$(id); if(el)el.onclick=()=>ctxCopy(id==='ctxCopySel'?'sel':id==='ctxCopyMsg'?'msg':'all');
+});
+const _pasteEl=$('ctxPaste'); if(_pasteEl)_pasteEl.onclick=ctxPaste;
+
+/* Enter 发送 / Cmd+A 全选对话 */
+$('inputB').addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChatB();}
+});
+document.addEventListener('keydown',e=>{
+  if(!(e.metaKey||e.ctrlKey)||(e.key!=='a'&&e.key!=='A'))return;
+  const tag=(document.activeElement&&document.activeElement.tagName)||'';
+  if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT')return;
+  e.preventDefault();
+  const range=document.createRange();
+  range.selectNodeContents($('chatColB'));
+  const sel=window.getSelection();
+  sel.removeAllRanges(); sel.addRange(range);
+});
+
+/* 执行前确认（B 通道） */
+function resolveConfirm(ok){
+  $('confirmDialog').classList.remove('open');
+  if(_confirmId)pywebview.api.resolve_confirm2(_confirmId,ok);
+  _confirmId='';
+}
+
+window._onEvent=function(ev){
+  const ch=ev.chan||'B';
+  const C=colOf(ch);
+  if(ev.kind==='text'){
+    if(!curBot2)curBot2=addMsg('bot','',ch);
+    curBot2.innerHTML=renderReply(ev.text);
+    curBot2._raw=ev.text;
+    C.chat.scrollTop=C.chat.scrollHeight;
+  }else if(ev.kind==='tool'){
+    addChip('','🔧 '+ev.name,ch);
+  }else if(ev.kind==='status'){
+    addChip('status',ev.text,ch);
+  }else if(ev.kind==='done'){
+    curBot2=null; setChatBusy(false,ch);
+    loadConversations2();
+  }else if(ev.kind==='stopped'){
+    curBot2=null; setChatBusy(false,ch);
+    addChip('status','已停止',ch);
+    loadConversations2();
+  }else if(ev.kind==='error'){
+    addChip('error','出错了：'+ev.text,ch);
+    curBot2=null; setChatBusy(false,ch);
+  }else if(ev.kind==='confirm'){
+    _confirmId=ev.id;
+    $('cf_tool').textContent=ev.tool;
+    $('cf_risk').textContent=ev.risk;
+    $('cf_args').textContent=ev.args;
+    $('confirmDialog').classList.add('open');
+  }
+};
+
+function boot(){
+  loadChatProjects();
+  loadConversations2();
+}
+if(window.pywebview&&window.pywebview.api) boot();
+else window.addEventListener('pywebviewready', boot);
+</script>
+</body>
+</html>
+"""
+)

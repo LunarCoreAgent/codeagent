@@ -173,6 +173,8 @@ class DesktopAPI:
         )
         self.scheduler.start()
         self._window: Any = None
+        # 第二个独立对话窗口（B）：由 open_second_window() 在后台线程创建
+        self._window_b: Any = None
         self._agent: Agent | None = None
         self._lock = threading.Lock()
         self._busy = False
@@ -189,6 +191,8 @@ class DesktopAPI:
         self._loop2: asyncio.AbstractEventLoop | None = None
         self._conv_seed2: list[dict[str, Any]] = []
         self._confirmer2 = Confirmer(lambda kind, data: self._push(kind, chan="B", **data))
+        # 模型资产探测缓存：TTL 秒内不重复探测，避免来回切换页面卡死/识别慢
+        self._assets_probe_cache: tuple[float, list[dict[str, Any]]] | None = None
         setup_logging()
 
     # ------------------------------------------------------------------
@@ -196,13 +200,19 @@ class DesktopAPI:
     # ------------------------------------------------------------------
 
     def _push(self, kind: str, chan: str = "A", **data: Any) -> None:
-        if self._window is None:
+        targets = []
+        if self._window is not None:
+            targets.append(self._window)
+        if chan == "B" and self._window_b is not None:
+            targets.append(self._window_b)  # 独立对话窗口也收 B 事件
+        if not targets:
             return
         payload = json.dumps({"kind": kind, "chan": chan, **data}, ensure_ascii=False)
-        try:
-            self._window.evaluate_js(f"window._onEvent({payload})")
-        except Exception:  # noqa: BLE001 — UI push must never crash the agent
-            log.exception("push failed")
+        for win in targets:
+            try:
+                win.evaluate_js(f"window._onEvent({payload})")
+            except Exception:  # noqa: BLE001 — UI push must never crash the agent
+                log.exception("push failed")
 
     def _on_event_chan(self, chan: str, event: AgentEvent) -> None:
         if event.type == "text":
@@ -373,8 +383,8 @@ class DesktopAPI:
     # ------------------------------------------------------------------
 
     def get_model_assets(self) -> dict[str, Any]:
-        probed = asyncio.run(probe_all(self.assets.endpoints))
-        by_id = {e["id"]: e for e in probed["endpoints"]}
+        probed = self._probed_assets()
+        by_id = {e["id"]: e for e in probed}
         endpoints: list[dict[str, Any]] = []
         for e in self.assets.endpoints:
             rec = {
@@ -500,6 +510,7 @@ class DesktopAPI:
             self._remember_comfy_base(base)
         self.assets.endpoints.append(ep)
         self.assets.save()
+        self._invalidate_probe_cache()
         log.info("endpoint added: %s kind=%s", base, ep.kind or "?")
         return {"ok": True, "kind": ep.kind}
 
@@ -511,6 +522,7 @@ class DesktopAPI:
         if len(self.assets.endpoints) == before:
             return False
         self.assets.save()
+        self._invalidate_probe_cache()
         return True
 
     def detect_models(self, base_url: str, api_key: str = "") -> dict[str, Any]:
@@ -655,6 +667,7 @@ class DesktopAPI:
         endpoints = asyncio.run(_all())
         if dirty:
             self.assets.save()
+            self._invalidate_probe_cache()
         active = self.assets.active
         return {
             "endpoints": endpoints,
@@ -780,6 +793,11 @@ class DesktopAPI:
 
     _probe_cache: tuple[float, dict[str, list[str]]] | None = None
 
+    def _invalidate_probe_cache(self) -> None:
+        """端点配置或类型变化后清空探测缓存，下次调用重新探测。"""
+        self._probe_cache = None
+        self._assets_probe_cache = None
+
     def _probed_local(self, ttl: float = 30.0) -> dict[str, list[str]]:
         """端点 → 模型名列表（30s 缓存；离线端点为空列表）。"""
         import time as _time
@@ -797,6 +815,25 @@ class DesktopAPI:
             log.debug("route-target probe failed")
         self._probe_cache = (_time.monotonic(), result)
         return result
+
+    _assets_probe_cache: tuple[float, list[dict[str, Any]]] | None = None
+
+    def _probed_assets(self, ttl: float = 20.0) -> list[dict[str, Any]]:
+        """完整端点探测结果（20s 缓存），供对话页/模型页选择器复用。
+        避免每次切换页面都同步全量探测，离线/慢端点不再反复阻塞桥线程。"""
+        import time as _time
+
+        if (self._assets_probe_cache is not None
+                and _time.monotonic() - self._assets_probe_cache[0] < ttl):
+            return self._assets_probe_cache[1]
+        try:
+            probed = asyncio.run(probe_all(self.assets.endpoints))
+            endpoints = probed["endpoints"]
+        except Exception:  # noqa: BLE001 — 探测失败也缓存空结果，避免反复重试
+            log.debug("assets probe failed")
+            endpoints = []
+        self._assets_probe_cache = (_time.monotonic(), endpoints)
+        return endpoints
 
     def get_router(self) -> dict[str, Any]:
         return {
@@ -1579,6 +1616,85 @@ class DesktopAPI:
     def get_second_state(self) -> dict[str, Any]:
         """第二对话进程（B）的状态：是否忙碌、当前对话 id。"""
         return {"busy": self._busy2, "current": self._conv_id2 or ""}
+
+    def open_second_window(self) -> dict[str, Any]:
+        """在项目里打开第二个独立对话窗口（B 对话进程）。
+        从后台线程创建第二个 webview 窗口；pywebview 在 start() 之后由
+        非主线程 create_window 会立即实例化窗口。"""
+        if self._window_b is not None:
+            return {"ok": True, "opened": False, "already": True}
+
+        def _create() -> None:
+            try:
+                import webview
+            except ImportError:
+                self._push(
+                    "status", chan="B",
+                    text="桌面版需要 pywebview：pip install codeagent[desktop]",
+                )
+                return
+            from codeagent.desktop.ui import CHAT_HTML
+            from codeagent.desktop.brand_mark import MARK_URI
+
+            html = CHAT_HTML.replace("__BRAND_MARK_SRC__", MARK_URI)
+            theme = self.config.theme
+            light = theme == "light" or (theme == "auto" and self._system_light())
+            if light:
+                html = html.replace("<body>", '<body class="light">', 1)
+            win = webview.create_window(
+                "CodeCoreAgent · 对话 B",
+                html=html,
+                js_api=self,
+                width=860,
+                height=760,
+                min_size=(640, 500),
+                text_select=True,
+            )
+            if win is not None:
+                self._window_b = win
+                try:
+                    win.events.closed += lambda: setattr(self, "_window_b", None)
+                except Exception:  # noqa: BLE001 — 关闭事件绑定失败不影响窗口
+                    log.warning("无法绑定对话 B 窗口关闭事件")
+
+        threading.Thread(target=_create, daemon=True).start()
+        return {"ok": True, "opened": True}
+
+    def set_dual_mode(self, on: bool) -> bool:
+        """开启「双对话」时主窗口加宽 0.5 倍（1.5×），关闭时还原。
+        双面板需要更宽视口容纳 A/B 两列，避免内容拥挤。"""
+        w = self._window
+        if w is None:
+            return False
+        base_w = getattr(w, "initial_width", None) or 1280
+        base_h = getattr(w, "initial_height", None) or 840
+        try:
+            if on:
+                w.resize(int(base_w * 1.5), base_h)
+            else:
+                w.resize(int(base_w), base_h)
+        except Exception:  # noqa: BLE001 — 缩放失败不阻塞界面
+            log.warning("dual mode resize failed")
+            return False
+        return True
+
+    def _system_light(self) -> bool:
+        """macOS 系统外观检测（auto 主题用）：无 AppleInterfaceStyle 键 = 浅色。"""
+        import sys
+
+        if sys.platform != "darwin":
+            return False
+        import subprocess
+
+        try:
+            subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True, check=True, timeout=2,
+            )
+            return False  # 键存在 → 深色
+        except (subprocess.CalledProcessError, FileNotFoundError,
+                subprocess.TimeoutExpired):
+            return True
 
     def new_conversation2(self) -> dict[str, Any]:
         self._conv_id2 = None
