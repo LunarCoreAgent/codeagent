@@ -38,6 +38,8 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
 - 剪映专业版自动化剪辑 / 草稿 / 字幕配乐导出 → jianying-editor（需本机剪映 + ffmpeg）
 - HTML/CSS 写成片 / HyperFrames / 产品发布片 / PR 解说视频 → hyperframes（Node 22+ / ffmpeg；与 Remotion 二选一或迁移）
 - draw.io / 架构图 / 流程图 / 自然语言画图 → next-ai-draw-io（优先 MCP `@next-ai-drawio/mcp-server`；也可用在线演示）
+- AutoCAD / DWG 精确重绘 / PDF 转中间 DWG → autocad-dwg-redraw（需 Windows + AutoCAD + pywin32）
+- 图纸照片 / 扫描件 / 截图转可编辑 DWG·DXF → autocad-image-redraw（同上；证据分级，勿仅凭像素声称尺寸精确）
 - CPython 内核 / C API / GIL / 从源码编 Python / 给解释器加模块 → cpython（写普通 .py 应用不要套）
 - 打开网页 / 登录站 / 点按钮 / 填表 → 直接调用 browser 工具（软件内置浏览器，无需安装；已登录 Chrome 可另用 browser-skill / ego-browser）
 - 语音面 / 麦克风 / 播报 / 嗲音 / barge-in → voice-surface
@@ -670,6 +672,86 @@ https://lnkiai.github.io/m3e-canvas/
 - 图是 draw.io XML；改图用增量对话，保留历史版本意识
 - 缺 Node/MCP 就说明怎么装，不要假装图已经生成
 - 纯 UI 落地页仍走 impeccable-craft；本技能只管示意图/架构图
+""",
+    ),
+    "autocad-dwg-redraw": (
+        "AutoCAD DWG 精确重绘：源 DWG / PDF 中间稿剖析、COM 复刻与校验",
+        "AutoCAD,DWG,DXF,重绘,图纸,CAD,精确复刻,PDF转DWG,pywin32,dwg_redraw",
+        "https://github.com/pengxiaoan/autocad-dwg-redraw-skill",
+        """# autocad-dwg-redraw
+来源：https://github.com/pengxiaoan/autocad-dwg-redraw-skill （skills/autocad-dwg-redraw）。
+有源 DWG、或 PDF 转可审计中间 DWG 后再精确复刻/校验时启用。
+自己调用 use_skill("autocad-dwg-redraw")。不要把整仓拷进本软件根；脚本装到工作区 skills。
+
+## 环境（硬性）
+- **Windows** + 已安装 AutoCAD + Python 3.10+ + `pywin32`
+- macOS/Linux 无法跑 COM；缺环境就说明怎么装，不要假装已写出 DWG
+
+## CodeCoreAgent 落地
+征得同意后：
+```
+git clone https://github.com/pengxiaoan/autocad-dwg-redraw-skill.git skills/autocad-dwg-redraw-skill
+pip install pywin32
+```
+设 `ACAD_SKILL_ROOT` 指向 `skills/autocad-dwg-redraw-skill/skills/autocad-dwg-redraw`。
+业务输出写项目 `outputs/` / `reports/`，**禁止覆盖源 DWG**。
+
+## 三种输入
+1. **源 DWG**：剖析 → 自定义重绘提示 → COM 精确复刻 → 对照实体/图层/标注校验
+2. **仅 PDF**：先做可审计中间 DWG（矢量优先；栅格须标明限制），再走源 DWG 流程；**勿声称等于原 DWG**
+3. **图 + 权威尺寸表**：尺寸优先于像素；冲突跟尺寸并报告差异（复杂图转走 autocad-image-redraw）
+
+## 常用命令（在 ACAD_SKILL_ROOT）
+```
+python scripts/dwg_prompt_builder.py --source input.dwg --output input-redraw-prompt.md
+python scripts/dwg_redraw.py --source input.dwg --output outputs/redraw_exact.dwg
+```
+COM 卡住 / 只开 Start 页时加：`--restart-autocad --acad-exe "C:\\Path\\To\\acad.exe"`。
+只要模型空间：`--modelspace-only`。
+
+## 铁律
+- 有源 DWG 时禁止只靠截图「猜」复杂图；先提实体再校验
+- 最终交付优先 AutoCAD COM 精确拷贝；生成 AutoLISP/Python 仅当用户要可审计代码且已抽出实体数据
+- 教程：仓库 `docs/图片自动绘制DWG使用教程.md`（图转 DWG 细节见 autocad-image-redraw）
+""",
+    ),
+    "autocad-image-redraw": (
+        "光栅图纸转可编辑 DWG/DXF：预检、证据分级、规格校验、对比与迭代",
+        "图纸照片,扫描件,截图转DWG,image-redraw,光栅,DXF预览,证据分级,CAD重绘",
+        "https://github.com/pengxiaoan/autocad-dwg-redraw-skill",
+        """# autocad-image-redraw
+来源：https://github.com/pengxiaoan/autocad-dwg-redraw-skill （skills/autocad-image-redraw）。
+截图、扫描、照片、草图、PNG/JPG 要转成可编辑 DWG/DXF，且需证据跟踪与校验时启用。
+有可信源 DWG 时改用 autocad-dwg-redraw。自己调用 use_skill("autocad-image-redraw")。
+
+## 环境
+- DWG 生成/检查：Windows + AutoCAD + `pywin32`
+- 预检/对比：`pillow numpy opencv-python`；DXF 预览：`ezdxf pymupdf`
+```
+pip install pywin32 pillow numpy opencv-python ezdxf pymupdf
+```
+克隆同上仓；`ACAD_IMG_SKILL_ROOT` → `…/skills/autocad-image-redraw`。
+
+## 证据与剖面（不可妥协）
+- 几何权威顺序：用户明文要求 → 可读尺寸 → 推导约束 → 标定测距 → **标明的**目测估计
+- 每个关键值标 `known` / `scaled` / `inferred` / `unreadable`
+- **禁止**仅凭像素相似度声称物理尺寸准确；冲突尺寸勿静默择一，应 `needs_review` / `blocked`
+- 剖面：`strict-dimensioned` | `general`（默认）| `hybrid` | `visual-trace` | `geometry-only`
+  无单位/比例锚时用 `visual-trace` 或 unitless，勿默认毫米
+
+## 端到端（在 ACAD_IMG_SKILL_ROOT）
+1. `python scripts/preflight_image_redraw.py --image input.jpg --mode general --output reports/preflight.json`
+2. 按 `references/image-redraw-spec.md` 写规格（视图、标定、约束、实体 ID）
+3. `python scripts/validate_image_redraw_spec.py --spec redraw-spec.json --profile general --report reports/spec.json`
+4. `python scripts/draw_image_spec.py --spec redraw-spec.json --output outputs/redraw.dwg`
+   中文可用 `--text-style CN_TEXT --text-font "C:\\Windows\\Fonts\\simhei.ttf"`；只要线框 `--geometry-only`
+5. `inspect_dwg_output.py` → AutoCAD 导出 DXF → `render_dxf_preview.py` → `compare_redraw.py`
+6. 处置：`pass` / `pass_with_warnings` / `needs_review` / `blocked` / `fail`
+
+无 AutoCAD 时仅可粗略：`image_to_dxf_open_source.py`；矢量 PDF：`pdf_vector_to_dxf.py`——二者都不能把不确定像素变成权威尺寸。
+
+## 交付
+可编辑 DWG + 审计 DXF、规格/锚点 JSON、预检与对比报告、固定页预览、manifest（哈希、剖面、单位、假设、状态）。
 """,
     ),
 }

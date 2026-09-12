@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from codeagent.browser.showcase import (
     SHOWCASE_NUDGE,
@@ -11,6 +12,9 @@ from codeagent.browser.showcase import (
     find_static_site_root,
     looks_like_website_finished,
     looks_like_website_task,
+    pick_preview_url,
+    preview_unavailable_html,
+    probe_http,
 )
 
 
@@ -45,11 +49,33 @@ def test_ensure_local_preview_serves(tmp_path: Path):
     (dist / "index.html").write_text("<html><body>hi</body></html>", encoding="utf-8")
     url = ensure_local_preview(tmp_path)
     assert url and url.startswith("http://127.0.0.1:")
+    assert probe_http(url)
     # Reuse same server
     assert ensure_local_preview(tmp_path) == url
+
+
+def test_pick_preview_url_skips_dead_prefers_live(tmp_path: Path):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html><body>live</body></html>", encoding="utf-8")
+    dead = "http://127.0.0.1:9/"  # discard port, never listening
+    with patch("codeagent.browser.showcase.discover_local_preview", return_value=None):
+        url = pick_preview_url(
+            f"预览 {dead} 已完成",
+            workspace=tmp_path,
+        )
+    assert url and probe_http(url)
+    assert ":9" not in url
+
+
+def test_preview_unavailable_html_mentions_url():
+    html = preview_unavailable_html("http://127.0.0.1:4173/")
+    assert "4173" in html
+    assert "打不开" in html
 
 
 def test_showcase_nudge_mentions_browser():
     assert "browser" in SHOWCASE_NUDGE
     assert "file://" in SHOWCASE_NUDGE
+    assert "白屏" in SHOWCASE_NUDGE
     assert looks_like_website_finished("做网站", "已完成首页改版")

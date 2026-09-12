@@ -203,6 +203,17 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
         padding: 3px 12px; animation: pop .16s ease; }
 .chip.error { color: var(--bad); border-color: rgba(248,113,113,.5); }
 .chip.status { color: var(--blue); border-color: rgba(59,130,246,.5); }
+.think-block { align-self: flex-start; max-width: min(720px, 92%);
+  width: 100%; margin: 2px 0 8px; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--elev); color: var(--muted); font-size: 12.5px; }
+.think-block > summary { cursor: pointer; list-style: none;
+  color: var(--muted); font-size: 12px; user-select: none; }
+.think-block > summary::-webkit-details-marker { display: none; }
+.think-block > summary::before { content: "▸ "; color: var(--faint); }
+.think-block[open] > summary::before { content: "▾ "; }
+.think-block .think-body { margin-top: 8px; white-space: pre-wrap;
+  line-height: 1.55; color: var(--muted); }
 #composer { padding: 13px 22px 16px; border-top: 1px solid var(--border);
             background: var(--sidebar); flex-shrink: 0; }
 .composer-inner { max-width: 1040px; margin: 0 auto; display: flex;
@@ -2221,6 +2232,12 @@ function chatPlainText(chan){
       if(!raw)return;
       parts.push((el.classList.contains('user')?'你':'助手')+'：\n'+raw);
     }else if(el.classList.contains('chip')||el.classList.contains('chip-wrap')){
+      const think=el.querySelector&&el.querySelector('.think-block');
+      if(think){
+        const raw=think._raw||think.innerText||'';
+        if(raw)parts.push(raw);
+        return;
+      }
       const chip=el.classList.contains('chip')?el:el.querySelector('.chip');
       const raw=(chip&&(chip._raw||chip.textContent))||'';
       if(raw)parts.push(raw);
@@ -2309,6 +2326,28 @@ function addChip(cls,text,chan){
   bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>';
   bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(text);
   wrap.appendChild(div); wrap.appendChild(bar);
+  C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
+}
+function addThink(text,chan){
+  const raw=String(text||'').trim();
+  if(!raw)return;
+  const C=colOf(chan||'A');
+  const wrap=document.createElement('div');
+  wrap.className='chip-wrap';
+  const det=document.createElement('details');
+  det.className='think-block';
+  det._raw='思考过程\\n'+raw;
+  const sum=document.createElement('summary');
+  sum.textContent='思考过程';
+  const body=document.createElement('div');
+  body.className='think-body';
+  body.innerHTML=render(raw);
+  det.appendChild(sum); det.appendChild(body);
+  const bar=document.createElement('div');
+  bar.className='msg-actions';
+  bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>';
+  bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(det._raw);
+  wrap.appendChild(det); wrap.appendChild(bar);
   C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
 }
 /* ---------- 附件（所有文件类型识别） ---------- */
@@ -4236,7 +4275,10 @@ window._onEvent=function(ev){
       curBot._raw=stripEmotionTag(ev.text);
     }
     C.chat.scrollTop=C.chat.scrollHeight;
+  }else if(ev.kind==='thinking'){
+    addThink(ev.text,ch);
   }else if(ev.kind==='tool'){
+    if(ev.name==='bash')return; // bash 过程默认不显示
     addChip('','🔧 '+ev.name,ch);
   }else if(ev.kind==='status'){
     addChip('status',ev.text,ch);
@@ -4540,6 +4582,12 @@ function chatPlainText(chan){
       if(!raw)return;
       parts.push((el.classList.contains('user')?'你':'助手')+'：\n'+raw);
     }else if(el.classList.contains('chip')||el.classList.contains('chip-wrap')){
+      const think=el.querySelector&&el.querySelector('.think-block');
+      if(think){
+        const raw=think._raw||think.innerText||'';
+        if(raw)parts.push(raw);
+        return;
+      }
       const chip=el.classList.contains('chip')?el:el.querySelector('.chip');
       const raw=(chip&&(chip._raw||chip.textContent))||'';
       if(raw)parts.push(raw);
@@ -4618,6 +4666,28 @@ function addChip(cls,text,chan){
   bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>';
   bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(text);
   wrap.appendChild(div); wrap.appendChild(bar);
+  C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
+}
+function addThink(text,chan){
+  const raw=String(text||'').trim();
+  if(!raw)return;
+  const C=colOf(chan||'B');
+  const wrap=document.createElement('div');
+  wrap.className='chip-wrap';
+  const det=document.createElement('details');
+  det.className='think-block';
+  det._raw='思考过程\\n'+raw;
+  const sum=document.createElement('summary');
+  sum.textContent='思考过程';
+  const body=document.createElement('div');
+  body.className='think-body';
+  body.innerHTML=render(raw);
+  det.appendChild(sum); det.appendChild(body);
+  const bar=document.createElement('div');
+  bar.className='msg-actions';
+  bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>';
+  bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(det._raw);
+  wrap.appendChild(det); wrap.appendChild(bar);
   C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
 }
 function setChatBusy(on,chan){
@@ -4803,7 +4873,10 @@ window._onEvent=function(ev){
     curBot2.innerHTML=renderReply(ev.text);
     curBot2._raw=ev.text;
     C.chat.scrollTop=C.chat.scrollHeight;
+  }else if(ev.kind==='thinking'){
+    addThink(ev.text,ch);
   }else if(ev.kind==='tool'){
+    if(ev.name==='bash')return; // bash 过程默认不显示
     addChip('','🔧 '+ev.name,ch);
   }else if(ev.kind==='status'){
     addChip('status',ev.text,ch);

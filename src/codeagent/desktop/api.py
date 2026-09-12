@@ -437,10 +437,17 @@ class DesktopAPI:
     def _on_event_chan(self, chan: str, event: AgentEvent) -> None:
         if event.type == "text":
             self._push("text", chan=chan, text=str(event.data))
+        elif event.type == "thinking":
+            text = str(event.data or "").strip()
+            if text:
+                self._push("thinking", chan=chan, text=text)
         elif event.type == "tool_call":
             call = event.data
-            self._push("tool", chan=chan, name=call.name)
-            if getattr(call, "name", None) == "browser":
+            name = getattr(call, "name", None) or ""
+            # Phase-1: bash 命令过程默认不刷屏；其它工具仍显示芯片
+            if name != "bash":
+                self._push("tool", chan=chan, name=name)
+            if name == "browser":
                 args = getattr(call, "arguments", None) or {}
                 action = str(args.get("action") or "").lower()
                 url = str(args.get("url") or "").strip()
@@ -461,10 +468,10 @@ class DesktopAPI:
     ) -> None:
         """Safety net: open internal browser if the model skipped the showcase."""
         from codeagent.browser.showcase import (
-            ensure_local_preview,
-            extract_preview_urls,
             looks_like_website_finished,
             looks_like_website_task,
+            pick_preview_url,
+            probe_http,
         )
 
         hints = getattr(agent, "workspace_hints", "") if agent else ""
@@ -473,6 +480,19 @@ class DesktopAPI:
             url = (self._chat_browser_urls[-1] if self._chat_browser_urls else "") or (
                 self._browser.url or ""
             )
+            # Model may have navigated to a dead port → recover to a live preview.
+            if url and not probe_http(url):
+                recovered = pick_preview_url(
+                    answer, url, *(self._chat_browser_urls or []),
+                    workspace=self.root,
+                )
+                if recovered and recovered.rstrip("/") != url.rstrip("/"):
+                    log.info("showcase recover dead %s → %s", url, recovered)
+                    self.browser_goto(recovered)
+                    url = recovered
+                else:
+                    # Still open via navigate so the window shows the error page, not white.
+                    self.browser_goto(url)
             if url:
                 self.browser_show_window()
                 self._push("browser", chan=chan, showcase=True, url=url, **self._browser.ui_state())
@@ -481,10 +501,10 @@ class DesktopAPI:
             task, hints,
         ):
             return
-        urls = extract_preview_urls(answer, *(self._chat_browser_urls or []))
-        url = urls[-1] if urls else None
-        if not url:
-            url = ensure_local_preview(self.root)
+        url = pick_preview_url(
+            answer, *(self._chat_browser_urls or []),
+            workspace=self.root,
+        )
         if not url:
             return
         log.info("auto showcase website → %s", url)
@@ -497,6 +517,7 @@ class DesktopAPI:
             url=url,
             ready_text=f"已自动打开成品预览：{url}",
         )
+
     def _on_event(self, event: AgentEvent) -> None:
         self._on_event_chan("A", event)
 
@@ -1578,8 +1599,15 @@ class DesktopAPI:
 
     THINKING_HINTS = {
         "low": "思考强度=低：快速直接作答，跳过冗长分析，结论优先，能一句说清不写两句",
-        "medium": "思考强度=中：正常推理深度，先给结论再补关键依据",
-        "high": "思考强度=高：深入逐步推理——先拆解问题、列出假设与方案，逐一验证后再作答；复杂问题主动自我检查边界情况",
+        "medium": (
+            "思考强度=中：正常推理深度，先给结论再补关键依据。"
+            "若需要写出中间推理，请用 <think>…</think> 包裹；最终答复写在标签外"
+        ),
+        "high": (
+            "思考强度=高：深入逐步推理——先拆解问题、列出假设与方案，逐一验证后再作答；"
+            "复杂问题主动自我检查边界情况。"
+            "请把逐步推理写在 <think>…</think> 内，最终结论写在标签外"
+        ),
     }
 
     def _settings_with_patches(self) -> Settings:

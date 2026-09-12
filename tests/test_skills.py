@@ -115,6 +115,8 @@ def test_fusion_pack_and_chinese_routing():
     assert "jianying-editor" in FUSION_SKILLS
     assert "hyperframes" in FUSION_SKILLS
     assert "next-ai-draw-io" in FUSION_SKILLS
+    assert "autocad-dwg-redraw" in FUSION_SKILLS
+    assert "autocad-image-redraw" in FUSION_SKILLS
     lib = fusion_library()
     anime = lib.search("用 anime.js 做入场交错")
     assert anime[0].name == "anime-js"
@@ -148,10 +150,14 @@ def test_install_fusion_skills(tmp_path):
     assert "jianying-editor" in written
     assert "hyperframes" in written
     assert "next-ai-draw-io" in written
+    assert "autocad-dwg-redraw" in written
+    assert "autocad-image-redraw" in written
     assert (tmp_path / "karpathy-craft" / "SKILL.md").is_file()
     assert (tmp_path / "jianying-editor" / "SKILL.md").is_file()
     assert (tmp_path / "hyperframes" / "SKILL.md").is_file()
     assert (tmp_path / "next-ai-draw-io" / "SKILL.md").is_file()
+    assert (tmp_path / "autocad-dwg-redraw" / "SKILL.md").is_file()
+    assert (tmp_path / "autocad-image-redraw" / "SKILL.md").is_file()
     assert "fusion-router" in ensure_fusion_skills(tmp_path)
 
 
@@ -223,6 +229,13 @@ def test_expand_and_match_work_content():
     assert "hyperframes" in {s.name for s in match_work_skills(lib, "用 HyperFrames 渲染 HTML 成片")}
     assert "draw.io" in expand_work_query("画一张 AWS 架构图 draw.io")
     assert "next-ai-draw-io" in {s.name for s in match_work_skills(lib, "用自然语言画 draw.io 流程图")}
+    assert "AutoCAD" in expand_work_query("用 AutoCAD 精确重绘这份 DWG")
+    assert "autocad-dwg-redraw" in {
+        s.name for s in match_work_skills(lib, "用 AutoCAD 精确重绘这份 DWG")
+    }
+    assert "autocad-image-redraw" in {
+        s.name for s in match_work_skills(lib, "把扫描件转成可编辑 DWG")
+    }
 
 
 def test_workspace_hints_see_frontend_files(tmp_path):

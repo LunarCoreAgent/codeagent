@@ -152,6 +152,16 @@ async def test_openai_reasoning_content_fallback():
     provider = _openai_with(_FakeChoice(content="", reasoning="答案在推理里"))
     resp = await provider.complete([Message.user("hi")])
     assert resp.content == "答案在推理里"
+    assert resp.reasoning == ""
+
+
+async def test_openai_keeps_reasoning_separate_when_content_present():
+    provider = _openai_with(
+        _FakeChoice(content="最终答案", reasoning="中间推理")
+    )
+    resp = await provider.complete([Message.user("hi")])
+    assert resp.content == "最终答案"
+    assert resp.reasoning == "中间推理"
 
 
 async def test_openai_empty_and_length_raises_diagnosis():

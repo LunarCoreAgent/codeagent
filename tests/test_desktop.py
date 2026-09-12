@@ -1898,6 +1898,11 @@ def test_thinking_injected_into_settings(api):
 def test_ui_chat_composer_features():
     assert 'id="attBtn"' in HTML and 'id="attRow"' in HTML
     assert 'id="thinkingSel"' in HTML
+    assert "function addThink" in HTML
+    assert "think-block" in HTML
+    assert "思考过程" in HTML
+    assert "ev.kind==='thinking'" in HTML
+    assert "ev.name==='bash'" in HTML  # bash 芯片默认隐藏
     assert 'id="modelPicker"' in HTML  # 页眉模型选择
     assert "route:free" in HTML
     assert "自由路由" in HTML

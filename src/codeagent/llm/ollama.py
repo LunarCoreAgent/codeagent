@@ -103,6 +103,7 @@ class OllamaProvider(LLMProvider):
             ]
 
         content_parts: list[str] = []
+        thinking_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         done_reason = "stop"
         usage = Usage()
@@ -119,6 +120,10 @@ class OllamaProvider(LLMProvider):
                     msg = chunk.get("message") or {}
                     if msg.get("content"):
                         content_parts.append(msg["content"])
+                    # Native thinking stream (when think=True on qwen3 / glm…)
+                    think_bit = msg.get("thinking") or msg.get("reasoning")
+                    if think_bit:
+                        thinking_parts.append(str(think_bit))
                     for tc in msg.get("tool_calls") or []:
                         fn = tc.get("function") or {}
                         tool_calls.append(
@@ -135,11 +140,17 @@ class OllamaProvider(LLMProvider):
                             output_tokens=chunk.get("eval_count") or 0,
                         )
 
+        content = "".join(content_parts)
+        reasoning = "".join(thinking_parts).strip()
+        if not content and reasoning:
+            content, reasoning = reasoning, ""
+
         return LLMResponse(
-            content="".join(content_parts),
+            content=content,
             tool_calls=tool_calls,
             stop_reason=done_reason,
             usage=usage,
+            reasoning=reasoning,
         )
 
     @staticmethod

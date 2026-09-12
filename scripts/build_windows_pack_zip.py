@@ -28,7 +28,7 @@ README = f"""# 请先读：Windows 安装包怎么打
 这不是已经编好的 `.exe`。macOS 打不出 Windows 安装程序。
 把本 zip 拷到 **Windows 10/11 x64**，解压后按下面做。
 
-版本：**{VERSION}**（含手机 App / 微信小程序技能、内置浏览器、语音麦克风）
+版本：**{VERSION}**（含思考过程展开、AutoCAD DWG 融合技能、内置浏览器 showcase、语音）
 
 ## 解压后目录
 

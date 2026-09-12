@@ -172,3 +172,33 @@ async def test_agent_emits_events():
     assert "iteration" in events
     assert "text" in events
     assert "done" in events
+
+
+async def test_agent_emits_thinking_and_strips_tags():
+    events = []
+
+    def on_event(ev):
+        events.append(ev)
+
+    provider = FakeProvider(
+        [LLMResponse(content="<think>逐步分析</think>\n最终结论。")]
+    )
+    agent = Agent(provider=provider, on_event=on_event)
+    assert await agent.run("task") == "最终结论。"
+    think = next(e.data for e in events if e.type == "thinking")
+    text = next(e.data for e in events if e.type == "text")
+    assert think == "逐步分析"
+    assert text == "最终结论。"
+
+
+async def test_agent_emits_provider_reasoning_field():
+    events = []
+    provider = FakeProvider(
+        [LLMResponse(content="答案", reasoning="推理链")]
+    )
+    agent = Agent(
+        provider=provider,
+        on_event=lambda e: events.append(e),
+    )
+    assert await agent.run("task") == "答案"
+    assert any(e.type == "thinking" and e.data == "推理链" for e in events)

@@ -45,8 +45,8 @@ file:// — only http://127.0.0.1 or http://localhost.
 """
 
 EventType = Literal[
-    "text", "tool_call", "tool_result", "iteration", "approval", "done",
-    "error", "skill_evolved", "skills_activated",
+    "text", "thinking", "tool_call", "tool_result", "iteration", "approval",
+    "done", "error", "skill_evolved", "skills_activated",
 ]
 EventHandler = Callable[["AgentEvent"], None | Awaitable[None]]
 
@@ -237,6 +237,25 @@ class Agent:
         if self._budget_exceeded():
             self._raise_budget()
 
+    @staticmethod
+    def _split_response(response: LLMResponse) -> tuple[str, str]:
+        """Split CoT from the visible answer for UI streaming."""
+        from codeagent.core.thinking import split_thinking
+
+        return split_thinking(
+            response.content or "",
+            getattr(response, "reasoning", "") or "",
+        )
+
+    async def _emit_response_parts(self, response: LLMResponse) -> tuple[str, str]:
+        """Push thinking + text events; return ``(visible, thinking)``."""
+        visible, thinking = self._split_response(response)
+        if thinking:
+            await self._emit("thinking", thinking)
+        if visible:
+            await self._emit("text", visible)
+        return visible, thinking
+
     async def _wrap_up_for_budget(self, fallback: str) -> str:
         """Ask for a final answer with no tools when the cap is hit mid-work."""
         hint = (
@@ -250,9 +269,10 @@ class Agent:
                 system=self._system_prompt(),
             )
             self.own_usage = self.own_usage + response.usage
-            if response.content:
-                await self._emit("text", response.content)
-                return response.content
+            visible, thinking = await self._emit_response_parts(response)
+            answer = visible or response.content or thinking
+            if answer:
+                return answer
         except Exception:
             log.exception("budget wrap-up failed")
         return fallback or (
@@ -273,9 +293,10 @@ class Agent:
                 system=self._system_prompt(),
             )
             self.own_usage = self.own_usage + response.usage
-            if response.content:
-                await self._emit("text", response.content)
-                return response.content
+            visible, thinking = await self._emit_response_parts(response)
+            answer = visible or response.content or thinking
+            if answer:
+                return answer
         except Exception:
             log.exception("iteration wrap-up failed")
         # Prefer the last assistant text already shown, if any.
@@ -373,11 +394,15 @@ class Agent:
                 len(response.tool_calls),
             )
 
-            if response.content:
-                await self._emit("text", response.content)
+            visible, thinking = self._split_response(response)
+            if thinking:
+                await self._emit("thinking", thinking)
+            if visible:
+                await self._emit("text", visible)
 
             if not response.wants_tool_use:
-                if self._maybe_nudge_website_showcase(task, response.content or ""):
+                answer = visible or response.content or thinking
+                if self._maybe_nudge_website_showcase(task, answer or ""):
                     continue
                 await self._emit("done", response)
                 log.info(
@@ -385,8 +410,8 @@ class Agent:
                     iteration,
                     self.usage.input_tokens, self.usage.output_tokens,
                 )
-                await self._maybe_evolve_skill(task, response.content)
-                return response.content
+                await self._maybe_evolve_skill(task, answer)
+                return answer
 
             if self._budget_exceeded():
                 if self.budget is not None and self.budget.soft:

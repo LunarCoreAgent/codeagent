@@ -87,6 +87,47 @@ class WebviewHost:
             job()
             self._gui_ready = True
 
+    def load_html(self, html: str, queued: bool = True) -> None:
+        """Show inline HTML (used for unreachable-preview error pages)."""
+
+        def job() -> None:
+            import webview
+
+            if self.win is None:
+                self.loaded.clear()
+                self.win = webview.create_window(
+                    self.title, html=html, width=1100, height=800,
+                )
+                try:
+                    self.win.events.loaded += lambda: self.loaded.set()
+                    self.win.events.closed += self._on_closed
+                except Exception:  # noqa: BLE001
+                    pass
+                self.loaded.set()
+                return
+            self.loaded.clear()
+            try:
+                self.win.load_html(html)
+            except Exception:  # noqa: BLE001 — some backends only have load_url
+                import tempfile
+                from pathlib import Path
+
+                path = Path(tempfile.gettempdir()) / "codeagent-preview-error.html"
+                path.write_text(html, encoding="utf-8")
+                # file:// is blocked in agent navigate; GUI host may still load it
+                self.win.load_url(path.as_uri())
+            try:
+                self.win.show()
+            except Exception:  # noqa: BLE001
+                pass
+            self.loaded.set()
+
+        if queued:
+            self.call(job)
+        else:
+            job()
+            self._gui_ready = True
+
     def eval_js(self, script: str, timeout: float = 30) -> Any:
         def job() -> Any:
             if self.win is None:

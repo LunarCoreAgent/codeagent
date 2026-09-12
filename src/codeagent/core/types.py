@@ -84,6 +84,9 @@ class LLMResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     stop_reason: str = "stop"
     usage: Usage = field(default_factory=Usage)
+    # Separate chain-of-thought when the provider exposes it (OpenAI-compat
+    # reasoning_content, Ollama message.thinking, …). Empty for most models.
+    reasoning: str = ""
 
     @property
     def wants_tool_use(self) -> bool:

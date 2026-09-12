@@ -277,6 +277,15 @@ RELEASES: tuple[Release, ...] = (
     Release("0.65.0", "2026-09-12", (
         "融合安装 jianying-editor / hyperframes / next-ai-draw-io，并提供 drawio MCP 预设",
     )),
+    Release("0.66.0", "2026-09-12", (
+        "修复内置浏览器打开已退出的本地预览端口只显示白屏：先探测可达地址并显示说明页",
+    )),
+    Release("0.67.0", "2026-09-12", (
+        "对话可展开查看思考过程；bash 工具调用默认不再刷屏显示",
+    )),
+    Release("0.68.0", "2026-09-12", (
+        "融合安装 AutoCAD DWG / 图片转 DWG 技能（pengxiaoan/autocad-dwg-redraw-skill）",
+    )),
 )
 
 

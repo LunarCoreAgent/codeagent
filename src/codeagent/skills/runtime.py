@@ -32,6 +32,8 @@ Material 3 Expressive 草图用 browser 打开 m3e-canvas 站点，不要把画�
 情感陪伴 / AI 伴侣 / 人设与长期记忆：按 y-ai-accompany、ai-companion；语音叠 voice-surface。
 剪映专业版自动化剪辑 → jianying-editor；HTML 确定性成片 → hyperframes；\
 自然语言 draw.io / 架构图 → next-ai-draw-io（MCP `@next-ai-drawio/mcp-server`）。
+AutoCAD / 源 DWG 精确重绘 → autocad-dwg-redraw；图纸照片/扫描件转 DWG → autocad-image-redraw\
+（均需 Windows + AutoCAD + pywin32；勿仅凭像素声称尺寸精确）。
 """
 
 # Everyday phrasing → skill-search tokens (CJK has no spaces).
@@ -50,6 +52,12 @@ _QUERY_EXPAND: tuple[tuple[re.Pattern[str], str], ...] = (
         r"next-ai-draw-io|自然语言画图|示意图",
         re.I,
     ), " draw.io 架构图 流程图 next-ai-draw-io"),
+    (re.compile(
+        r"AutoCAD|DWG|DXF|CAD\s*图纸|图纸重绘|精确复刻|"
+        r"autocad-dwg-redraw|autocad-image-redraw|"
+        r"扫描件转\s*DWG|截图转\s*DWG|照片转\s*DWG|光栅.*DWG",
+        re.I,
+    ), " AutoCAD DWG DXF 重绘 autocad-dwg-redraw autocad-image-redraw"),
     (re.compile(r"文生图|图生图|出一张图|出图|节点图|8188", re.I),
      " Comfy 工作流 文生图"),
     (re.compile(r"通宵|挂机|调研|文献|值守"), " 研究 通宵"),
@@ -115,6 +123,8 @@ _EXT_HINTS: dict[str, str] = {
     ".mp4": "视频 剪辑 发布",
     ".mov": "视频 剪辑",
     ".srt": "视频 字幕 剪辑",
+    ".dwg": "AutoCAD DWG 重绘 CAD",
+    ".dxf": "AutoCAD DXF CAD 重绘",
 }
 
 _DIR_HINTS: dict[str, str] = {

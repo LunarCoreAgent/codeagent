@@ -164,6 +164,42 @@ class InternalBrowser:
             target = normalize_url(url)
         except ValueError as exc:
             return str(exc)
+
+        from codeagent.browser.showcase import (
+            discover_local_preview,
+            preview_unavailable_html,
+            probe_http,
+        )
+
+        # Dead localhost → white WKWebView. Probe first; fall back to a live port.
+        from urllib.parse import urlparse
+
+        host = (urlparse(target).hostname or "").lower()
+        if host in ("127.0.0.1", "localhost", "0.0.0.0") and not probe_http(target):
+            alt = discover_local_preview()
+            if alt and alt.rstrip("/") != target.rstrip("/"):
+                target = alt
+            elif self.has_gui:
+                try:
+                    self.host.load_html(preview_unavailable_html(target), queued=True)
+                    self.url = target
+                    self.title = "预览未就绪"
+                    self.text = f"无法连接 {target}"
+                    self.nodes = []
+                    self.backend = "webview"
+                    try:
+                        self.host.notify(**self.ui_state(), error=f"无法连接 {target}")
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return (
+                        f"预览地址不可达：{target}（已显示说明页，避免白屏）。"
+                        "请先启动 npm run dev / vite preview，或改用当前仍在监听的端口。"
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    return f"预览地址不可达：{target}（{exc}）"
+            else:
+                return f"预览地址不可达：{target}。请先启动本地开发服务器。"
+
         if self.has_gui:
             try:
                 self.host.ensure_window(target, queued=True)
@@ -186,6 +222,11 @@ class InternalBrowser:
         except urllib.error.URLError as exc:
             reason = getattr(exc, "reason", exc)
             extra = f"（{live_err}）" if live_err else ""
+            if self.has_gui:
+                try:
+                    self.host.load_html(preview_unavailable_html(target), queued=True)
+                except Exception:  # noqa: BLE001
+                    pass
             return f"打开失败：{reason}{extra}"
         except OSError as exc:
             return f"打开失败：{exc}"

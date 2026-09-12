@@ -124,9 +124,13 @@ class OpenAIProvider(LLMProvider):
             for tc in msg.tool_calls or []
         ]
 
-        # Thinking models (GLM, qwen3 via relays…) may put the answer in
-        # reasoning_content when the token budget was eaten by reasoning.
-        content = msg.content or getattr(msg, "reasoning_content", None) or ""
+        # Thinking models may expose CoT separately. Keep it on ``reasoning``
+        # for the UI; only fall back into ``content`` when the answer field
+        # is empty (otherwise the agent loop would see a blank reply).
+        content = msg.content or ""
+        reasoning = (getattr(msg, "reasoning_content", None) or "").strip()
+        if not content and reasoning:
+            content, reasoning = reasoning, ""
         finish = choice.finish_reason or "stop"
         if not content and not tool_calls:
             if finish == "length":
@@ -151,6 +155,7 @@ class OpenAIProvider(LLMProvider):
             tool_calls=tool_calls,
             stop_reason=finish,
             usage=usage,
+            reasoning=reasoning,
         )
 
     async def _create_with_retry(self, request: dict[str, Any]) -> Any:
