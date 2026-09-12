@@ -117,6 +117,10 @@ def test_fusion_pack_and_chinese_routing():
     assert "next-ai-draw-io" in FUSION_SKILLS
     assert "autocad-dwg-redraw" in FUSION_SKILLS
     assert "autocad-image-redraw" in FUSION_SKILLS
+    assert "dbx" in FUSION_SKILLS
+    assert "limbas" in FUSION_SKILLS
+    assert "openviking" in FUSION_SKILLS
+    assert "tencentdb-agent-memory" in FUSION_SKILLS
     lib = fusion_library()
     anime = lib.search("用 anime.js 做入场交错")
     assert anime[0].name == "anime-js"
@@ -152,13 +156,24 @@ def test_install_fusion_skills(tmp_path):
     assert "next-ai-draw-io" in written
     assert "autocad-dwg-redraw" in written
     assert "autocad-image-redraw" in written
+    assert "dbx" in written
+    assert "limbas" in written
+    assert "openviking" in written
+    assert "tencentdb-agent-memory" in written
     assert (tmp_path / "karpathy-craft" / "SKILL.md").is_file()
     assert (tmp_path / "jianying-editor" / "SKILL.md").is_file()
     assert (tmp_path / "hyperframes" / "SKILL.md").is_file()
     assert (tmp_path / "next-ai-draw-io" / "SKILL.md").is_file()
     assert (tmp_path / "autocad-dwg-redraw" / "SKILL.md").is_file()
     assert (tmp_path / "autocad-image-redraw" / "SKILL.md").is_file()
-    assert "fusion-router" in ensure_fusion_skills(tmp_path)
+    assert (tmp_path / "dbx" / "SKILL.md").is_file()
+    assert (tmp_path / "limbas" / "SKILL.md").is_file()
+    assert (tmp_path / "openviking" / "SKILL.md").is_file()
+    assert (tmp_path / "tencentdb-agent-memory" / "SKILL.md").is_file()
+    # 二次 ensure 应跳过重写（防启动卡顿）
+    again = ensure_fusion_skills(tmp_path)
+    assert again == []
+    assert ensure_fusion_skills(tmp_path) == []
 
 
 def test_prompt_block_contains_index_and_bodies():
@@ -235,6 +250,16 @@ def test_expand_and_match_work_content():
     }
     assert "autocad-image-redraw" in {
         s.name for s in match_work_skills(lib, "把扫描件转成可编辑 DWG")
+    }
+    assert "DBX" in expand_work_query("用 DBX 查一下 PostgreSQL")
+    assert "dbx" in {s.name for s in match_work_skills(lib, "用 DBX MCP 执行 SQL 查表")}
+    assert "Limbas" in expand_work_query("用 Limbas 做低代码业务表单")
+    assert "limbas" in {s.name for s in match_work_skills(lib, "部署 Limbas 低代码数据库应用")}
+    assert "OpenViking" in expand_work_query("用 OpenViking 做分层上下文检索")
+    assert "openviking" in {s.name for s in match_work_skills(lib, "配置 OpenViking viking:// 记忆")}
+    assert "TencentDB" in expand_work_query("部署 TencentDB Agent Memory Hub")
+    assert "tencentdb-agent-memory" in {
+        s.name for s in match_work_skills(lib, "用团队 Agent Memory 共享 Chat Memory")
     }
 
 

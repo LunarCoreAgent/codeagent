@@ -54,13 +54,34 @@ VAULT_DIRS = (
 AGENTS_MD = """# CodeCoreAgent 知识库 Schema（LLM Wiki）
 
 本目录是 CodeCoreAgent 的知识库，兼容 **Obsidian** 与 **LLM Wiki** 约定。
-Agent 读写本库时请遵守下列规则。
+安装 / 首次启动时由软件自动部署；Agent 读写本库时请遵守下列规则。
 
-## 三层结构
+灵感对齐（本地落地，不强制外挂服务）：
+- OpenViking 式分层加载（L0/L1/L2）与「按需读全文」
+- TencentDB Agent Memory 式四类可复用资产（对话记忆 / Skill / Wiki / 代码图谱）
+
+## 三层结构（磁盘）
 
 1. `raw/` — 原始资料，只增不改（对话摘录、文档、链接笔记）。
 2. `wiki/` — 由 LLM 维护的维基页（概念、实体、项目、综合）。
 3. 本文件 `AGENTS.md` — 操作约定（Schema）。
+
+## 上下文分层（读写策略）
+
+| 层 | 含义 | 本库对应 |
+|----|------|----------|
+| L0 摘要 | 一句话判断是否相关 | 页首「摘要」或 `wiki/overview.md` / index 一行 |
+| L1 概览 | 结构与要点，够做计划 | 概念/项目页正文前半；`[[wikilinks]]` |
+| L2 详情 | 全文与出处 | 完整 wiki 页 + `raw/` 原文 |
+
+查询时：**先 L0/L1，再按需打开 L2**，避免整库灌进上下文。
+
+## 四类记忆资产（写入时归类）
+
+1. **Chat Memory** — 偏好、决策、事实 → `wiki/entities/` 或对话摘录进 `raw/conversations/`
+2. **Skill** — 可复用步骤/清单 → `wiki/concepts/`（或软件 `~/.codeagent/skills/`）
+3. **LLM-Wiki** — 文档/设计沉淀 → `wiki/projects/` / `wiki/syntheses/`
+4. **Code-Graph** — 模块关系与入口说明 → `wiki/concepts/` + 大量 `[[wikilinks]]`（非强制外挂图库）
 
 ## 写入约定
 
@@ -69,13 +90,19 @@ Agent 读写本库时请遵守下列规则。
 - 项目纪要 → `wiki/projects/<slug>.md`
 - 综合对比 → `wiki/syntheses/<slug>.md`
 - 每次 ingest / 重要更新后：更新 `wiki/index.md`，并在 `wiki/log.md` **追加**一行。
-- 使用 `[[wikilinks]]` 互相引用；YAML frontmatter 可选：`tags`, `updated`, `status`。
+- 使用 `[[wikilinks]]` 互相引用；YAML frontmatter 可选：`tags`, `updated`, `status`, `layer`。
 
 ## 查询约定
 
-1. 先读 `wiki/overview.md` 与 `wiki/index.md`。
-2. 再按关键词打开相关 `concepts/` / `entities/` / `projects/` 页。
+1. 先读 `wiki/overview.md` 与 `wiki/index.md`（L0/L1）。
+2. 再按关键词打开相关 `concepts/` / `entities/` / `projects/` 页（L2）。
 3. 原始出处在 `raw/`；不要修改 `raw/` 已有文件。
+
+## 可选增强（外挂，非默认）
+
+- 向量 / 会话编译 / viking:// 虚拟文件系统 → 见技能 `openviking`
+- 团队级 Memory Hub / Proxy 共享 → 见技能 `tencentdb-agent-memory`
+默认桌面安装**只**依赖本机 Markdown 库，无需 Docker / 云密钥即可用。
 
 ## CodeCoreAgent 领域
 
@@ -93,18 +120,24 @@ INDEX_MD = """# Wiki Index
 |------|------|------|
 | [[overview]] | 总览 | 知识库导航入口 |
 | [[log]] | 日志 | 追加式变更记录 |
+| [[context-layers]] | 概念 | L0/L1/L2 分层加载 |
+| [[memory-assets]] | 概念 | 四类记忆资产 |
+| [[openviking]] | 概念 | OpenViking 可选增强 |
+| [[tencentdb-agent-memory]] | 概念 | 腾讯云 Agent Memory 可选增强 |
 
-> 一键布置后由 Agent / 你持续补充。使用 Obsidian 打开本库可查看图谱与反向链接。
+> 随软件安装自动部署；用 Obsidian 打开本库可查看图谱与反向链接。
 """
 
 OVERVIEW_MD = """# Overview
 
-CodeCoreAgent 知识库已就绪。
+CodeCoreAgent 知识库已随软件自动部署并就绪。
 
 ## 快速入口
 
 - [[index]] — 页面目录
 - [[log]] — 变更日志
+- [[context-layers]] — 分层加载（OpenViking 思路的本地版）
+- [[memory-assets]] — 四类资产（TencentDB Agent Memory 思路的本地版）
 - `raw/inbox/` — 投放待整理的原始材料
 - `wiki/concepts/` — 概念页
 - `wiki/projects/` — 项目纪要
@@ -118,7 +151,116 @@ LOG_MD = """# Wiki Log
 
 | 时间 | 事件 |
 |------|------|
-| {ts} | 一键布置：创建 CodeCoreAgent LLM Wiki 结构 |
+| {ts} | {event} |
+"""
+
+CONTEXT_LAYERS_MD = """---
+tags: [concept, openviking]
+updated: auto
+status: active
+layer: L1
+---
+
+# 上下文分层（L0 / L1 / L2）
+
+对齐 [OpenViking](https://github.com/volcengine/OpenViking) 的分层加载思想，落地为本地 Wiki 读写约定。
+
+## 摘要
+
+先用短摘要判断相关，再读概览，最后才拉全文——省 token、降延迟。
+
+## 怎么用
+
+1. **L0**：看 `wiki/index.md` 一行说明或页首摘要。
+2. **L1**：读概念/项目页的结构与要点、`[[wikilinks]]`。
+3. **L2**：打开完整页或 `raw/` 原文。
+
+Agent 应优先调用 `knowledge_search`，再 `knowledge_read` 打开少量页面，禁止整库粘贴。
+
+## 关联
+
+- [[memory-assets]]
+- [[openviking]]
+"""
+
+MEMORY_ASSETS_MD = """---
+tags: [concept, tencentdb-agent-memory]
+updated: auto
+status: active
+layer: L1
+---
+
+# 四类记忆资产
+
+对齐 [TencentDB Agent Memory](https://github.com/TencentCloud/tencentdb-agent-memory) 的资产划分，映射到本机目录。
+
+## 摘要
+
+对话、文档、代码经验应变成可复用资产，而不是每次从零解释。
+
+| 资产 | 本地落点 |
+|------|----------|
+| Chat Memory | `raw/conversations/` + `wiki/entities/` |
+| Skill | `wiki/concepts/` 或 `~/.codeagent/skills/` |
+| LLM-Wiki | `wiki/projects/` / `wiki/syntheses/` |
+| Code-Graph | 带链接的概念/项目页 |
+
+## 关联
+
+- [[context-layers]]
+- [[tencentdb-agent-memory]]
+"""
+
+OPENVIKING_MD = """---
+tags: [concept, openviking]
+updated: auto
+status: reference
+layer: L1
+---
+
+# OpenViking（可选增强）
+
+来源：https://github.com/volcengine/OpenViking （AGPL-3.0）
+
+## 摘要
+
+自进化的 Agent 上下文库：统一 Memory、Knowledge RAG 与 Skills；`viking://` 虚拟文件系统 + 分层检索。
+
+## CodeCoreAgent 默认策略
+
+- **默认**：本机 Markdown Wiki（本目录），无需 pip / 服务端。
+- **进阶**：征得同意后 `pip install openviking`，按上游 `openviking-server init` / `doctor` 配置嵌入与 VLM；细节见技能 `openviking`。
+- 不要把 AGPL 服务端默认打进桌面安装包。
+
+## 关联
+
+- [[context-layers]]
+"""
+
+TENCENTDB_MEMORY_MD = """---
+tags: [concept, tencentdb-agent-memory]
+updated: auto
+status: reference
+layer: L1
+---
+
+# TencentDB Agent Memory（可选增强）
+
+来源：https://github.com/TencentCloud/tencentdb-agent-memory
+
+## 摘要
+
+团队级 Agent 记忆中枢：Chat Memory / Skill / LLM-Wiki / Code-Graph，经 Memory Hub + Proxy 跨框架共享。
+
+## CodeCoreAgent 默认策略
+
+- **默认**：本机四类资产映射到 `raw/` + `wiki/`（见 [[memory-assets]]）。
+- **进阶**：Docker 一键 `deploy/global-images/start-all.sh`（需 Node/LLM 配置）；细节见技能 `tencentdb-agent-memory`。
+- 桌面安装包不捆绑其多容器栈。
+
+## 关联
+
+- [[memory-assets]]
 """
 
 INBOX_README = """# Inbox
@@ -226,7 +368,7 @@ def is_vault_ready(root: Path) -> bool:
     return (root / "AGENTS.md").is_file() and (root / "wiki").is_dir()
 
 
-def bootstrap_vault(root: Path) -> dict[str, Any]:
+def bootstrap_vault(root: Path, *, event: str = "") -> dict[str, Any]:
     """Create the CodeCoreAgent LLM Wiki / Obsidian layout. Idempotent."""
     root = Path(root).expanduser()
     root.mkdir(parents=True, exist_ok=True)
@@ -237,13 +379,17 @@ def bootstrap_vault(root: Path) -> dict[str, Any]:
             d.mkdir(parents=True, exist_ok=True)
             created.append(rel + "/")
 
+    ts = time.strftime("%Y-%m-%d %H:%M")
+    log_event = (event or "").strip() or "部署：创建 CodeCoreAgent LLM Wiki 结构"
     files: dict[str, str] = {
         "AGENTS.md": AGENTS_MD,
         "wiki/index.md": INDEX_MD,
         "wiki/overview.md": OVERVIEW_MD,
-        "wiki/log.md": LOG_MD.format(
-            ts=time.strftime("%Y-%m-%d %H:%M"),
-        ),
+        "wiki/log.md": LOG_MD.format(ts=ts, event=log_event),
+        "wiki/concepts/context-layers.md": CONTEXT_LAYERS_MD,
+        "wiki/concepts/memory-assets.md": MEMORY_ASSETS_MD,
+        "wiki/concepts/openviking.md": OPENVIKING_MD,
+        "wiki/concepts/tencentdb-agent-memory.md": TENCENTDB_MEMORY_MD,
         "raw/inbox/README.md": INBOX_README,
         ".obsidian/app.json": OBSIDIAN_APP,
         ".obsidian/appearance.json": OBSIDIAN_APPEARANCE,
@@ -264,9 +410,72 @@ def bootstrap_vault(root: Path) -> dict[str, Any]:
     }
 
 
-def vault_status(root: Path) -> dict[str, Any]:
+_vault_seeded: set[str] = set()
+
+
+def ensure_knowledge_vault(
+    cfg: KnowledgeConfig | None = None,
+    *,
+    config_path: Path | None = None,
+) -> dict[str, Any]:
+    """Ensure the configured vault exists (auto-deploy on install / first launch).
+
+    Safe to call repeatedly: already-ready vaults are not re-scanned every time
+    (seed pages filled at most once per process per path).
+    """
+    cfg = cfg or KnowledgeConfig.load(config_path)
+    if not cfg.enabled:
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "disabled",
+            "path": str(cfg.vault_path()),
+            "ready": is_vault_ready(cfg.vault_path()),
+        }
+    root = cfg.vault_path()
+    try:
+        key = str(root)
+    except OSError:
+        key = cfg.path
+    if is_vault_ready(root):
+        if key not in _vault_seeded:
+            result = bootstrap_vault(root, event="升级补种：知识库种子页")
+            _vault_seeded.add(key)
+        else:
+            result = {
+                "ok": True,
+                "path": str(root),
+                "created": [],
+                "ready": True,
+            }
+        if not cfg.bootstrapped:
+            cfg.bootstrapped = True
+            cfg.save(config_path)
+        result["ensured"] = True
+        result["bootstrapped"] = True
+        return result
+    try:
+        result = bootstrap_vault(
+            root, event="随软件自动部署：创建 CodeCoreAgent LLM Wiki 结构"
+        )
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)[:200], "path": str(root)}
+    _vault_seeded.add(key)
+    cfg.bootstrapped = True
+    cfg.enabled = True
+    cfg.save(config_path)
+    result["ensured"] = True
+    result["bootstrapped"] = True
+    return result
+
+
+def vault_status(root: Path, *, count_pages: bool = True) -> dict[str, Any]:
     root = Path(root).expanduser()
-    exists = root.exists()
+    exists = False
+    try:
+        exists = root.exists()
+    except OSError:
+        exists = False
     ready = is_vault_ready(root) if exists else False
     writable = False
     if exists:
@@ -275,8 +484,21 @@ def vault_status(root: Path) -> dict[str, Any]:
         except OSError:
             writable = False
     pages = 0
-    if ready:
-        pages = sum(1 for _ in (root / "wiki").rglob("*.md"))
+    if ready and count_pages:
+        # 网络盘跳过全库 rglob，避免 UI 卡死
+        try:
+            from codeagent.desktop.projects import is_network_storage_path
+
+            skip_scan = is_network_storage_path(root)
+        except Exception:  # noqa: BLE001
+            skip_scan = False
+        if skip_scan:
+            pages = -1
+        else:
+            try:
+                pages = sum(1 for _ in (root / "wiki").rglob("*.md"))
+            except OSError:
+                pages = 0
     return {
         "path": str(root),
         "exists": exists,

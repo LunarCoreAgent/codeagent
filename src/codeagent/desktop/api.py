@@ -17,6 +17,7 @@ import os
 import re
 import threading
 import time
+import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -73,13 +74,17 @@ from codeagent.desktop.projects import (
     CATEGORIES,
     DEFAULT_BASE,
     ProjectStore,
+    append_event,
     append_message,
     ingest_file,
+    is_network_storage_path,
     list_conversations,
+    list_disk_roots,
     list_files,
     load_conversation,
     new_conversation_id,
 )
+from codeagent.desktop.project_pack import export_project_zip, import_project_zip
 from codeagent.desktop.router import (
     FREE_ROUTE_LABEL,
     FREE_ROUTE_REF,
@@ -129,7 +134,8 @@ _SEED_MAX_CHARS = 1200
 def _format_conv_seed(msgs: list[dict[str, Any]]) -> str:
     """Prior turns as compact context — long file dumps must not refill the prompt."""
     parts: list[str] = []
-    for m in msgs[-_SEED_MAX_MSGS:]:
+    chat = [m for m in msgs if m.get("role") in ("user", "assistant")]
+    for m in chat[-_SEED_MAX_MSGS:]:
         role = "用户" if m.get("role") == "user" else "助手"
         body = (m.get("text") or "").strip()
         if len(body) > _SEED_MAX_CHARS:
@@ -435,18 +441,30 @@ class DesktopAPI:
         threading.Thread(target=_fallback, daemon=True, name="cca-js-push").start()
 
     def _on_event_chan(self, chan: str, event: AgentEvent) -> None:
+        proj = self.projects.get(self.projects.active)
+        conv_id = self._conv_id if chan != "B" else self._conv_id2
         if event.type == "text":
             self._push("text", chan=chan, text=str(event.data))
         elif event.type == "thinking":
             text = str(event.data or "").strip()
             if text:
                 self._push("thinking", chan=chan, text=text)
+                if proj is not None and conv_id:
+                    try:
+                        append_event(proj, conv_id, "thinking", text=text)
+                    except OSError:
+                        log.exception("persist thinking")
         elif event.type == "tool_call":
             call = event.data
             name = getattr(call, "name", None) or ""
-            # Phase-1: bash 命令过程默认不刷屏；其它工具仍显示芯片
-            if name != "bash":
+            # 全部工具调用进对话「思考过程」折叠块；browser navigate 另推 showcase
+            if name:
                 self._push("tool", chan=chan, name=name)
+                if proj is not None and conv_id:
+                    try:
+                        append_event(proj, conv_id, "tool", name=name)
+                    except OSError:
+                        log.exception("persist tool")
             if name == "browser":
                 args = getattr(call, "arguments", None) or {}
                 action = str(args.get("action") or "").lower()
@@ -536,6 +554,15 @@ class DesktopAPI:
             ensure_fusion_skills(DEFAULT_SKILLS_DIR)
         except OSError:
             pass
+        # 知识库只在进程内首次确保，避免每次进设置都扫盘
+        if not getattr(self, "_knowledge_ensured", False):
+            try:
+                from codeagent.knowledge import ensure_knowledge_vault
+
+                ensure_knowledge_vault()
+                self._knowledge_ensured = True
+            except OSError:
+                pass
         return {
             "version": rel.version,
             "date": rel.date,
@@ -1891,7 +1918,51 @@ class DesktopAPI:
             "active": self.projects.active,
             "active_path": proj.path if proj else "",
             "default_base": str(DEFAULT_BASE.expanduser()),
+            "disk_roots": list_disk_roots(),
             "categories": list(CATEGORIES),
+        }
+
+    def pick_project_base(self) -> dict[str, Any]:
+        """系统文件夹选择器：选项目存放的父目录（可到任意硬盘）。"""
+        if self._window is None:
+            return {"ok": False, "error": "窗口未就绪"}
+        import webview
+
+        paths = self._window.create_file_dialog(
+            webview.FOLDER_DIALOG,
+            directory=str(DEFAULT_BASE.expanduser()),
+            allow_multiple=False,
+        )
+        if not paths:
+            return {"ok": False, "cancelled": True}
+        path = paths[0] if isinstance(paths, (tuple, list)) else paths
+        return {"ok": True, "path": str(path)}
+
+    def pick_knowledge_path(self) -> dict[str, Any]:
+        """系统文件夹选择器：选知识库存放目录（可到任意硬盘）。"""
+        if self._window is None:
+            return {"ok": False, "error": "窗口未就绪"}
+        import webview
+
+        from codeagent.desktop.projects import list_disk_roots
+        from codeagent.knowledge import KnowledgeConfig
+
+        cfg = KnowledgeConfig.load()
+        start = cfg.vault_path()
+        if not start.is_dir():
+            start = start.parent if start.parent.is_dir() else Path.home()
+        paths = self._window.create_file_dialog(
+            webview.FOLDER_DIALOG,
+            directory=str(start),
+            allow_multiple=False,
+        )
+        if not paths:
+            return {"ok": False, "cancelled": True}
+        path = paths[0] if isinstance(paths, (tuple, list)) else paths
+        return {
+            "ok": True,
+            "path": str(path),
+            "disk_roots": list_disk_roots(),
         }
 
     def create_project(self, name: str, base: str = "",
@@ -1936,6 +2007,71 @@ class DesktopAPI:
         except (subprocess.SubprocessError, OSError) as exc:
             return {"ok": False, "error": str(exc)}
 
+    def export_project(self, pid: str = "") -> dict[str, Any]:
+        """导出单个项目为 zip（对话/思考/工具/工程文件/说明文档）。"""
+        from codeagent import __version__
+
+        pid = (pid or self.projects.active or "").strip()
+        proj = self.projects.get(pid)
+        if proj is None:
+            return {"ok": False, "error": "没有可导出的项目"}
+        if self._window is None:
+            return {"ok": False, "error": "窗口未就绪"}
+        import webview
+
+        safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in proj.name).strip("-") or "project"
+        path = self._window.create_file_dialog(
+            webview.SAVE_DIALOG,
+            save_filename=f"CodeCoreAgent-{safe}.zip",
+            file_types=("CodeCoreAgent 项目包 (*.zip)", "All files (*.*)"),
+        )
+        if not path:
+            return {"ok": False, "cancelled": True}
+        if isinstance(path, (tuple, list)):
+            path = path[0]
+        try:
+            out = export_project_zip(proj, Path(path), app_version=__version__)
+            log_activity("project", f"导出项目：{proj.name} → {out}")
+            return {"ok": True, "path": str(out), "project": asdict(proj)}
+        except (OSError, ValueError, zipfile.BadZipFile) as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def import_project(self, base: str = "") -> dict[str, Any]:
+        """从 zip 导入项目包，注册为新项目并激活。
+
+        未传入 base 时，在选完 zip 后弹出文件夹选择器，可指定目标硬盘/目录。
+        """
+        if self._window is None:
+            return {"ok": False, "error": "窗口未就绪"}
+        import webview
+
+        paths = self._window.create_file_dialog(
+            webview.OPEN_DIALOG,
+            allow_multiple=False,
+            file_types=("CodeCoreAgent 项目包 (*.zip)", "All files (*.*)"),
+        )
+        if not paths:
+            return {"ok": False, "cancelled": True}
+        path = paths[0] if isinstance(paths, (tuple, list)) else paths
+        dest = (base or "").strip()
+        if not dest:
+            folders = self._window.create_file_dialog(
+                webview.FOLDER_DIALOG,
+                directory=str(DEFAULT_BASE.expanduser()),
+                allow_multiple=False,
+            )
+            if folders:
+                dest = folders[0] if isinstance(folders, (tuple, list)) else folders
+                dest = str(dest)
+            # 取消文件夹选择 → 仍用默认目录导入
+        try:
+            proj = import_project_zip(self.projects, Path(path), base=dest or "")
+        except (OSError, ValueError, zipfile.BadZipFile, KeyError) as exc:
+            return {"ok": False, "error": str(exc)}
+        self._activate_project(proj.id)
+        log_activity("project", f"导入项目：{proj.name}（{proj.path}）")
+        return {"ok": True, "project": asdict(proj)}
+
     def switch_project(self, pid: str) -> dict[str, Any]:
         proj = self.projects.get(pid)
         if proj is None:
@@ -1971,6 +2107,7 @@ class DesktopAPI:
         self._agent2 = None
         self._conv_id2 = None
         self._conv_seed2 = []
+        self._ws_hints_cache = None
 
     def get_conversations(self) -> dict[str, Any]:
         proj = self.projects.get(self.projects.active)
@@ -1990,7 +2127,8 @@ class DesktopAPI:
             return {"ok": False, "messages": []}
         msgs = load_conversation(proj, conv_id)
         self._conv_id = conv_id
-        self._conv_seed = msgs[-10:]  # 继续对话时作为上下文带入
+        chat = [m for m in msgs if m.get("role") in ("user", "assistant")]
+        self._conv_seed = chat[-10:]  # 继续对话时作为上下文带入
         return {"ok": True, "messages": msgs}
 
     def get_second_state(self) -> dict[str, Any]:
@@ -2087,7 +2225,8 @@ class DesktopAPI:
             return {"ok": False, "messages": []}
         msgs = load_conversation(proj, conv_id)
         self._conv_id2 = conv_id
-        self._conv_seed2 = msgs[-10:]  # 继续对话时作为上下文带入
+        chat = [m for m in msgs if m.get("role") in ("user", "assistant")]
+        self._conv_seed2 = chat[-10:]  # 继续对话时作为上下文带入
         return {"ok": True, "messages": msgs}
 
     def send2(
@@ -2419,13 +2558,25 @@ class DesktopAPI:
         if proj is not None:
             extra.append(f"项目 {proj.name} 分类 {proj.category}")
             root = Path(proj.path).expanduser()
+        cache_key = str(root) if root else ""
+        cached = getattr(self, "_ws_hints_cache", None)
+        if (
+            isinstance(cached, tuple)
+            and cached[0] == cache_key
+            and cached[1] == self.projects.active
+        ):
+            base = cached[2]
+        else:
+            base = workspace_skill_hints(root, extra="")
+            self._ws_hints_cache = (cache_key, self.projects.active, base)
         try:
             vo = VideoOpsConfig.load()
             if vo.workspace().is_dir():
                 extra.append("视频运营工作区已布置 短视频")
         except OSError:
             pass
-        return workspace_skill_hints(root, extra=" ".join(extra))
+        bits = [base] + extra
+        return " ".join(x for x in bits if x)
 
     # ------------------------------------------------------------------
     # internal browser (GUI pump + live window)
@@ -2889,15 +3040,30 @@ class DesktopAPI:
     # knowledge base (Obsidian / LLM Wiki vault)
     # ------------------------------------------------------------------
 
-    def get_knowledge(self) -> dict[str, Any]:
+    def get_knowledge(
+        self,
+        include_pages: bool = True,
+        include_disk_roots: bool = True,
+    ) -> dict[str, Any]:
         from dataclasses import asdict
 
-        from codeagent.knowledge import KnowledgeConfig, list_pages, vault_status
+        from codeagent.desktop.projects import list_disk_roots
+        from codeagent.knowledge import (
+            DEFAULT_LOCAL_PATH,
+            KnowledgeConfig,
+            ensure_knowledge_vault,
+            list_pages,
+            vault_status,
+        )
 
+        ensure_knowledge_vault()
+        self._knowledge_ensured = True
         cfg = KnowledgeConfig.load()
-        st = vault_status(cfg.vault_path())
+        root = cfg.vault_path()
+        # 设置页只需路径；全库扫页会卡（尤其局域网盘）
+        st = vault_status(root, count_pages=bool(include_pages))
         pages = []
-        if st["ready"]:
+        if include_pages and st.get("ready"):
             pages = [
                 {
                     "rel": p.rel,
@@ -2906,9 +3072,16 @@ class DesktopAPI:
                     "mtime": p.mtime,
                     "size": p.size,
                 }
-                for p in list_pages(cfg.vault_path(), limit=40)
+                for p in list_pages(root, limit=40)
             ]
-        return {"config": asdict(cfg), "status": st, "pages": pages}
+        return {
+            "config": asdict(cfg),
+            "status": st,
+            "pages": pages,
+            "disk_roots": list_disk_roots() if include_disk_roots else [],
+            "default_path": str(DEFAULT_LOCAL_PATH.expanduser()),
+            "network": is_network_storage_path(cfg.vault_path()),
+        }
 
     def save_knowledge_config(
         self,
@@ -2919,23 +3092,50 @@ class DesktopAPI:
     ) -> dict[str, Any]:
         from dataclasses import asdict
 
-        from codeagent.knowledge import KnowledgeConfig, vault_status
+        from codeagent.knowledge import (
+            KnowledgeConfig,
+            ensure_knowledge_vault,
+            vault_status,
+        )
 
         cfg = KnowledgeConfig.load()
         cfg.path = (path or "").strip() or cfg.path
         cfg.mode = mode if mode in ("local", "shared") else cfg.mode
         cfg.backend = backend if backend in ("obsidian", "llmwiki") else cfg.backend
         cfg.enabled = bool(enabled)
+        # 局域网 / UNC / 已挂载 NAS → 自动标为共享模式
+        if is_network_storage_path(cfg.vault_path()):
+            cfg.mode = "shared"
         cfg.save()
+        if cfg.enabled:
+            ensured = ensure_knowledge_vault(cfg)
+            if not ensured.get("ok", True):
+                return {
+                    "ok": False,
+                    "error": (
+                        ensured.get("error")
+                        or "无法写入该路径（请先挂载局域网硬盘并确认可写）"
+                    )[:240],
+                    "config": asdict(cfg),
+                    "status": vault_status(cfg.vault_path()),
+                    "network": is_network_storage_path(cfg.vault_path()),
+                }
         self._agent = None
+        st = vault_status(cfg.vault_path())
         return {
             "ok": True,
             "config": asdict(cfg),
-            "status": vault_status(cfg.vault_path()),
+            "status": st,
+            "network": is_network_storage_path(cfg.vault_path()),
+            "message": (
+                "已部署到局域网/网络路径；请保持该盘已挂载，其它电脑填同一路径即可共享。"
+                if is_network_storage_path(cfg.vault_path())
+                else ""
+            ),
         }
 
     def bootstrap_knowledge(self) -> dict[str, Any]:
-        """One-click create Obsidian / LLM Wiki structure at configured path."""
+        """Create or repair Obsidian / LLM Wiki structure at configured path."""
         from dataclasses import asdict
 
         from codeagent.knowledge import KnowledgeConfig, bootstrap_vault, vault_status
@@ -2943,7 +3143,9 @@ class DesktopAPI:
         cfg = KnowledgeConfig.load()
         root = cfg.vault_path()
         try:
-            result = bootstrap_vault(root)
+            result = bootstrap_vault(
+                root, event="手动布置：创建 / 修复 CodeCoreAgent LLM Wiki 结构"
+            )
         except OSError as exc:
             return {"ok": False, "error": str(exc)[:200]}
         cfg.bootstrapped = True
@@ -2983,7 +3185,7 @@ class DesktopAPI:
         cfg = KnowledgeConfig.load()
         root = cfg.vault_path()
         if not is_vault_ready(root):
-            return {"ok": False, "error": "请先一键布置知识库"}
+            return {"ok": False, "error": "知识库未就绪（请检查路径可写，或点「修复布置」）"}
         title = (title or "").strip()
         content = (content or "").strip()
         if not title or not content:

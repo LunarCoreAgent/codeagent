@@ -34,6 +34,10 @@ Material 3 Expressive 草图用 browser 打开 m3e-canvas 站点，不要把画�
 自然语言 draw.io / 架构图 → next-ai-draw-io（MCP `@next-ai-drawio/mcp-server`）。
 AutoCAD / 源 DWG 精确重绘 → autocad-dwg-redraw；图纸照片/扫描件转 DWG → autocad-image-redraw\
 （均需 Windows + AutoCAD + pywin32；勿仅凭像素声称尺寸精确）。
+连库查表 / SQL / Redis·Mongo → dbx（MCP `@dbx-app/mcp-server`，先装本机 DBX 配连接）；\
+低代码业务库 / Limbas 表单应用 → limbas（Docker/Web 安装器，独立部署）。
+知识库随软件自动部署（本机 LLM Wiki）；分层检索思路 → openviking；\
+团队四类记忆资产 → tencentdb-agent-memory（默认同本地 Wiki，外挂 Docker 可选）。
 """
 
 # Everyday phrasing → skill-search tokens (CJK has no spaces).
@@ -58,6 +62,27 @@ _QUERY_EXPAND: tuple[tuple[re.Pattern[str], str], ...] = (
         r"扫描件转\s*DWG|截图转\s*DWG|照片转\s*DWG|光栅.*DWG",
         re.I,
     ), " AutoCAD DWG DXF 重绘 autocad-dwg-redraw autocad-image-redraw"),
+    (re.compile(
+        r"\bDBX\b|\bdbx\b|数据库客户端|连库|查库|写\s*SQL|执行\s*SQL|"
+        r"MySQL|PostgreSQL|Postgres|SQLite|Redis|MongoDB|达梦|"
+        r"@dbx-app/mcp-server|数据库管理工具",
+        re.I,
+    ), " DBX 数据库 SQL 查库 dbx"),
+    (re.compile(
+        r"Limbas|\blimbas\b|低代码数据库|数据库框架|业务表单应用|openlimbas|"
+        r"PHP\s*低代码",
+        re.I,
+    ), " Limbas 低代码 数据库框架 limbas"),
+    (re.compile(
+        r"OpenViking|openviking|viking://|上下文数据库|分层检索|L0\s*/\s*L1|"
+        r"会话编译|上下文编译",
+        re.I,
+    ), " OpenViking 上下文 分层 openviking"),
+    (re.compile(
+        r"TencentDB|Agent\s*Memory|Memory\s*Hub|tencentdb-agent-memory|"
+        r"团队记忆|Chat\s*Memory|Code-Graph|代码图谱",
+        re.I,
+    ), " TencentDB Agent Memory 团队记忆 tencentdb-agent-memory"),
     (re.compile(r"文生图|图生图|出一张图|出图|节点图|8188", re.I),
      " Comfy 工作流 文生图"),
     (re.compile(r"通宵|挂机|调研|文献|值守"), " 研究 通宵"),
@@ -177,17 +202,37 @@ def workspace_skill_hints(root: str | Path | None = None, extra: str = "") -> st
     exts: Counter[str] = Counter()
     dir_hits: set[str] = set()
     try:
-        for item in path.rglob("*"):
-            if any(part in _SKIP_DIR for part in item.parts):
+        import os
+
+        max_files = 400
+        seen_files = 0
+        for dirpath, dirnames, filenames in os.walk(path):
+            # prune heavy / irrelevant trees
+            dirnames[:] = [
+                d for d in dirnames
+                if d not in _SKIP_DIR and not d.startswith(".")
+            ]
+            try:
+                rel = Path(dirpath).relative_to(path)
+                depth = len(rel.parts)
+            except ValueError:
+                depth = 0
+            if depth > 3:
+                dirnames.clear()
                 continue
-            if item.is_dir():
-                if item.name in _DIR_HINTS:
-                    dir_hits.add(item.name)
-                continue
-            if item.is_file():
-                suf = item.suffix.lower()
+            for name in list(dirnames):
+                if name in _DIR_HINTS:
+                    dir_hits.add(name)
+            for fn in filenames:
+                seen_files += 1
+                if seen_files > max_files:
+                    dirnames.clear()
+                    break
+                suf = Path(fn).suffix.lower()
                 if suf:
                     exts[suf] += 1
+            if seen_files > max_files:
+                break
     except OSError:
         return " ".join(parts)
     for suf, _count in exts.most_common(16):

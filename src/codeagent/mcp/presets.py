@@ -69,3 +69,32 @@ def drawio_mcp() -> MCPServerConfig:
         command="npx",
         args=["-y", "@next-ai-drawio/mcp-server@latest"],
     )
+
+
+def dbx_mcp(
+    web_url: str | None = None,
+    web_password: str | None = None,
+    data_dir: str | None = None,
+) -> MCPServerConfig:
+    """DBX MCP: query databases via connections configured in DBX.
+
+    Requires Node.js (or a prebuilt binary from DBX releases). The desktop /
+    Docker DBX app must be installed and connections allowlisted under
+    Settings → MCP. Pair with the ``dbx`` fusion skill.
+
+    Optional env: ``DBX_WEB_URL`` / ``DBX_WEB_PASSWORD`` for Web/Docker,
+    ``DBX_DATA_DIR`` for Windows portable builds.
+    """
+    env: dict[str, str] = {}
+    if web_url:
+        env["DBX_WEB_URL"] = web_url
+    if web_password:
+        env["DBX_WEB_PASSWORD"] = web_password
+    if data_dir:
+        env["DBX_DATA_DIR"] = data_dir
+    return MCPServerConfig(
+        name="dbx",
+        command="npx",
+        args=["-y", "@dbx-app/mcp-server"],
+        env=env or None,
+    )

@@ -8,6 +8,7 @@ from codeagent.desktop.ui import HTML
 from codeagent.knowledge import (
     KnowledgeConfig,
     bootstrap_vault,
+    ensure_knowledge_vault,
     ingest_text,
     is_vault_ready,
     list_pages,
@@ -66,20 +67,50 @@ def test_knowledge_tools_require_ready_vault(tmp_path, monkeypatch):
     cfg_path = tmp_path / "knowledge.json"
     monkeypatch.setattr("codeagent.knowledge.CONFIG_PATH", cfg_path)
     monkeypatch.setattr("codeagent.knowledge.tools.KnowledgeConfig", KnowledgeConfig)
+    monkeypatch.setattr("codeagent.knowledge.tools.ensure_knowledge_vault", ensure_knowledge_vault)
     cfg = KnowledgeConfig(path=str(tmp_path / "empty"), enabled=True)
     cfg.save(cfg_path)
-    assert knowledge_tools(cfg) == []
-    bootstrap_vault(tmp_path / "empty")
+    # Auto-deploy on first tools() call
     tools = knowledge_tools(cfg)
     assert {t.name for t in tools} >= {
         "knowledge_search", "knowledge_read", "knowledge_ingest",
     }
+    assert is_vault_ready(tmp_path / "empty")
+
+
+def test_ensure_knowledge_vault_auto_deploys(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "knowledge.json"
+    monkeypatch.setattr("codeagent.knowledge.CONFIG_PATH", cfg_path)
+    root = tmp_path / "auto-wiki"
+    cfg = KnowledgeConfig(path=str(root), enabled=True)
+    cfg.save(cfg_path)
+    r = ensure_knowledge_vault(cfg, config_path=cfg_path)
+    assert r["ok"] and r.get("ready")
+    assert is_vault_ready(root)
+    assert (root / "wiki" / "concepts" / "openviking.md").is_file()
+    assert (root / "wiki" / "concepts" / "tencentdb-agent-memory.md").is_file()
+    assert "OpenViking" in (root / "AGENTS.md").read_text(encoding="utf-8")
+    loaded = KnowledgeConfig.load(cfg_path)
+    assert loaded.bootstrapped is True
+    # idempotent
+    r2 = ensure_knowledge_vault(cfg, config_path=cfg_path)
+    assert r2["ok"] and r2.get("ready")
+    assert r2.get("created") == []  # 二次调用不重种
 
 
 def test_ui_has_knowledge_page():
     assert 'data-page="knowledge"' in HTML
     assert 'id="page-knowledge"' in HTML
-    assert "一键布置" in HTML
+    assert "修复布置" in HTML
+    assert "自动部署" in HTML or "随安装自动部署" in HTML
     assert "pywebview.api.bootstrap_knowledge" in HTML
     assert "pywebview.api.save_knowledge_config" in HTML
+    assert "局域网硬盘" in HTML
+    assert "pickKnowledgePath" in HTML
+    assert "pick_knowledge_path" in HTML
+    assert 'id="sectKnowledgePath"' in HTML
+    assert 'id="cfg_kb_path"' in HTML
+    assert "saveKnowledgePathFromSettings" in HTML
     assert "loadKnowledge" in HTML
+    assert "get_knowledge(false, true)" in HTML
+    assert "页数未统计" in HTML

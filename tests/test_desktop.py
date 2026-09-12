@@ -1902,7 +1902,11 @@ def test_ui_chat_composer_features():
     assert "think-block" in HTML
     assert "思考过程" in HTML
     assert "ev.kind==='thinking'" in HTML
-    assert "ev.name==='bash'" in HTML  # bash 芯片默认隐藏
+    assert "function addThinkTool" in HTML
+    assert "function ensureThink" in HTML
+    assert "think-tools" in HTML and "think-reason" in HTML
+    assert "addThinkTool(ev.name" in HTML  # 工具调用收进思考折叠块
+    assert "think-wrap" in HTML  # 同一轮只保留一块思考过程
     assert 'id="modelPicker"' in HTML  # 页眉模型选择
     assert "route:free" in HTML
     assert "自由路由" in HTML
@@ -2383,6 +2387,20 @@ def test_ui_has_projects_surface():
     assert "optgroup" not in HTML
     assert "loadProjectRecords" in HTML
     assert "get_project_records" in HTML
+
+
+def test_ui_mentions_project_export_import():
+    assert "exportProject" in HTML and "importProject" in HTML
+    assert "export_project" in HTML and "import_project" in HTML
+    assert "replayConvMessages" in HTML
+    assert "📥 导入项目" in HTML and "📤 导出项目" in HTML
+
+
+def test_ui_project_base_disk_picker():
+    assert "pickProjectBase" in HTML and "pick_project_base" in HTML
+    assert 'id="pj_disks"' in HTML
+    assert "disk_roots" in HTML or "setProjectBase" in HTML
+    assert "选择…" in HTML
 
 
 def test_project_category(api, tmp_path):

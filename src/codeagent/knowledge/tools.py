@@ -7,10 +7,11 @@ from typing import Any
 
 from codeagent.knowledge import (
     KnowledgeConfig,
+    ensure_knowledge_vault,
     ingest_text,
+    is_vault_ready,
     list_pages,
     read_page,
-    vault_status,
 )
 from codeagent.security.policy import RiskLevel
 from codeagent.tools.base import Tool
@@ -99,13 +100,15 @@ class KnowledgeIngestTool(Tool):
 
 
 def knowledge_tools(cfg: KnowledgeConfig | None = None) -> list[Tool]:
-    """Return tools if vault is configured and ready; else empty list."""
+    """Return tools if vault is enabled; auto-deploy local wiki when missing."""
     cfg = cfg or KnowledgeConfig.load()
     if not cfg.enabled:
         return []
     root = cfg.vault_path()
-    st = vault_status(root)
-    if not st["ready"]:
+    # 已就绪则跳过 ensure，避免每条对话卡磁盘
+    if not is_vault_ready(root):
+        ensure_knowledge_vault(cfg)
+    if not is_vault_ready(root):
         return []
     return [
         KnowledgeSearchTool(root),

@@ -40,6 +40,10 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
 - draw.io / 架构图 / 流程图 / 自然语言画图 → next-ai-draw-io（优先 MCP `@next-ai-drawio/mcp-server`；也可用在线演示）
 - AutoCAD / DWG 精确重绘 / PDF 转中间 DWG → autocad-dwg-redraw（需 Windows + AutoCAD + pywin32）
 - 图纸照片 / 扫描件 / 截图转可编辑 DWG·DXF → autocad-image-redraw（同上；证据分级，勿仅凭像素声称尺寸精确）
+- 连库查表 / SQL / Redis·Mongo / 数据库客户端 → dbx（优先 MCP `@dbx-app/mcp-server`；本机可装桌面或 Docker）
+- 低代码业务库 / Limbas 表单应用 / PHP 数据库前台 → limbas（Linux + PHP + Docker/Web 安装器）
+- Agent 上下文库 / viking:// / 会话编译记忆 → openviking（默认用本机知识库；进阶可 pip 外挂）
+- 团队级 Agent 记忆 Hub / 四类资产共享 → tencentdb-agent-memory（默认映射本地 Wiki；进阶 Docker Hub）
 - CPython 内核 / C API / GIL / 从源码编 Python / 给解释器加模块 → cpython（写普通 .py 应用不要套）
 - 打开网页 / 登录站 / 点按钮 / 填表 → 直接调用 browser 工具（软件内置浏览器，无需安装；已登录 Chrome 可另用 browser-skill / ego-browser）
 - 语音面 / 麦克风 / 播报 / 嗲音 / barge-in → voice-surface
@@ -754,6 +758,146 @@ pip install pywin32 pillow numpy opencv-python ezdxf pymupdf
 可编辑 DWG + 审计 DXF、规格/锚点 JSON、预检与对比报告、固定页预览、manifest（哈希、剖面、单位、假设、状态）。
 """,
     ),
+    "dbx": (
+        "轻量数据库客户端 DBX：90+ 库、SQL、桌面/Docker，Agent 经 MCP/CLI 查库",
+        "DBX,dbx,数据库客户端,SQL,MySQL,PostgreSQL,SQLite,Redis,MongoDB,达梦,MCP数据库,查库",
+        "https://github.com/t8y2/dbx",
+        """# dbx（DBX 数据库客户端）
+来源：https://github.com/t8y2/dbx （Apache-2.0，~20MB Tauri 客户端）。
+连 MySQL/PostgreSQL/SQLite/Redis/MongoDB/达梦等、写 SQL、看表结构、给 Agent 查库时启用。
+自己调用 use_skill("dbx")。不要把整仓 Rust/Vue 拷进本软件；连接与策略在本机 DBX 里配。
+
+## CodeCoreAgent 优先路径（MCP）
+- 预设：`codeagent.mcp.presets.dbx_mcp()` → `npx -y @dbx-app/mcp-server`
+- mcp.json：
+  `{"mcpServers":{"dbx":{"command":"npx","args":["-y","@dbx-app/mcp-server"]}}}`
+- **先**在本机安装并打开 DBX，配好连接；再在 DBX「设置 → MCP」设允许的连接与权限
+  （`read_only` / `safe_write` / `high_risk_write`）。未装桌面时 MCP 无法用你的连接配置。
+- 能力（以实际工具列表为准）：列连接、浏览表、执行 SQL、在 DBX UI 打开表。
+- Docker/Web 部署时 MCP 可指后端：环境变量 `DBX_WEB_URL`（如 `http://localhost:4224`）、
+  若有登录密码再设 `DBX_WEB_PASSWORD`。Windows 便携版需 `DBX_DATA_DIR` 指向 `DBX.exe` 旁的 `data/`。
+
+## 本机安装（征得同意）
+- macOS：`brew install --cask dbx`；Windows：`winget install t8y2.dbx` 或 Scoop；
+  或从 https://github.com/t8y2/dbx/releases 下安装包
+- Docker Web：`docker run -d --name dbx -p 4224:4224 -v dbx-data:/app/data t8y2/dbx:latest`
+  （国内可试 `docker.cnb.cool/dbxio.com/dbx:latest`）→ http://localhost:4224
+- CLI：`npm i -g @dbx-app/cli` 或 `brew tap t8y2/tap && brew install dbx-cli`
+  → `dbx connections list --json` / `dbx query <连接名> "select 1" --json`
+- 文档：https://dbxio.com/en/docs/what-is-dbx
+
+## 与 Limbas / 裸驱动
+- 低代码业务前台、表单/流程应用 → limbas（PHP 框架，不是客户端）
+- 仅写应用代码连库：用项目语言官方驱动；DBX 负责可视化与 Agent 安全查库
+- 不要把 DB 密码写进对话或仓库；破坏性 SQL 先确认权限模式
+
+## 铁律
+- 缺 Node/DBX 就说明怎么装，不要假装已连上库或已执行 SQL
+- 默认倾向只读；写库须用户明确要求且 MCP 权限允许
+- 大结果集导出用 DBX 网格/导出，不要把整表贴进聊天
+""",
+    ),
+    "limbas": (
+        "Limbas 低代码数据库框架：表单/业务应用，Docker 或 Web 安装器部署",
+        "Limbas,limbas,低代码,数据库框架,业务应用,表单,PHP低代码,openlimbas",
+        "https://github.com/limbas/limbas",
+        """# limbas（Limbas 低代码数据库框架）
+来源：https://github.com/limbas/limbas （GPL-2.0）。
+做基于数据库的业务前台、表单、少代码应用（PostgreSQL/MySQL/MSSQL/Oracle/MaxDB）时启用。
+自己调用 use_skill("limbas")。不要把整仓 PHP 拷进 CodeCoreAgent 根目录；部署到独立服务器/Docker。
+
+## 定位
+- 图形化数据库前台 + 低代码应用框架（非轻量 SQL 客户端）
+- 查库/写 SQL/Agent MCP → 用 dbx；本技能管 **业务应用搭建与部署**
+
+## 环境
+- Linux 服务器 + Apache + **PHP 8+** + PDO / unixODBC
+- 支持库：PostgreSQL、MySQL、MSSQL、SAP MaxDB、Oracle
+- 文档：https://limbas.org/ · 演示：https://www.limbas.com/en/Service___Support/Demoserver/
+
+## 部署（征得同意后选一种）
+1. **Docker（推荐试跑）**：见 https://github.com/limbas/limbas-docker
+   （本仓也有 `docker-compose.yml`，可按上游说明 `docker compose up`）
+2. **Web 安装器**：https://github.com/limbas/web-installer/releases
+   —— 下载到空目录解压执行，会拉最新包并进入安装向导（需联网）
+3. **发行包**：上传 `openlimbas_X.X.tar.gz` 解压，**域名根指向 `public/`**，
+   浏览器打开按向导完成；默认账号见安装结束页（装完立刻改密）
+
+## 更新
+备份后替换 `limbas_src`、`vendor`、以及 `public/assets`。细节见上游 README。
+
+## CodeCoreAgent 落地
+- 在用户项目里写部署说明 / compose / 环境检查清单；用内置 browser 打开本机 Limbas URL 验收
+- 表结构变更、复杂 SQL 可配合 dbx 技能做只读核对
+- 缺 PHP/Docker/数据库就说明怎么装，不要假装应用已上线
+
+## 铁律
+- GPL-2.0：分发衍生作品注意许可义务
+- 生产环境务必改默认口令、HTTPS、定期备份
+- 不要把 Limbas 当嵌入式库塞进桌面安装包
+""",
+    ),
+    "openviking": (
+        "OpenViking 上下文库：分层 Memory/RAG/Skills；默认用本机 Wiki，可选 pip 服务",
+        "OpenViking,openviking,viking://,上下文数据库,会话记忆,分层检索,L0,L1,L2,上下文编译",
+        "https://github.com/volcengine/OpenViking",
+        """# openviking（OpenViking 上下文数据库）
+来源：https://github.com/volcengine/OpenViking （AGPL-3.0）。
+做 Agent 长期上下文、分层检索、会话编译成记忆/Wiki 时启用。
+自己调用 use_skill("openviking")。不要把整仓 / AGPL 服务默认打进安装包。
+
+## CodeCoreAgent 默认（已内置）
+- 安装与每次启动会 **自动部署** 本机 LLM Wiki（`~/Documents/CodeCoreAgent-Wiki`）
+- Schema 已对齐 L0/L1/L2 分层与按需阅读（见知识库 `wiki/concepts/context-layers.md`）
+- Agent 工具：`knowledge_search` / `knowledge_read` / `knowledge_ingest` — 先搜再读，勿整库灌上下文
+- 文档：https://docs.openviking.ai/ · Studio：https://openviking.ai/studio
+
+## 可选进阶（征得同意）
+```
+pip install openviking --upgrade
+openviking-server init      # 配置 embedding + VLM
+openviking-server doctor
+```
+需要 Python 3.10+ 与可用的嵌入模型 / VLM（云或本地）。自托管 Web Studio 见上游 `web-studio/`。
+AGPL-3.0：分发衍生服务注意许可义务。
+
+## 铁律
+- 缺密钥/模型时说明怎么配，不要假装 viking:// 已连上
+- 日常对话优先本机 Wiki；仅当用户明确要 OpenViking 服务时再装
+""",
+    ),
+    "tencentdb-agent-memory": (
+        "腾讯云 Agent Memory：团队记忆 Hub；默认映射本地四类资产，可选 Docker",
+        "TencentDB,Agent Memory,Memory Hub,Chat Memory,Code-Graph,团队记忆,tencentdb-agent-memory",
+        "https://github.com/TencentCloud/tencentdb-agent-memory",
+        """# tencentdb-agent-memory
+来源：https://github.com/TencentCloud/tencentdb-agent-memory （团队级记忆中枢）。
+跨 Agent 复用对话记忆、Skill、Wiki、代码图谱时启用。
+自己调用 use_skill("tencentdb-agent-memory")。不要把 MemoryCore/Hub/Proxy 多容器默认打进桌面包。
+
+## CodeCoreAgent 默认（已内置）
+- 本机知识库自动部署，四类资产映射见 `wiki/concepts/memory-assets.md`
+  - Chat Memory → `raw/conversations/` + `wiki/entities/`
+  - Skill → `wiki/concepts/` 或 `~/.codeagent/skills/`
+  - LLM-Wiki → `wiki/projects/` / `wiki/syntheses/`
+  - Code-Graph → 带 `[[wikilinks]]` 的概念/项目页
+- 单机即可用；团队共享可把库路径改到 NAS / 网盘（知识库「跨电脑共享」）
+
+## 可选进阶（征得同意）
+```
+git clone https://github.com/TencentCloud/tencentdb-agent-memory.git
+cd tencentdb-agent-memory/deploy/global-images
+cp .env.example .env   # 填 memory 组 + proxy 组 LLM
+./start-all.sh         # memory-core + hub + proxy
+```
+面板默认 http://localhost:8125 ；完整步骤见上游 INSTALL.md / INSTALL_CN.md。
+需要 Node ≥ 22.16；Mongo 后端为实验选项。
+
+## 铁律
+- 缺 Docker/LLM 配置就说明怎么装，不要假装 Hub 已运行
+- 默认走本机 Wiki；用户要团队 Proxy 再部署上游栈
+""",
+    ),
 }
 
 
@@ -767,6 +911,19 @@ def fusion_library() -> SkillLibrary:
             metadata={"source": source, "triggers": _triggers, "pack": "fusion"},
         ))
     return lib
+
+
+def _fusion_pack_stamp() -> str:
+    """Bump when FUSION_SKILLS content set changes (names + count)."""
+    try:
+        from codeagent import __version__
+    except Exception:  # noqa: BLE001
+        __version__ = "0"
+    names = ",".join(sorted(FUSION_SKILLS))
+    return f"{__version__}:{len(FUSION_SKILLS)}:{hash(names) & 0xFFFFFFFF:x}"
+
+
+_fusion_ensured: set[str] = set()
 
 
 def install_fusion_skills(directory: Path | None = None) -> list[str]:
@@ -796,9 +953,32 @@ def install_fusion_skills(directory: Path | None = None) -> list[str]:
             encoding="utf-8",
         )
         written.append(name)
+    stamp = root / ".fusion-pack-version"
+    try:
+        stamp.write_text(_fusion_pack_stamp() + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    _fusion_ensured.add(str(root.resolve()) if root.exists() else str(root))
     return written
 
 
 def ensure_fusion_skills(directory: Path | None = None) -> list[str]:
-    """Write the fusion pack the app ships (refresh on every launch)."""
-    return install_fusion_skills(directory)
+    """Install fusion pack if missing or outdated (once per process when current)."""
+    root = Path(directory or FUSION_DIR).expanduser()
+    try:
+        key = str(root.resolve())
+    except OSError:
+        key = str(root)
+    if key in _fusion_ensured:
+        return []
+    stamp = root / ".fusion-pack-version"
+    want = _fusion_pack_stamp()
+    try:
+        if stamp.is_file() and stamp.read_text(encoding="utf-8").strip() == want:
+            # quick sanity: at least router skill present
+            if (root / "fusion-router" / "SKILL.md").is_file():
+                _fusion_ensured.add(key)
+                return []
+    except OSError:
+        pass
+    return install_fusion_skills(root)

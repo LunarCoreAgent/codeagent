@@ -212,8 +212,16 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .think-block > summary::-webkit-details-marker { display: none; }
 .think-block > summary::before { content: "▸ "; color: var(--faint); }
 .think-block[open] > summary::before { content: "▾ "; }
-.think-block .think-body { margin-top: 8px; white-space: pre-wrap;
-  line-height: 1.55; color: var(--muted); }
+.think-block .think-body { margin-top: 8px; color: var(--muted); }
+.think-block .think-reason { white-space: pre-wrap; line-height: 1.55; }
+.think-block .think-tools { list-style: none; margin: 0; padding: 0; }
+.think-block .think-reason + .think-tools {
+  margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border);
+}
+.think-block .think-tools li {
+  font-size: 12px; line-height: 1.5; color: var(--faint);
+  font-family: ui-monospace, Menlo, monospace; padding: 1px 0;
+}
 #composer { padding: 13px 22px 16px; border-top: 1px solid var(--border);
             background: var(--sidebar); flex-shrink: 0; }
 .composer-inner { max-width: 1040px; margin: 0 auto; display: flex;
@@ -608,6 +616,9 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     <button class="navbtn" id="newProjBtn" onclick="openProjDialog()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6M9 14h6"/></svg>
       新建项目</button>
+    <button class="navbtn" id="importProjBtn" onclick="importProject()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+      导入项目</button>
   </div>
 
   <div class="nav-group">
@@ -728,8 +739,10 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 <!-- ============ 项目记录 ============ -->
 <section class="page" id="page-project">
   <div class="page-head"><h1 id="projTitle">项目记录</h1>
-    <span class="sub" id="projSub">每个项目的对话、文件与内容都保存在本地文件夹</span>
+    <span class="sub" id="projSub">每个项目的对话、思考、文件与说明都可单独导出/导入</span>
     <span class="spacer"></span>
+    <button class="btn" onclick="importProject()">📥 导入项目</button>
+    <button class="btn" onclick="exportProject()">📤 导出项目</button>
     <button class="btn" onclick="openProjFolder()">📂 打开文件夹</button>
     <button class="btn" onclick="go('chat')">进入对话</button>
   </div>
@@ -989,10 +1002,10 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 <!-- ============ 知识库（Obsidian / LLM Wiki） ============ -->
 <section class="page" id="page-knowledge">
   <div class="page-head"><h1>知识库</h1>
-    <span class="sub">Obsidian / LLM Wiki 结构 · 本地或跨电脑共享目录</span>
+    <span class="sub">随安装自动部署 · Obsidian / LLM Wiki · 可对接 OpenViking / 腾讯云 Agent Memory</span>
     <span class="spacer"></span>
     <button class="btn" onclick="openKnowledgeFolder()">📂 打开文件夹</button>
-    <button class="btn primary" onclick="bootstrapKnowledge()">⚡ 一键布置</button>
+    <button class="btn" onclick="bootstrapKnowledge()">🔧 修复布置</button>
   </div>
   <div class="page-body"><div class="settings-wrap" style="max-width:780px">
     <div class="card sect">
@@ -1000,16 +1013,20 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       <label>存储方式</label>
       <select id="kb_mode">
         <option value="local">本机目录</option>
-        <option value="shared">跨电脑共享（NAS / 网盘同步 / 网络盘）</option>
+        <option value="shared">局域网硬盘 / NAS / 网盘同步（多机共享）</option>
       </select>
       <label>后端形态</label>
       <select id="kb_backend">
         <option value="obsidian">Obsidian 库（推荐，可用 Obsidian 打开）</option>
         <option value="llmwiki">LLM Wiki（同一套目录结构）</option>
       </select>
-      <label>知识库路径</label>
-      <input id="kb_path" placeholder="~/Documents/CodeCoreAgent-Wiki 或 /Volumes/NAS/wiki">
-      <div class="hint" id="kb_hint">本机：默认 Documents 下独立库。跨电脑：把库放在 Syncthing / iCloud / NAS 挂载点，各机填写同一路径。</div>
+      <label>知识库路径（可选本机盘 / 局域网已挂载硬盘）</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="kb_path" placeholder="~/Documents/CodeCoreAgent-Wiki 或 /Volumes/NAS/wiki" style="flex:1;min-width:0">
+        <button type="button" class="btn" onclick="pickKnowledgePath()">选择…</button>
+      </div>
+      <div id="kb_disks" class="hint" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+      <div class="hint" id="kb_hint">本机：默认 Documents。局域网：先在访达/资源管理器挂载 SMB/NAS，再点带「局域网」的卷或「选择…」；Windows 也可填 \\\\服务器\\共享\\wiki。</div>
       <div class="checkline" style="margin-top:10px">
         <input type="checkbox" id="kb_enabled" checked>
         <span>启用知识库（对话中注入 knowledge_search / read / ingest 工具）</span>
@@ -1436,6 +1453,30 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       <div class="hint">自动模式下跟随 macOS 系统外观，系统切换时实时生效</div>
     </div>
 
+    <div class="card sect" id="sectKnowledgePath"><h3>知识库存储路径</h3>
+      <p class="hint">可存本机，也可存到已挂载的局域网硬盘 / NAS。保存后会自动在该路径部署 Wiki；多台电脑填同一路径即可共享。</p>
+      <label>存储方式</label>
+      <select id="cfg_kb_mode" onchange="updateCfgKbHint()">
+        <option value="local">本机目录</option>
+        <option value="shared">局域网硬盘 / NAS / 网盘同步（多机共享）</option>
+      </select>
+      <label>知识库路径</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="cfg_kb_path" placeholder="本机路径 或 /Volumes/NAS/wiki" style="flex:1;min-width:0">
+        <button type="button" class="btn" onclick="pickKnowledgePath('cfg')">选择…</button>
+      </div>
+      <div id="cfg_kb_disks" class="hint" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+      <div class="hint" id="cfg_kb_hint">先挂载局域网盘，再点标记「局域网」的卷，或「选择…」浏览。未挂载时无法写入。</div>
+      <div class="checkline" style="margin-top:10px">
+        <input type="checkbox" id="cfg_kb_enabled" checked>
+        <span>启用知识库工具</span>
+      </div>
+      <div class="savebar" style="margin-top:12px">
+        <button class="btn" type="button" onclick="go('knowledge')">打开知识库页</button>
+        <button class="btn primary" type="button" onclick="saveKnowledgePathFromSettings()">保存知识库路径</button>
+      </div>
+    </div>
+
     <div class="card sect" id="sectCompanion"><h3>陪伴型 AI</h3>
       <p class="hint">开启后，对话会按角色人设陪伴聊天（融合 y-ai-accompany / ai-companion）。可与下方嗲嗲声、麦克风一起用。</p>
       <div class="checkline"><input type="checkbox" id="cfg_companion">
@@ -1669,9 +1710,13 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     <h3>新建项目</h3>
     <label>项目名称</label>
     <input id="pj_name" placeholder="如：网站重构、数据分析">
-    <label>存放位置（留空用默认目录）</label>
-    <input id="pj_base" placeholder="">
-    <div class="hint">将在该目录下创建项目文件夹——agent 产生的所有文件、内容与全部对话记录都保存在项目文件夹里</div>
+    <label>存放位置（可选硬盘 / 文件夹，留空用默认目录）</label>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="pj_base" placeholder="" style="flex:1;min-width:0">
+      <button type="button" class="btn" onclick="pickProjectBase()">选择…</button>
+    </div>
+    <div id="pj_disks" class="hint" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+    <div class="hint">将在该目录下创建项目文件夹——可点上方硬盘快捷项，或「选择…」浏览任意盘符/文件夹。对话、思考与工程文件都保存在项目文件夹里。</div>
     <div style="display:flex;gap:8px;margin-top:16px">
       <button class="btn" style="flex:1" onclick="$('projDialog').classList.remove('open')">取消</button>
       <button class="btn primary" style="flex:1" onclick="createProject()">创建</button>
@@ -1931,9 +1976,36 @@ function projBtn(p,d){
   return b;
 }
 function openProjDialog(){
-  pywebview.api.get_projects().then(d=>{$('pj_base').placeholder=d.default_base;});
   $('pj_name').value=''; $('pj_base').value='';
+  $('pj_disks').innerHTML='';
+  pywebview.api.get_projects().then(d=>{
+    $('pj_base').placeholder=d.default_base||'';
+    const box=$('pj_disks');
+    const roots=d.disk_roots||[];
+    if(!roots.length){
+      box.textContent='未能列出硬盘，请用「选择…」浏览';
+      return;
+    }
+    roots.forEach(r=>{
+      const b=document.createElement('button');
+      b.type='button'; b.className='btn';
+      b.style.cssText='padding:4px 10px;font-size:12px';
+      b.textContent=r.label; b.title=r.path||'';
+      b.onclick=()=>setProjectBase(r.path||'');
+      box.appendChild(b);
+    });
+  });
   $('projDialog').classList.add('open');
+}
+function setProjectBase(path){
+  $('pj_base').value=path||'';
+}
+function pickProjectBase(){
+  pywebview.api.pick_project_base().then(r=>{
+    if(r.cancelled)return;
+    if(!r.ok){toast(r.error||'无法选择文件夹');return;}
+    setProjectBase(r.path);
+  });
 }
 function createProject(){
   const name=$('pj_name').value.trim();
@@ -1990,6 +2062,23 @@ function openProjFolder(){
     else toast('已打开：'+r.path);
   });
 }
+function exportProject(){
+  pywebview.api.export_project().then(r=>{
+    if(r.cancelled)return;
+    if(!r.ok){toast(r.error||'导出失败');return;}
+    toast('已导出：'+r.path);
+  });
+}
+function importProject(){
+  pywebview.api.import_project().then(r=>{
+    if(r.cancelled)return;
+    if(!r.ok){toast(r.error||'导入失败');return;}
+    toast('已导入：'+r.project.name);
+    loadProjects(); loadConversations();
+    clearChat('当前项目：'+r.project.name+' · 已导入');
+    loadProjectRecords(); go('project');
+  });
+}
 function clearChat(msg,chan){
   const C=colOf(chan||'A');
   C.col.innerHTML='';
@@ -2020,8 +2109,37 @@ function loadConv(id){
   pywebview.api.load_conversation(id).then(r=>{
     if(!r.ok)return;
     clearChat('已载入历史对话（继续聊会自动带上前文）');
-    r.messages.forEach(m=>addMsg(m.role==='user'?'user':'bot',m.text));
+    replayConvMessages(r.messages,'A');
   });
+}
+function loadConv2(id){
+  if(!id)return;
+  pywebview.api.load_conversation2(id).then(r=>{
+    if(!r.ok)return;
+    clearChat('已载入历史对话（继续聊会自动带上前文）','B');
+    replayConvMessages(r.messages,'B');
+  });
+}
+function markThinkDone(chan){
+  const C=colOf(chan||'A');
+  C.col.querySelectorAll('.chip-wrap.think-wrap').forEach(w=>w.classList.add('think-done'));
+}
+function replayConvMessages(messages,chan){
+  (messages||[]).forEach(m=>{
+    const role=m.role||'';
+    if(role==='user'){
+      markThinkDone(chan);
+      addMsg('user',m.text||'',chan);
+    }else if(role==='assistant'){
+      addMsg('bot',m.text||'',chan);
+      markThinkDone(chan);
+    }else if(role==='thinking'){
+      addThink(m.text||'',chan);
+    }else if(role==='tool'){
+      addThinkTool(m.name||m.text||'',chan);
+    }
+  });
+  markThinkDone(chan);
 }
 function loadConversations2(){
   const sel=$('convPickerB'); if(!sel)return;
@@ -2041,14 +2159,6 @@ function loadConversations2(){
 function newChatB(){
   pywebview.api.new_conversation2().then(()=>{
     clearChat('新对话 B 已开始','B'); loadConversations2();
-  });
-}
-function loadConv2(id){
-  if(!id)return;
-  pywebview.api.load_conversation2(id).then(r=>{
-    if(!r.ok)return;
-    clearChat('已载入历史对话（继续聊会自动带上前文）','B');
-    r.messages.forEach(m=>addMsg(m.role==='user'?'user':'bot',m.text,'B'));
   });
 }
 
@@ -2328,27 +2438,68 @@ function addChip(cls,text,chan){
   wrap.appendChild(div); wrap.appendChild(bar);
   C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
 }
+function ensureThink(chan){
+  const C=colOf(chan||'A');
+  let wrap=C.col.querySelector('.chip-wrap.think-wrap:not(.think-done)');
+  let det, sum, reason, tools;
+  if(wrap){
+    det=wrap.querySelector('.think-block');
+    sum=det&&det.querySelector('summary');
+    reason=det&&det.querySelector('.think-reason');
+    tools=det&&det.querySelector('.think-tools');
+  }
+  if(!det||!sum||!reason||!tools){
+    wrap=document.createElement('div');
+    wrap.className='chip-wrap think-wrap';
+    det=document.createElement('details');
+    det.className='think-block';
+    sum=document.createElement('summary');
+    sum.textContent='思考过程';
+    const body=document.createElement('div');
+    body.className='think-body';
+    reason=document.createElement('div');
+    reason.className='think-reason';
+    tools=document.createElement('ul');
+    tools.className='think-tools';
+    body.appendChild(reason); body.appendChild(tools);
+    det.appendChild(sum); det.appendChild(body);
+    const bar=document.createElement('div');
+    bar.className='msg-actions';
+    bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>';
+    bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(det._raw||'');
+    wrap.appendChild(det); wrap.appendChild(bar);
+    C.col.appendChild(wrap);
+  }
+  return {C:C, wrap:wrap, det:det, sum:sum, reason:reason, tools:tools};
+}
+function syncThinkMeta(t){
+  const n=t.tools.children.length;
+  t.sum.textContent=n?('思考过程 · '+n+' 步'):'思考过程';
+  const parts=['思考过程'];
+  if(t.reason._raw)parts.push(String(t.reason._raw));
+  Array.from(t.tools.children).forEach(li=>{
+    if(li._raw||li.textContent)parts.push(li._raw||li.textContent);
+  });
+  t.det._raw=parts.join('\\n');
+  t.C.chat.scrollTop=t.C.chat.scrollHeight;
+}
 function addThink(text,chan){
   const raw=String(text||'').trim();
   if(!raw)return;
-  const C=colOf(chan||'A');
-  const wrap=document.createElement('div');
-  wrap.className='chip-wrap';
-  const det=document.createElement('details');
-  det.className='think-block';
-  det._raw='思考过程\\n'+raw;
-  const sum=document.createElement('summary');
-  sum.textContent='思考过程';
-  const body=document.createElement('div');
-  body.className='think-body';
-  body.innerHTML=render(raw);
-  det.appendChild(sum); det.appendChild(body);
-  const bar=document.createElement('div');
-  bar.className='msg-actions';
-  bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>';
-  bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(det._raw);
-  wrap.appendChild(det); wrap.appendChild(bar);
-  C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
+  const t=ensureThink(chan);
+  t.reason._raw=raw;
+  t.reason.innerHTML=render(raw);
+  syncThinkMeta(t);
+}
+function addThinkTool(name,chan){
+  const label=String(name||'').trim();
+  if(!label)return;
+  const t=ensureThink(chan);
+  const li=document.createElement('li');
+  li.textContent='🔧 '+label;
+  li._raw='🔧 '+label;
+  t.tools.appendChild(li);
+  syncThinkMeta(t);
 }
 /* ---------- 附件（所有文件类型识别） ---------- */
 let atts=[];
@@ -2587,6 +2738,11 @@ function setChatBusy(on,chan){
   const b=chan==='B';
   $(b?'sendBtnB':'sendBtn').disabled=!!on;
   $(b?'stopBtnB':'stopBtn').disabled=!on;
+  if(on){
+    // 新一轮开始：上一轮思考块封存，本轮只显示一块
+    const C=colOf(chan||'A');
+    C.col.querySelectorAll('.chip-wrap.think-wrap').forEach(w=>w.classList.add('think-done'));
+  }
 }
 function isVideoModelSelected(){
   const sel=$('modelPicker');
@@ -2753,33 +2909,126 @@ function addMemory(){
 $('memQuery').addEventListener('keydown',e=>{if(e.key==='Enter')loadMemories();});
 
 /* ---------- knowledge (Obsidian / LLM Wiki) ---------- */
+function fillKbDiskChips(boxId, inputId, roots){
+  const box=$(boxId); if(!box)return;
+  box.innerHTML='';
+  const list=roots||[];
+  if(!list.length){
+    box.textContent='未能列出硬盘，请用「选择…」浏览（局域网盘需先挂载）';
+    return;
+  }
+  list.forEach(r=>{
+    const b=document.createElement('button');
+    b.type='button'; b.className='btn';
+    b.style.cssText='padding:4px 10px;font-size:12px';
+    if(r.kind==='network'){
+      b.style.borderColor='var(--accent, #3b82f6)';
+      b.textContent='🖧 '+r.label;
+    }else{
+      b.textContent=r.label;
+    }
+    b.title=(r.path||'')+(r.kind==='network'?'（局域网/NAS）':'');
+    b.onclick=()=>{
+      const inp=$(inputId); if(inp)inp.value=r.path||'';
+      if(r.kind==='network'){
+        if($('kb_mode'))$('kb_mode').value='shared';
+        if($('cfg_kb_mode'))$('cfg_kb_mode').value='shared';
+        updateKbHint(); updateCfgKbHint();
+      }
+    };
+    box.appendChild(b);
+  });
+}
+function setKnowledgePathFields(d){
+  const c=d.config||{};
+  if($('kb_path')){
+    $('kb_path').value=c.path||'';
+    $('kb_path').placeholder=d.default_path||'';
+  }
+  if($('kb_mode'))$('kb_mode').value=c.mode||'local';
+  if($('kb_backend'))$('kb_backend').value=c.backend||'obsidian';
+  if($('kb_enabled'))$('kb_enabled').checked=c.enabled!==false;
+  if($('cfg_kb_path')){
+    $('cfg_kb_path').value=c.path||'';
+    $('cfg_kb_path').placeholder=d.default_path||'';
+  }
+  if($('cfg_kb_mode'))$('cfg_kb_mode').value=c.mode||'local';
+  if($('cfg_kb_enabled'))$('cfg_kb_enabled').checked=c.enabled!==false;
+  if(d.network){
+    if($('kb_mode'))$('kb_mode').value='shared';
+    if($('cfg_kb_mode'))$('cfg_kb_mode').value='shared';
+  }
+  fillKbDiskChips('kb_disks','kb_path',d.disk_roots||[]);
+  fillKbDiskChips('cfg_kb_disks','cfg_kb_path',d.disk_roots||[]);
+  updateKbHint(); updateCfgKbHint();
+}
 function loadKnowledge(){
   pywebview.api.get_knowledge().then(d=>{
-    const c=d.config||{}, s=d.status||{};
-    $('kb_mode').value=c.mode||'local';
-    $('kb_backend').value=c.backend||'obsidian';
-    $('kb_path').value=c.path||'';
-    $('kb_enabled').checked=c.enabled!==false;
-    updateKbHint();
+    setKnowledgePathFields(d);
+    const s=d.status||{};
     const pills=[];
-    pills.push(s.ready?'<span class="pill green">已布置</span>':'<span class="pill amber">未布置</span>');
+    pills.push(s.ready?'<span class="pill green">已自动部署</span>':'<span class="pill amber">未就绪</span>');
+    if(d.network|| (d.config&&d.config.mode==='shared'))
+      pills.push('<span class="pill blue">局域网/共享</span>');
     pills.push(s.exists?'<span class="pill">路径存在</span>':'<span class="pill">路径不存在</span>');
     pills.push(s.writable?'<span class="pill green">可写</span>':'<span class="pill">只读/不可写</span>');
     if(s.has_obsidian)pills.push('<span class="pill blue">Obsidian</span>');
-    pills.push('<span class="pill">'+esc(String(s.page_count||0))+' 个 wiki 页</span>');
+    pills.push('<span class="pill">'+(s.page_count<0?'页数未统计':esc(String(s.page_count||0))+' 个 wiki 页')+'</span>');
     $('kbStatus').innerHTML=pills.join(' ')+
       '<div style="margin-top:8px;font-family:Menlo,monospace;font-size:11px;color:var(--faint)">'+esc(s.path||'')+'</div>'+
-      (s.ready?'':'<div style="margin-top:8px;color:var(--muted);font-size:12px">点击右上角「一键布置」按 CodeCoreAgent 结构创建 raw/ + wiki/ + AGENTS.md</div>');
+      (s.ready
+        ?'<div style="margin-top:8px;color:var(--muted);font-size:12px">换局域网盘：先挂载 → 点「局域网」卷或「选择…」→ 保存。多机共享请保持同一路径且盘在线。</div>'
+        :'<div style="margin-top:8px;color:var(--muted);font-size:12px">未能部署：请确认局域网盘已挂载且可写，或点「修复布置」。</div>');
     renderKbPages(d.pages||[]);
   });
 }
 function updateKbHint(){
-  const shared=$('kb_mode').value==='shared';
+  if(!$('kb_hint'))return;
+  const shared=$('kb_mode')&&$('kb_mode').value==='shared';
   $('kb_hint').textContent=shared
-    ?'跨电脑：填写 NAS 挂载点、SMB 映射盘或 Syncthing/iCloud/Dropbox 同步文件夹中的库路径，多机保持一致即可共享。'
-    :'本机：默认 ~/Documents/CodeCoreAgent-Wiki。可用 Obsidian「打开文件夹作为库」浏览图谱。';
+    ?'局域网：用访达「连接服务器」或资源管理器映射网络驱动器后，点带「局域网」的卷；Windows 可填 \\\\IP\\共享\\wiki。保持挂载，其它电脑填同一路径即可共享。'
+    :'本机：默认 ~/Documents/CodeCoreAgent-Wiki。要放到局域网硬盘：先挂载，再选「局域网硬盘」模式或点局域网卷。';
 }
-$('kb_mode').addEventListener('change',updateKbHint);
+function updateCfgKbHint(){
+  if(!$('cfg_kb_hint'))return;
+  const shared=$('cfg_kb_mode')&&$('cfg_kb_mode').value==='shared';
+  $('cfg_kb_hint').textContent=shared
+    ?'局域网/NAS：先挂载再选路径；未挂载会保存失败。多机指向同一文件夹即可共享知识库。'
+    :'本机目录，或先挂载局域网盘后切换到「局域网硬盘」模式。';
+}
+if($('kb_mode'))$('kb_mode').addEventListener('change',updateKbHint);
+function pickKnowledgePath(target){
+  pywebview.api.pick_knowledge_path().then(r=>{
+    if(r.cancelled)return;
+    if(!r.ok){toast(r.error||'无法选择文件夹');return;}
+    const id=(target==='cfg')?'cfg_kb_path':'kb_path';
+    if($(id))$(id).value=r.path||'';
+    const path=String(r.path||'');
+    const looksLan=/^(\\\\|\/\/)/.test(path)||/\/Volumes\//i.test(path);
+    if(looksLan||(r.disk_roots||[]).some(x=>x.path===path&&x.kind==='network')){
+      if($('kb_mode'))$('kb_mode').value='shared';
+      if($('cfg_kb_mode'))$('cfg_kb_mode').value='shared';
+      updateKbHint(); updateCfgKbHint();
+    }
+    if(r.disk_roots){
+      fillKbDiskChips('kb_disks','kb_path',r.disk_roots);
+      fillKbDiskChips('cfg_kb_disks','cfg_kb_path',r.disk_roots);
+    }
+    toast('已选择：'+r.path);
+  });
+}
+function saveKnowledgePathFromSettings(){
+  const path=($('cfg_kb_path')&&$('cfg_kb_path').value.trim())||'';
+  const mode=($('cfg_kb_mode')&&$('cfg_kb_mode').value)||'local';
+  const enabled=!$('cfg_kb_enabled')||$('cfg_kb_enabled').checked;
+  const backend=($('kb_backend')&&$('kb_backend').value)||'obsidian';
+  pywebview.api.save_knowledge_config(path, mode, backend, enabled).then(r=>{
+    if(!r.ok){toast(r.error||'保存失败');return;}
+    toast(r.message||('知识库路径已保存'+(r.status&&r.status.path?'：'+r.status.path:'')));
+    if($('kb_path'))loadKnowledge();
+    else setKnowledgePathFields({config:r.config,status:r.status,network:r.network,disk_roots:[]});
+  });
+}
 function saveKnowledgeConfig(){
   pywebview.api.save_knowledge_config(
     $('kb_path').value.trim(),
@@ -2788,7 +3037,7 @@ function saveKnowledgeConfig(){
     $('kb_enabled').checked
   ).then(r=>{
     if(!r.ok){toast(r.error||'保存失败');return;}
-    toast('知识库连接已保存');
+    toast(r.message||'知识库连接已保存');
     loadKnowledge();
   });
 }
@@ -4080,6 +4329,8 @@ function loadSettings(){
     vs.value=st.config.voice_name;
     $('footProvider').textContent=st.active_label||st.config.provider;
     refreshMicPermStatus();
+    // 偏好设置：只要路径/硬盘列表，勿扫 wiki 全页（防卡顿）
+    pywebview.api.get_knowledge(false, true).then(d=>setKnowledgePathFields(d));
   });
   pywebview.api.get_harnesses().then(list=>{
     const el=$('harnessList');
@@ -4278,8 +4529,7 @@ window._onEvent=function(ev){
   }else if(ev.kind==='thinking'){
     addThink(ev.text,ch);
   }else if(ev.kind==='tool'){
-    if(ev.name==='bash')return; // bash 过程默认不显示
-    addChip('','🔧 '+ev.name,ch);
+    addThinkTool(ev.name,ch); // 工具调用收进「思考过程」折叠块
   }else if(ev.kind==='status'){
     addChip('status',ev.text,ch);
   }else if(ev.kind==='done'){
@@ -4375,10 +4625,12 @@ function bootUi(){
   ensurePrivacyAccepted();
   setInterval(function(){
     try{
+      const page=$('page-browser');
+      if(!page||!page.classList.contains('active'))return;
       if(window.pywebview&&pywebview.api&&pywebview.api.browser_pump)
         pywebview.api.browser_pump();
     }catch(e){}
-  }, 80);
+  }, 300);
 }
 if(window.pywebview&&window.pywebview.api) bootUi();
 else window.addEventListener('pywebviewready', bootUi);
@@ -4668,31 +4920,76 @@ function addChip(cls,text,chan){
   wrap.appendChild(div); wrap.appendChild(bar);
   C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
 }
+function ensureThink(chan){
+  const C=colOf(chan||'B');
+  let wrap=C.col.querySelector('.chip-wrap.think-wrap:not(.think-done)');
+  let det, sum, reason, tools;
+  if(wrap){
+    det=wrap.querySelector('.think-block');
+    sum=det&&det.querySelector('summary');
+    reason=det&&det.querySelector('.think-reason');
+    tools=det&&det.querySelector('.think-tools');
+  }
+  if(!det||!sum||!reason||!tools){
+    wrap=document.createElement('div');
+    wrap.className='chip-wrap think-wrap';
+    det=document.createElement('details');
+    det.className='think-block';
+    sum=document.createElement('summary');
+    sum.textContent='思考过程';
+    const body=document.createElement('div');
+    body.className='think-body';
+    reason=document.createElement('div');
+    reason.className='think-reason';
+    tools=document.createElement('ul');
+    tools.className='think-tools';
+    body.appendChild(reason); body.appendChild(tools);
+    det.appendChild(sum); det.appendChild(body);
+    const bar=document.createElement('div');
+    bar.className='msg-actions';
+    bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>';
+    bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(det._raw||'');
+    wrap.appendChild(det); wrap.appendChild(bar);
+    C.col.appendChild(wrap);
+  }
+  return {C:C, wrap:wrap, det:det, sum:sum, reason:reason, tools:tools};
+}
+function syncThinkMeta(t){
+  const n=t.tools.children.length;
+  t.sum.textContent=n?('思考过程 · '+n+' 步'):'思考过程';
+  const parts=['思考过程'];
+  if(t.reason._raw)parts.push(String(t.reason._raw));
+  Array.from(t.tools.children).forEach(li=>{
+    if(li._raw||li.textContent)parts.push(li._raw||li.textContent);
+  });
+  t.det._raw=parts.join('\\n');
+  t.C.chat.scrollTop=t.C.chat.scrollHeight;
+}
 function addThink(text,chan){
   const raw=String(text||'').trim();
   if(!raw)return;
-  const C=colOf(chan||'B');
-  const wrap=document.createElement('div');
-  wrap.className='chip-wrap';
-  const det=document.createElement('details');
-  det.className='think-block';
-  det._raw='思考过程\\n'+raw;
-  const sum=document.createElement('summary');
-  sum.textContent='思考过程';
-  const body=document.createElement('div');
-  body.className='think-body';
-  body.innerHTML=render(raw);
-  det.appendChild(sum); det.appendChild(body);
-  const bar=document.createElement('div');
-  bar.className='msg-actions';
-  bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>';
-  bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(det._raw);
-  wrap.appendChild(det); wrap.appendChild(bar);
-  C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
+  const t=ensureThink(chan);
+  t.reason._raw=raw;
+  t.reason.innerHTML=render(raw);
+  syncThinkMeta(t);
+}
+function addThinkTool(name,chan){
+  const label=String(name||'').trim();
+  if(!label)return;
+  const t=ensureThink(chan);
+  const li=document.createElement('li');
+  li.textContent='🔧 '+label;
+  li._raw='🔧 '+label;
+  t.tools.appendChild(li);
+  syncThinkMeta(t);
 }
 function setChatBusy(on,chan){
   $('sendBtnB').disabled=!!on;
   $('stopBtnB').disabled=!on;
+  if(on){
+    const C=colOf(chan||'B');
+    C.col.querySelectorAll('.chip-wrap.think-wrap').forEach(w=>w.classList.add('think-done'));
+  }
 }
 function clearChat(msg,chan){
   const C=colOf(chan||'B');
@@ -4725,7 +5022,18 @@ function loadConv2(id){
   pywebview.api.load_conversation2(id).then(r=>{
     if(!r.ok)return;
     clearChat('已载入历史对话（继续聊会自动带上前文）','B');
-    r.messages.forEach(m=>addMsg(m.role==='user'?'user':'bot',m.text,'B'));
+    (r.messages||[]).forEach(m=>{
+      const role=m.role||'';
+      if(role==='user'){
+        colOf('B').col.querySelectorAll('.chip-wrap.think-wrap').forEach(w=>w.classList.add('think-done'));
+        addMsg('user',m.text||'','B');
+      }else if(role==='assistant'){
+        addMsg('bot',m.text||'','B');
+        colOf('B').col.querySelectorAll('.chip-wrap.think-wrap').forEach(w=>w.classList.add('think-done'));
+      }else if(role==='thinking'){ addThink(m.text||'','B'); }
+      else if(role==='tool'){ addThinkTool(m.name||m.text||'','B'); }
+    });
+    colOf('B').col.querySelectorAll('.chip-wrap.think-wrap').forEach(w=>w.classList.add('think-done'));
   });
 }
 function sendChatB(){
@@ -4876,8 +5184,7 @@ window._onEvent=function(ev){
   }else if(ev.kind==='thinking'){
     addThink(ev.text,ch);
   }else if(ev.kind==='tool'){
-    if(ev.name==='bash')return; // bash 过程默认不显示
-    addChip('','🔧 '+ev.name,ch);
+    addThinkTool(ev.name,ch); // 工具调用收进「思考过程」折叠块
   }else if(ev.kind==='status'){
     addChip('status',ev.text,ch);
   }else if(ev.kind==='done'){

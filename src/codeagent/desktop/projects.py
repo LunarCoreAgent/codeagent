@@ -127,6 +127,210 @@ def _unique_folder(base: Path, name: str) -> Path:
     return folder
 
 
+_DISK_ROOTS_TTL = 45.0
+_DISK_ROOTS_CACHE: tuple[float, list[dict[str, str]]] | None = None
+_MOUNT_CACHE: tuple[float, set[str]] | None = None
+_MOUNT_TTL = 60.0
+
+
+def list_disk_roots(*, force: bool = False) -> list[dict[str, str]]:
+    """列出本机与已挂载局域网卷，供项目/知识库选存放位置。
+
+    Each item: ``{path, label, kind}`` where kind is ``local`` | ``network`` | ``other``.
+    Results are cached briefly to avoid UI stalls on every settings/knowledge load.
+    """
+    import sys
+    import time
+
+    global _DISK_ROOTS_CACHE, _MOUNT_CACHE
+    now = time.monotonic()
+    if (
+        not force
+        and _DISK_ROOTS_CACHE is not None
+        and now - _DISK_ROOTS_CACHE[0] < _DISK_ROOTS_TTL
+    ):
+        return [dict(x) for x in _DISK_ROOTS_CACHE[1]]
+
+    roots: list[dict[str, str]] = []
+    seen: set[str] = set()
+    net_mounts = _network_mount_paths()
+
+    def _add(
+        path: Path,
+        label: str,
+        kind: str = "",
+        *,
+        trust_exists: bool = False,
+    ) -> None:
+        raw = str(path.expanduser())
+        if not kind:
+            kind = "network" if _path_looks_network(raw, net_mounts) else "local"
+        # 网络卷禁止 resolve()/二次 exists：慢盘或掉线会卡死 UI 线程
+        if kind == "network":
+            display = raw
+            if not trust_exists:
+                try:
+                    if not path.expanduser().is_dir():
+                        return
+                except OSError:
+                    return
+        else:
+            try:
+                display = str(path.expanduser().resolve(strict=False))
+            except OSError:
+                display = raw
+            if not trust_exists:
+                try:
+                    if not path.expanduser().exists():
+                        return
+                except OSError:
+                    return
+        if display in seen:
+            return
+        seen.add(display)
+        if kind == "network" and "局域网" not in label and "网络" not in label:
+            label = f"{label} · 局域网"
+        roots.append({"path": display, "label": label, "kind": kind})
+
+    home = Path.home()
+    _add(home, "用户目录", "local")
+    _add(DEFAULT_BASE.expanduser().parent, "默认项目父目录", "local")
+
+    if sys.platform == "darwin":
+        vols = Path("/Volumes")
+        if vols.is_dir():
+            try:
+                entries = sorted(vols.iterdir(), key=lambda p: p.name.lower())
+            except OSError:
+                entries = []
+            for v in entries:
+                try:
+                    if not v.is_dir() or v.name.startswith("."):
+                        continue
+                except OSError:
+                    continue
+                kind = "network" if _path_looks_network(str(v), net_mounts) else "local"
+                _add(v, v.name, kind, trust_exists=True)
+    elif sys.platform == "win32":
+        import string
+
+        for letter in string.ascii_uppercase:
+            drive = Path(f"{letter}:\\")
+            try:
+                if not drive.exists():
+                    continue
+            except OSError:
+                continue
+            kind = "network" if _win_drive_is_remote(letter) else "local"
+            tag = "网络盘" if kind == "network" else "盘"
+            _add(drive, f"{letter}: {tag}", kind, trust_exists=True)
+    else:
+        _add(Path("/"), "系统根目录", "local")
+        for media in (Path("/media"), Path("/mnt"), Path("/run/media")):
+            if not media.is_dir():
+                continue
+            try:
+                for child in sorted(media.iterdir()):
+                    if child.is_dir() and not child.name.startswith("."):
+                        kind = (
+                            "network"
+                            if _path_looks_network(str(child), net_mounts)
+                            else "local"
+                        )
+                        _add(child, child.name, kind, trust_exists=True)
+            except OSError:
+                continue
+
+    roots.sort(key=lambda r: (0 if r.get("kind") == "network" else 1, r["label"].lower()))
+    _DISK_ROOTS_CACHE = (now, [dict(x) for x in roots])
+    return [dict(x) for x in roots]
+
+
+def _network_mount_paths() -> set[str]:
+    """Best-effort set of mount points that are SMB/NFS/AFP/WebDAV/etc."""
+    import subprocess
+    import sys
+    import time
+
+    global _MOUNT_CACHE
+    now = time.monotonic()
+    if _MOUNT_CACHE is not None and now - _MOUNT_CACHE[0] < _MOUNT_TTL:
+        return set(_MOUNT_CACHE[1])
+
+    out: set[str] = set()
+    try:
+        raw = subprocess.check_output(
+            ["mount"], stderr=subprocess.DEVNULL, text=True, timeout=1.5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        _MOUNT_CACHE = (now, out)
+        return out
+    net_markers = (
+        "smbfs", "afpfs", "nfs", "webdav", "cifs", "fuse.sshfs",
+        "fuse.rclone", "osxfs", "//",
+    )
+    for line in raw.splitlines():
+        lower = line.lower()
+        if not any(m in lower for m in net_markers):
+            continue
+        if " on " in line:
+            try:
+                mid = line.split(" on ", 1)[1]
+                mp = mid.split(" (", 1)[0].split(" type ", 1)[0].strip()
+                if mp:
+                    out.add(str(Path(mp)))
+            except (IndexError, ValueError):
+                continue
+    if sys.platform == "darwin":
+        for line in raw.splitlines():
+            if "/volumes/" not in line.lower():
+                continue
+            if "//" in line or "smbfs" in line.lower() or "afpfs" in line.lower() or "nfs" in line.lower():
+                if " on " in line:
+                    mid = line.split(" on ", 1)[1]
+                    mp = mid.split(" (", 1)[0].strip()
+                    if mp:
+                        out.add(str(Path(mp)))
+    _MOUNT_CACHE = (now, set(out))
+    return out
+
+
+def _path_looks_network(path: str, net_mounts: set[str] | None = None) -> bool:
+    raw = str(path)
+    p = raw.replace("\\", "/")
+    if p.startswith("//") or raw.startswith("\\\\"):
+        return True
+    mounts = net_mounts if net_mounts is not None else _network_mount_paths()
+    # 不用 Path.resolve()：慢盘 / 掉线 NAS 会卡死 UI
+    try:
+        expanded = str(Path(path).expanduser()).replace("\\", "/")
+    except OSError:
+        expanded = p
+    candidates = {p, expanded}
+    for m in mounts:
+        mp = str(m).replace("\\", "/")
+        for c in candidates:
+            if c == mp or c.startswith(mp.rstrip("/") + "/"):
+                return True
+    return False
+
+
+def _win_drive_is_remote(letter: str) -> bool:
+    try:
+        import ctypes
+
+        root = f"{letter}:\\"
+        # DRIVE_REMOTE = 4
+        return int(ctypes.windll.kernel32.GetDriveTypeW(root)) == 4
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def is_network_storage_path(path: str | Path) -> bool:
+    """True if path is UNC or on a mounted LAN/NAS volume."""
+    return _path_looks_network(str(Path(path).expanduser()))
+
+
 # ---------------------------------------------------------------------------
 # conversations（每个项目文件夹内的对话记录）
 # ---------------------------------------------------------------------------
@@ -142,9 +346,28 @@ def new_conversation_id() -> str:
 
 
 def append_message(project: Project, conv_id: str, role: str, text: str) -> None:
-    """追加一条消息到对话（jsonl 事件流 + 同步重写 md 可读版）。"""
+    """追加一条用户/助手消息到对话（jsonl 事件流 + 同步重写 md 可读版）。"""
+    append_event(project, conv_id, role, text=text)
+
+
+def append_event(
+    project: Project,
+    conv_id: str,
+    role: str,
+    *,
+    text: str = "",
+    name: str = "",
+) -> None:
+    """追加一条对话事件：user / assistant / thinking / tool。"""
     d = conversation_dir(project)
-    line = {"role": role, "text": text, "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
+    line: dict[str, Any] = {
+        "role": role,
+        "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    if text:
+        line["text"] = text
+    if name:
+        line["name"] = name
     with (d / f"{conv_id}.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
     _rewrite_md(d, conv_id)
@@ -171,13 +394,15 @@ def list_conversations(project: Project) -> list[dict[str, Any]]:
         msgs = load_conversation(project, f.stem)
         if not msgs:
             continue
-        first_user = next((m for m in msgs if m.get("role") == "user"), None)
-        title = (first_user["text"][:30] if first_user else msgs[0]["text"][:30])
+        chat = [m for m in msgs if m.get("role") in ("user", "assistant")]
+        first_user = next((m for m in chat if m.get("role") == "user"), None)
+        title_src = first_user or (chat[0] if chat else msgs[0])
+        title = (title_src.get("text") or title_src.get("name") or "")[:30]
         out.append({
             "id": f.stem,
             "title": title.replace("\n", " "),
             "created": msgs[0].get("ts", ""),
-            "count": len(msgs),
+            "count": len(chat),
         })
     return out
 
@@ -190,8 +415,18 @@ def _rewrite_md(d: Path, conv_id: str) -> None:
     ]
     parts = [f"# 对话记录 {conv_id}\n"]
     for m in msgs:
-        who = "🧑 用户" if m["role"] == "user" else "🤖 助手"
-        parts.append(f"\n## {who} · {m.get('ts', '')}\n\n{m['text']}\n")
+        role = m.get("role")
+        ts = m.get("ts", "")
+        if role == "user":
+            parts.append(f"\n## 🧑 用户 · {ts}\n\n{m.get('text', '')}\n")
+        elif role == "assistant":
+            parts.append(f"\n## 🤖 助手 · {ts}\n\n{m.get('text', '')}\n")
+        elif role == "thinking":
+            parts.append(f"\n### 💭 思考 · {ts}\n\n{m.get('text', '')}\n")
+        elif role == "tool":
+            parts.append(f"\n- 🔧 `{m.get('name') or m.get('text', '')}` · {ts}\n")
+        else:
+            parts.append(f"\n## {role} · {ts}\n\n{m.get('text', '')}\n")
     (d / f"{conv_id}.md").write_text("".join(parts), encoding="utf-8")
 
 

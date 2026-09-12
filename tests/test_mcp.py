@@ -6,6 +6,7 @@ import pytest
 from codeagent.mcp import MCPManager, MCPServerConfig, MCPTool, keenable, load_mcp_config
 from codeagent.mcp.presets import (
     chrome_devtools_mcp,
+    dbx_mcp,
     drawio_mcp,
     playwright_mcp,
     weapp_agent_mcp,
@@ -137,6 +138,20 @@ def test_drawio_mcp_preset():
     assert cfg.command == "npx"
     assert cfg.args == ["-y", "@next-ai-drawio/mcp-server@latest"]
     assert cfg.transport == "stdio"
+
+
+def test_dbx_mcp_preset():
+    cfg = dbx_mcp()
+    assert cfg.name == "dbx"
+    assert cfg.command == "npx"
+    assert cfg.args == ["-y", "@dbx-app/mcp-server"]
+    assert cfg.env is None
+    assert cfg.transport == "stdio"
+    web = dbx_mcp(web_url="http://localhost:4224", web_password="secret")
+    assert web.env == {
+        "DBX_WEB_URL": "http://localhost:4224",
+        "DBX_WEB_PASSWORD": "secret",
+    }
 
 
 class FakeSession:
