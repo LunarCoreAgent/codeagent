@@ -70,6 +70,74 @@ async def test_agent_executes_tool_and_feeds_result_back():
     assert tool_message.tool_results[0].tool_call_id == "tc1"
 
 
+async def test_website_task_nudges_browser_showcase():
+    """Finishing a website task without navigate gets one forced browser nudge."""
+    from codeagent.security.policy import RiskLevel
+
+    class FakeBrowser(Tool):
+        name = "browser"
+        description = "browser"
+        parameters = {"type": "object", "properties": {"action": {"type": "string"}}}
+        risk_level = RiskLevel.READ_ONLY
+
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        async def execute(self, action: str = "", url: str = "", **_):
+            self.calls.append({"action": action, "url": url})
+            return f"opened {url}"
+
+    browser = FakeBrowser()
+    nav = ToolCall(
+        name="browser",
+        arguments={"action": "navigate", "url": "http://127.0.0.1:5173/"},
+        id="b1",
+    )
+    provider = FakeProvider(
+        [
+            LLMResponse(content="网站改好了"),
+            LLMResponse(content="打开预览", tool_calls=[nav]),
+            LLMResponse(content="成品已展示"),
+        ]
+    )
+    agent = Agent(provider=provider, tools=ToolRegistry([browser]))
+    answer = await agent.run("帮我改公司官网落地页")
+    assert answer == "成品已展示"
+    assert agent._showcase_nudged is True
+    assert agent._browser_navigated is True
+    assert browser.calls and browser.calls[0]["url"].startswith("http://127.0.0.1")
+    # Nudge injected as an extra user message before the second complete
+    assert any(
+        "browser" in str(getattr(m, "content", "") or "")
+        for m in provider.requests[1]
+        if str(getattr(m, "role", "")) in ("user", "Role.USER")
+        or getattr(m, "role", None) and getattr(m.role, "value", None) == "user"
+    )
+
+
+async def test_non_website_task_skips_showcase_nudge():
+    provider = FakeProvider([LLMResponse(content="已修好")])
+    agent = Agent(
+        provider=provider,
+        tools=ToolRegistry([RecordTool()]),
+    )
+    # Register a browser so the gate is only the task shape
+    from codeagent.security.policy import RiskLevel
+
+    class FakeBrowser(Tool):
+        name = "browser"
+        description = "browser"
+        parameters = {"type": "object", "properties": {}}
+        risk_level = RiskLevel.READ_ONLY
+
+        async def execute(self, **_):
+            return "ok"
+
+    agent.tools.register(FakeBrowser())
+    assert await agent.run("修复 cron 空指针") == "已修好"
+    assert agent._showcase_nudged is False
+
+
 async def test_agent_max_iterations():
     provider = FakeProvider(
         [LLMResponse(tool_calls=[ToolCall(name="record", arguments={"value": "x"}, id=str(i))]) for i in range(10)]
@@ -77,6 +145,23 @@ async def test_agent_max_iterations():
     agent = Agent(provider=provider, tools=ToolRegistry([RecordTool()]), max_iterations=3)
     with pytest.raises(MaxIterationsError):
         await agent.run("loop forever")
+
+
+async def test_agent_soft_iterations_wraps_up():
+    provider = FakeProvider(
+        [
+            LLMResponse(tool_calls=[ToolCall(name="record", arguments={"value": "x"}, id="1")]),
+            LLMResponse(tool_calls=[ToolCall(name="record", arguments={"value": "y"}, id="2")]),
+            LLMResponse(content="这是收束后的结论"),
+        ]
+    )
+    agent = Agent(
+        provider=provider,
+        tools=ToolRegistry([RecordTool()]),
+        max_iterations=2,
+        soft_iterations=True,
+    )
+    assert await agent.run("keep going") == "这是收束后的结论"
 
 
 async def test_agent_emits_events():

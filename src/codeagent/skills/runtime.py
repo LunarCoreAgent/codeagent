@@ -21,8 +21,17 @@ video_ops_status / video_ops_log / video_ops_draft / video_generate / video_stud
 文生视频用 video_generate：wan（局域网 Gradio）、minimax（Hailuo）、kimi、comfy（ComfyUI 工作流）。
 完整拍片走导演台：企划、分镜、生成、ffmpeg 合成，工具 video_studio；Comfy 不是聊天模型。
 本机 ComfyUI 出图/跑节点图：直接调用 comfy 工具（status / queue），不要把它当聊天模型。
-打开网页、登录站、点按钮、填表、截图、操作已登录浏览器时，直接调用 browser 工具，\
+打开网页、登录站、点按钮、填表、截图时，直接调用 browser 工具（软件内置浏览器，桌面有窗口），\
 不要只用 web_fetch，不要让用户自己去点浏览器。
+网站 / 落地页 / 前端界面做完后必须展示成品：先启动本地 HTTP 预览（vite preview / \
+serve dist / python -m http.server，后台运行），再 browser action=navigate 打开 \
+http://127.0.0.1:端口/（禁止 file://），最后才文字总结。用户要的是看见页面，不是只听描述。
+手机 App 界面走 mobile-app-ui；微信小程序从需求到提审走 wechat-miniprogram。
+Material 3 Expressive 草图用 browser 打开 m3e-canvas 站点，不要把画布拷进工程。
+在微信开发者工具里点页面或截图时按 weapp-agent-mcp（需本机开发者工具与 npx MCP）。
+情感陪伴 / AI 伴侣 / 人设与长期记忆：按 y-ai-accompany、ai-companion；语音叠 voice-surface。
+剪映专业版自动化剪辑 → jianying-editor；HTML 确定性成片 → hyperframes；\
+自然语言 draw.io / 架构图 → next-ai-draw-io（MCP `@next-ai-drawio/mcp-server`）。
 """
 
 # Everyday phrasing → skill-search tokens (CJK has no spaces).
@@ -34,8 +43,13 @@ _QUERY_EXPAND: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"润色|改写|人话|AI味|套话|口语化|去AI|机翻|翻译腔"),
      " 中文 人性化 slop 改写"),
     (re.compile(r"论文|开题|投稿|审稿|latex|综述|实验表"), " 论文 投稿 脊柱"),
-    (re.compile(r"短视频|短剧|剪辑|分镜|成片|口播|发布|运营|文生视频|海螺|Hailuo|ComfyUI|comfy|导演台|拍片|短片", re.I),
-     " 视频 短剧 剪辑 Comfy 文生视频 导演台"),
+    (re.compile(r"短视频|短剧|剪辑|分镜|成片|口播|发布|运营|文生视频|海螺|Hailuo|ComfyUI|comfy|导演台|拍片|短片|剪映|jianying|HyperFrames|hyperframes", re.I),
+     " 视频 短剧 剪辑 Comfy 文生视频 导演台 剪映 HyperFrames"),
+    (re.compile(
+        r"draw\.?\s*io|drawio|架构图|流程图|时序图|ER\s*图|UML|"
+        r"next-ai-draw-io|自然语言画图|示意图",
+        re.I,
+    ), " draw.io 架构图 流程图 next-ai-draw-io"),
     (re.compile(r"文生图|图生图|出一张图|出图|节点图|8188", re.I),
      " Comfy 工作流 文生图"),
     (re.compile(r"通宵|挂机|调研|文献|值守"), " 研究 通宵"),
@@ -55,9 +69,30 @@ _QUERY_EXPAND: tuple[tuple[re.Pattern[str], str], ...] = (
         re.I,
     ), " 浏览器 browser bsk"),
     (re.compile(
-        r"语音面|Voice Surface|麦克风|播报|嗲音|faster-whisper|barge-in|Alt\+Space",
+        r"语音面|Voice Surface|麦克风|播报|嗲音|嗲嗲声|faster-whisper|barge-in|Alt\+Space",
         re.I,
     ), " 语音面 Voice Surface 播报 TTS"),
+    (re.compile(
+        r"情感陪伴|AI\s*陪伴|AI\s*伴侣|智能伴侣|永久记忆|人设YAML|口癖|"
+        r"生命节律|OCEAN|倾诉|恋人预设|y-ai-accompany|ai-companion",
+        re.I,
+    ), " 情感陪伴 AI伴侣 人设 记忆 y-ai-accompany"),
+    (re.compile(
+        r"手机\s*App|手机应用|拇指热区|健身App|iOS\s*App|Android\s*App",
+        re.I,
+    ), " 手机App 移动端 拇指热区 8pt"),
+    (re.compile(
+        r"微信小程序|小程序|AppID|提审|体验版|wxml|wxss",
+        re.I,
+    ), " 微信小程序 AppID 提审 wxml"),
+    (re.compile(
+        r"微信开发者工具|小程序调试|weapp-agent|mp_screenshot|element_tap",
+        re.I,
+    ), " 微信开发者工具 小程序调试 weapp-agent"),
+    (re.compile(
+        r"Material\s*3|M3E|m3e-canvas|Material You|Expressive",
+        re.I,
+    ), " Material 3 M3E 画布 m3e-canvas"),
 )
 
 _EXT_HINTS: dict[str, str] = {
@@ -71,6 +106,9 @@ _EXT_HINTS: dict[str, str] = {
     ".py": "代码 实现",
     ".ts": "代码 前端",
     ".js": "代码 前端",
+    ".wxml": "微信小程序 wxml 页面",
+    ".wxss": "微信小程序 wxss 样式",
+    ".wxs": "微信小程序 wxs",
     ".tex": "论文 latex 投稿",
     ".bib": "论文 相关工作",
     ".md": "文档 中文 体例",
@@ -124,6 +162,8 @@ def workspace_skill_hints(root: str | Path | None = None, extra: str = "") -> st
         and (path / "Lib" / "os.py").is_file()
     ):
         parts.append("CPython 解释器 ceval GIL C API")
+    if (path / "app.json").is_file() and (path / "project.config.json").is_file():
+        parts.append("微信小程序 AppID 提审 wxml")
     exts: Counter[str] = Counter()
     dir_hits: set[str] = set()
     try:

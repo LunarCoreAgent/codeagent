@@ -12,14 +12,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
 import re
 import threading
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from codeagent.core.agent import Agent, AgentEvent
-from codeagent.core.budget import Budget
+from codeagent.core.budget import Budget, BudgetExceededError
+from codeagent.memory.compact import CompactionConfig, ConversationCompactor
 from codeagent.desktop.activity import (
     LearningStore,
     learn_now,
@@ -91,13 +95,168 @@ from codeagent.log import get_logger, setup_logging, tail_log
 from codeagent.releases import changelog_text, latest
 from codeagent.settings import Settings
 from codeagent.desktop.privacy import PRIVACY_VERSION, privacy_document
+from codeagent.browser.engine import InternalBrowser
+from codeagent.browser.webview import WebviewHost
 from codeagent.tools import default_tools
+from codeagent.tools.browser import BrowserTool
 
 log = get_logger("desktop")
 
 DESKTOP_CONFIG_PATH = Path("~/.codeagent/desktop.json")
 DEFAULT_SKILLS_DIR = Path("~/.codeagent/skills")
 MEMORY_PATH = Path("~/.codeagent/memory.json")
+# Per-task cap for desktop chat. Soft: wrap up instead of crashing the UI.
+# 50 万在思考强度=高 + 读大量文件时一轮就会顶满（见 2026-09-10 日志）。
+DESKTOP_TOKEN_BUDGET = 2_000_000
+DESKTOP_MAX_ITERATIONS_DEFAULT = 80
+DESKTOP_MAX_ITERATIONS_MIN = 10
+DESKTOP_MAX_ITERATIONS_MAX = 300
+# Back-compat alias used by older tests / docs.
+DESKTOP_MAX_ITERATIONS = DESKTOP_MAX_ITERATIONS_DEFAULT
+
+
+def clamp_max_iterations(value: Any, default: int = DESKTOP_MAX_ITERATIONS_DEFAULT) -> int:
+    """Keep tool-round trips in [10, 300]."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(DESKTOP_MAX_ITERATIONS_MIN, min(DESKTOP_MAX_ITERATIONS_MAX, n))
+_SEED_MAX_MSGS = 6
+_SEED_MAX_CHARS = 1200
+
+
+def _format_conv_seed(msgs: list[dict[str, Any]]) -> str:
+    """Prior turns as compact context — long file dumps must not refill the prompt."""
+    parts: list[str] = []
+    for m in msgs[-_SEED_MAX_MSGS:]:
+        role = "用户" if m.get("role") == "user" else "助手"
+        body = (m.get("text") or "").strip()
+        if len(body) > _SEED_MAX_CHARS:
+            body = body[:_SEED_MAX_CHARS] + "…(已截断)"
+        if body:
+            parts.append(f"{role}：{body}")
+    return "\n".join(parts)
+
+
+def _macos_pasteboard_write(text: str) -> bool:
+    """Write via NSPasteboard (works in signed .app; pbcopy may be off PATH)."""
+    try:
+        from AppKit import NSPasteboard, NSPasteboardTypeString
+
+        board = NSPasteboard.generalPasteboard()
+        board.clearContents()
+        return bool(board.setString_forType_(text, NSPasteboardTypeString))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _macos_pasteboard_read() -> str | None:
+    try:
+        from AppKit import NSPasteboard, NSPasteboardTypeString
+
+        value = NSPasteboard.generalPasteboard().stringForType_(NSPasteboardTypeString)
+        if value is None:
+            return None
+        return str(value)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _win_clip_bin() -> str:
+    root = os.environ.get("SystemRoot", r"C:\Windows")
+    return str(Path(root) / "System32" / "clip.exe")
+
+
+def _clipboard_copy(text: str) -> bool:
+    """Write Unicode text to the OS clipboard."""
+    import shutil
+    import subprocess
+    import sys
+
+    data = text if isinstance(text, str) else str(text)
+    try:
+        if sys.platform == "darwin":
+            if _macos_pasteboard_write(data):
+                return True
+            subprocess.run(
+                ["/usr/bin/pbcopy"], input=data.encode("utf-8"),
+                check=True, capture_output=True, timeout=5,
+            )
+            return True
+        if sys.platform == "win32":
+            # clip.exe expects UTF-16LE; UTF-8 Chinese becomes garbage.
+            try:
+                subprocess.run(
+                    [_win_clip_bin()], input=data.encode("utf-16le"),
+                    check=True, capture_output=True, timeout=5,
+                )
+                return True
+            except (subprocess.SubprocessError, OSError, FileNotFoundError):
+                ps = (
+                    "[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false; "
+                    "$t = [Console]::In.ReadToEnd(); Set-Clipboard -Value $t"
+                )
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                    input=data.encode("utf-8"),
+                    check=True, capture_output=True, timeout=8,
+                )
+                return True
+        for cmd in (
+            ["wl-copy"],
+            ["xclip", "-selection", "clipboard"],
+            ["xsel", "--clipboard", "--input"],
+        ):
+            if shutil.which(cmd[0]) is None:
+                continue
+            subprocess.run(
+                cmd, input=data.encode("utf-8"),
+                check=True, capture_output=True, timeout=5,
+            )
+            return True
+        return False
+    except (subprocess.SubprocessError, OSError, FileNotFoundError):
+        return False
+
+
+def _clipboard_paste() -> str:
+    """Read Unicode text from the OS clipboard."""
+    import shutil
+    import subprocess
+    import sys
+
+    try:
+        if sys.platform == "darwin":
+            got = _macos_pasteboard_read()
+            if got is not None:
+                return got
+            res = subprocess.run(
+                ["/usr/bin/pbpaste"], check=True, capture_output=True, timeout=5,
+            )
+            return res.stdout.decode("utf-8", errors="replace")
+        if sys.platform == "win32":
+            ps = (
+                "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; "
+                "Get-Clipboard -Raw"
+            )
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                check=True, capture_output=True, timeout=8,
+            )
+            return res.stdout.decode("utf-8", errors="replace").replace("\r\n", "\n")
+        for cmd in (
+            ["wl-paste"],
+            ["xclip", "-selection", "clipboard", "-o"],
+            ["xsel", "--clipboard", "--output"],
+        ):
+            if shutil.which(cmd[0]) is None:
+                continue
+            res = subprocess.run(cmd, check=True, capture_output=True, timeout=5)
+            return res.stdout.decode("utf-8", errors="replace")
+        return ""
+    except (subprocess.SubprocessError, OSError, FileNotFoundError):
+        return ""
 
 
 @dataclass
@@ -115,13 +274,21 @@ class DesktopConfig:
     voice_cute_tone: bool = True
     voice_pitch: int = -10
     voice_rate: int = -5
+    # 陪伴型 AI（偏好设置页）
+    companion_enabled: bool = False
+    companion_preset: str = ""  # 预设 id，空=自定义
+    companion_name: str = ""  # AI 自称 / 角色名
+    companion_nature: str = ""  # 性格与说话方式
     theme: str = "dark"  # dark | light | auto（跟随系统）
     thinking: str = "medium"  # low | medium | high（思考强度）
+    # 单次任务模型↔工具往返上限（偏好设置可调，10–300）
+    max_iterations: int = DESKTOP_MAX_ITERATIONS_DEFAULT
     # JSON list of {"name","provider","model","description"} for leader mode
     workers_json: str = ""
     # Accepted privacy policy version (empty = never accepted)
     privacy_accepted_version: str = ""
     privacy_accepted_at: str = ""  # ISO timestamp when last accepted
+
     @classmethod
     def load(cls, path: Path | None = None) -> "DesktopConfig":
         path = Path(path or DESKTOP_CONFIG_PATH).expanduser()
@@ -132,7 +299,9 @@ class DesktopConfig:
         except (json.JSONDecodeError, OSError):
             return cls()
         known = {f for f in cls.__dataclass_fields__}
-        return cls(**{k: v for k, v in data.items() if k in known})
+        cfg = cls(**{k: v for k, v in data.items() if k in known})
+        cfg.max_iterations = clamp_max_iterations(cfg.max_iterations)
+        return cfg
 
     def save(self, path: Path | None = None) -> None:
         path = Path(path or DESKTOP_CONFIG_PATH).expanduser()
@@ -193,6 +362,11 @@ class DesktopAPI:
         self._confirmer2 = Confirmer(lambda kind, data: self._push(kind, chan="B", **data))
         # 模型资产探测缓存：TTL 秒内不重复探测，避免来回切换页面卡死/识别慢
         self._assets_probe_cache: tuple[float, list[dict[str, Any]]] | None = None
+        self._browser_host = WebviewHost(push=self._push)
+        self._browser = InternalBrowser(host=self._browser_host)
+        self._chat_browser_urls: list[str] = []
+        self._voice_session = False
+        self._native_listen = None
         setup_logging()
 
     # ------------------------------------------------------------------
@@ -208,22 +382,121 @@ class DesktopAPI:
         if not targets:
             return
         payload = json.dumps({"kind": kind, "chan": chan, **data}, ensure_ascii=False)
+        # wrap in try — bad JS must never poison the bridge
+        script = f"try{{window._onEvent({payload})}}catch(e){{}}"
         for win in targets:
+            self._eval_js_fire_and_forget(win, script)
+
+    def _eval_js_fire_and_forget(self, win: Any, script: str) -> None:
+        """Push JS without waiting.
+
+        pywebview's ``evaluate_js`` does ``callAfter`` + ``semaphore.acquire()``.
+        Calling that from Speech / audio callbacks deadlocks the main run loop
+        the moment recognition produces text — the window freezes until force-quit.
+        """
+        # FakeWindow / tests: direct, non-blocking stub.
+        if not hasattr(win, "uid") or win.__class__.__name__ == "FakeWindow":
             try:
-                win.evaluate_js(f"window._onEvent({payload})")
-            except Exception:  # noqa: BLE001 — UI push must never crash the agent
+                win.evaluate_js(script)
+            except Exception:  # noqa: BLE001
                 log.exception("push failed")
+            return
+
+        import sys
+
+        if sys.platform == "darwin":
+            try:
+                from PyObjCTools import AppHelper
+                from webview.platforms.cocoa import BrowserView
+
+                uid = win.uid
+
+                def _run(uid: str = uid, script: str = script) -> None:
+                    try:
+                        inst = BrowserView.instances.get(uid)
+                        wv = getattr(inst, "webview", None) if inst is not None else None
+                        if wv is not None:
+                            wv.evaluateJavaScript_completionHandler_(script, None)
+                            return
+                    except Exception:  # noqa: BLE001
+                        log.exception("async cocoa push failed")
+
+                AppHelper.callAfter(_run)
+                return
+            except Exception:  # noqa: BLE001
+                log.exception("async push setup failed")
+
+        def _fallback() -> None:
+            try:
+                win.evaluate_js(script)
+            except Exception:  # noqa: BLE001
+                log.exception("push failed")
+
+        threading.Thread(target=_fallback, daemon=True, name="cca-js-push").start()
 
     def _on_event_chan(self, chan: str, event: AgentEvent) -> None:
         if event.type == "text":
             self._push("text", chan=chan, text=str(event.data))
         elif event.type == "tool_call":
-            self._push("tool", chan=chan, name=event.data.name)
+            call = event.data
+            self._push("tool", chan=chan, name=call.name)
+            if getattr(call, "name", None) == "browser":
+                args = getattr(call, "arguments", None) or {}
+                action = str(args.get("action") or "").lower()
+                url = str(args.get("url") or "").strip()
+                if action == "navigate" and url:
+                    self._chat_browser_urls.append(url)
+                    self._push("browser", chan=chan, showcase=True, **self._browser.ui_state())
         elif event.type == "skills_activated":
             names = event.data if isinstance(event.data, list) else []
             if names:
                 self._push("status", chan=chan, text="自动启用技能：" + "、".join(str(n) for n in names))
 
+    def _maybe_showcase_website(
+        self,
+        task: str,
+        answer: str,
+        agent: Agent | None,
+        chan: str,
+    ) -> None:
+        """Safety net: open internal browser if the model skipped the showcase."""
+        from codeagent.browser.showcase import (
+            ensure_local_preview,
+            extract_preview_urls,
+            looks_like_website_finished,
+            looks_like_website_task,
+        )
+
+        hints = getattr(agent, "workspace_hints", "") if agent else ""
+        navigated = bool(getattr(agent, "_browser_navigated", False) or self._chat_browser_urls)
+        if navigated:
+            url = (self._chat_browser_urls[-1] if self._chat_browser_urls else "") or (
+                self._browser.url or ""
+            )
+            if url:
+                self.browser_show_window()
+                self._push("browser", chan=chan, showcase=True, url=url, **self._browser.ui_state())
+            return
+        if not looks_like_website_finished(task, answer, hints) and not looks_like_website_task(
+            task, hints,
+        ):
+            return
+        urls = extract_preview_urls(answer, *(self._chat_browser_urls or []))
+        url = urls[-1] if urls else None
+        if not url:
+            url = ensure_local_preview(self.root)
+        if not url:
+            return
+        log.info("auto showcase website → %s", url)
+        self.browser_goto(url)
+        self.browser_show_window()
+        self._push(
+            "browser",
+            chan=chan,
+            showcase=True,
+            url=url,
+            ready_text=f"已自动打开成品预览：{url}",
+        )
     def _on_event(self, event: AgentEvent) -> None:
         self._on_event_chan("A", event)
 
@@ -343,14 +616,21 @@ class DesktopAPI:
 
     def save_config(self, data: dict[str, Any]) -> dict[str, Any]:
         for key in ("provider", "model", "api_key", "base_url", "strategy",
-                    "voice_name", "workers_json", "theme", "thinking"):
+                    "voice_name", "workers_json", "theme", "thinking",
+                    "companion_preset", "companion_name", "companion_nature"):
             if key in data:
                 setattr(self.config, key, str(data[key]))
         if self.config.theme not in ("dark", "light", "auto"):
             self.config.theme = "dark"
         if self.config.thinking not in ("low", "medium", "high"):
             self.config.thinking = "medium"
-        for key in ("auto_yes", "voice_enabled", "voice_cute_tone"):
+        if "max_iterations" in data:
+            self.config.max_iterations = clamp_max_iterations(
+                data["max_iterations"], self.config.max_iterations,
+            )
+        else:
+            self.config.max_iterations = clamp_max_iterations(self.config.max_iterations)
+        for key in ("auto_yes", "voice_enabled", "voice_cute_tone", "companion_enabled"):
             if key in data:
                 setattr(self.config, key, bool(data[key]))
         if "voice_pitch" in data:
@@ -365,8 +645,9 @@ class DesktopAPI:
                 pass
         self.config.save()
         self._agent = None
-        log.info("config saved: provider=%s model=%s",
-                 self.config.provider, self.config.model)
+        log.info("config saved: provider=%s model=%s companion=%s",
+                 self.config.provider, self.config.model,
+                 self.config.companion_enabled)
         return asdict(self.config)
 
     def save_settings(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -1261,6 +1542,19 @@ class DesktopAPI:
             return "API Key 无效或权限不足——请在设置页检查密钥。"
         if "404" in text:
             return "模型或接口不存在（404）——请确认模型名与 Base URL。"
+        if isinstance(exc, BudgetExceededError) or "token budget exceeded" in low:
+            return (
+                "这次任务的 token 用量超过了单次上限。"
+                "已完成的部分还在，请开一个新对话继续，"
+                "或把思考强度调到「中 / 低」、缩小问题范围后再发。"
+            )
+        from codeagent.core.agent import MaxIterationsError
+
+        if isinstance(exc, MaxIterationsError) or "did not finish within" in low:
+            return (
+                "这一轮工具往返次数用完了（模型一直在调工具还没收束）。"
+                "请开新对话继续，或把问题拆小、思考强度改成「中 / 低」后再发。"
+            )
         if "empty provider spec" in low or "自由路由未命中" in text:
             return ("自由路由没有可用模型——请在「自由路由」加一条关键词留空的兜底规则，"
                     "或在对话里改选一个具体模型/聚合池。")
@@ -1294,6 +1588,17 @@ class DesktopAPI:
         hint = self.THINKING_HINTS.get(self.config.thinking)
         if hint:
             rules.append(hint)
+        if self._voice_session or self.config.voice_enabled:
+            from codeagent.voice.emotion import EMOTION_PROMPT_SUFFIX, VOICE_CHAT_HINT
+
+            rules.append(VOICE_CHAT_HINT.strip())
+            rules.append(EMOTION_PROMPT_SUFFIX.strip())
+        if self.config.companion_enabled:
+            rules.append(self._companion_prompt_rule())
+            # 陪伴回复带情绪标签，方便回播/麦克风播报调语气
+            if not (self._voice_session or self.config.voice_enabled):
+                from codeagent.voice.emotion import EMOTION_PROMPT_SUFFIX
+                rules.append(EMOTION_PROMPT_SUFFIX.strip())
         if not rules:
             return self.settings
         from dataclasses import replace
@@ -1302,6 +1607,25 @@ class DesktopAPI:
         instructions = (f"{self.settings.instructions}；{extra}"
                         if self.settings.instructions else extra)
         return replace(self.settings, instructions=instructions)
+
+    def _companion_prompt_rule(self) -> str:
+        """Build companion-mode system rule from preference settings."""
+        name = (self.config.companion_name or "").strip() or "小暖"
+        nature = (self.config.companion_nature or "").strip() or (
+            "温柔、会倾听，记得用户说过的细节，口语短句，先情绪后建议"
+        )
+        user = (self.settings.nickname or "").strip() or "你"
+        return (
+            f"陪伴模式已开启：你是「{name}」，不是冷冰冰的工具助手。"
+            f"性格与说话方式：{nature}。"
+            f"称呼用户为「{user}」。"
+            "保持人设稳定，主动想起对方提过的细节；不假装真人；"
+            "危机话题要关心并建议联系现实援助，不给伤害方法。"
+            "可叠用语音播报与嗲嗲声；闲聊优先，事务协助先说明再帮忙。"
+        )
+
+    def _effective_max_iterations(self) -> int:
+        return clamp_max_iterations(self.config.max_iterations)
 
     def _build_agent(self, chan: str = "A") -> Agent:
         from codeagent.security.policy import PermissionPolicy
@@ -1313,25 +1637,60 @@ class DesktopAPI:
             if self.config.auto_yes
             else build_policy(self.perm_levels, confirmer)
         )
+        provider = self._build_provider()
         return Agent(
-            provider=self._build_provider(),
+            provider=provider,
             tools=self._agent_tools(),
             permissions=policy,
-            budget=Budget(max_total_tokens=500_000),
+            max_iterations=self._effective_max_iterations(),
+            soft_iterations=True,
+            budget=Budget(max_total_tokens=DESKTOP_TOKEN_BUDGET, soft=True),
+            compactor=ConversationCompactor(
+                provider, CompactionConfig(max_messages=24, keep_recent=8),
+            ),
             skills=self._load_skills(),
             settings=self._settings_with_patches(),
             on_event=on_event,
             workspace_hints=self._workspace_skill_hints(),
         )
 
+    def _implicit_free_route_targets(self) -> list[str]:
+        """No keyword/fallback rule: mixture → API models → local chat models."""
+        refs: list[str] = []
+        seen: set[str] = set()
+
+        def add(ref: str) -> None:
+            if ref and ref not in seen:
+                seen.add(ref)
+                refs.append(ref)
+
+        for mix in self.assets.mixtures:
+            if mix.enabled:
+                add(f"mix:{mix.id}")
+        for am in self.assets.api_models:
+            add(f"api:{am.id}")
+        if refs:
+            return refs
+        probed = self._probed_local()
+        for ep in self.assets.endpoints:
+            if ep.kind in ("gradio", "comfy"):
+                continue
+            for name in probed.get(ep.id, []) or []:
+                add(f"local:{name}@{ep.id}")
+        return refs
+
     def _implicit_free_route_target(self) -> str:
-        """No keyword/fallback rule: first enabled mixture, else first API model."""
-        mix = next((m for m in self.assets.mixtures if m.enabled), None)
-        if mix is not None:
-            return f"mix:{mix.id}"
-        if self.assets.api_models:
-            return f"api:{self.assets.api_models[0].id}"
-        return ""
+        """First implicit target, or empty."""
+        refs = self._implicit_free_route_targets()
+        return refs[0] if refs else ""
+
+    def _try_build_ref(self, ref: str):
+        saved = self.assets.active
+        self.assets.active = ref
+        try:
+            return build_active_provider(self.assets)
+        finally:
+            self.assets.active = saved
 
     def _provider_for_message(self, text: str):
         """自由路由时按规则分发；钉死具体模型则直连，不改道。"""
@@ -1346,30 +1705,40 @@ class DesktopAPI:
             }
             return self._build_provider(), decision
         target = (decision.get("target") or "").strip()
-        if not target:
-            target = self._implicit_free_route_target()
-            if target:
-                label = self._target_label(target)
+        candidates: list[str] = []
+        if target:
+            candidates.append(target)
+        else:
+            candidates.extend(self._implicit_free_route_targets())
+            if candidates:
+                pick = candidates[0]
+                label = self._target_label(pick)
                 decision = {
                     **decision,
                     "strategy": "兜底分发",
                     "reason": "未命中关键词规则，走默认聚合池或可用模型",
-                    "target": target,
+                    "target": pick,
                     "chosen": label,
                     "candidates": [label],
                 }
-        if target:
-            saved = self.assets.active
-            self.assets.active = target
-            try:
-                provider = build_active_provider(self.assets)
-            finally:
-                self.assets.active = saved
-            if provider is not None:
-                if not target.startswith("mix:"):
-                    provider = self._with_route_backups(provider, target)
-                return provider, decision
-        # 无规则/无聚合池时，退回偏好设置里的默认 Provider（兼容旧配置）
+        for cand in candidates:
+            provider = self._try_build_ref(cand)
+            if provider is None:
+                continue
+            if not cand.startswith("mix:"):
+                provider = self._with_route_backups(provider, cand)
+            if cand != target:
+                label = self._target_label(cand)
+                decision = {
+                    **decision,
+                    "strategy": "兜底分发",
+                    "reason": decision.get("reason") or "未命中关键词规则，走可用模型",
+                    "target": cand,
+                    "chosen": label,
+                    "candidates": [label],
+                }
+            return provider, decision
+        # 无规则/无聚合池/无本地模型时，退回偏好设置里的默认 Provider
         return self._build_provider(), decision
 
     def _with_route_backups(self, primary, target: str):
@@ -1448,37 +1817,20 @@ class DesktopAPI:
         return list(self._attachments)
 
     def copy_text(self, text: str) -> bool:
-        """系统剪贴板写入（pbcopy / clip / xclip）。"""
-        import shutil
-        import subprocess
-        import sys
-
-        cmds = {"darwin": ["pbcopy"], "win32": ["clip"]}
-        cmd = cmds.get(sys.platform, ["xclip", "-selection", "clipboard"])
-        if shutil.which(cmd[0]) is None:
-            return False
-        try:
-            subprocess.run(cmd, input=text.encode("utf-8"), check=True,
-                           capture_output=True, timeout=5)
-            return True
-        except (subprocess.SubprocessError, OSError):
-            return False
+        """系统剪贴板写入（pbcopy / clip UTF-16 / xclip）。"""
+        return _clipboard_copy(text)
 
     def read_clipboard(self) -> str:
         """系统剪贴板读取（pbpaste / Get-Clipboard / xclip）。"""
-        import shutil
-        import subprocess
-        import sys
+        return _clipboard_paste()
 
-        cmds = {"darwin": ["pbpaste"], "win32": ["powershell", "-command", "Get-Clipboard"]}
-        cmd = cmds.get(sys.platform, ["xclip", "-selection", "clipboard", "-o"])
-        if shutil.which(cmd[0]) is None:
-            return ""
-        try:
-            res = subprocess.run(cmd, check=True, capture_output=True, timeout=5)
-            return res.stdout.decode("utf-8", errors="replace").strip()
-        except (subprocess.SubprocessError, OSError):
-            return ""
+    def speak_text(self, text: str) -> bool:
+        """回播一段对话正文（不依赖「打字提问也播报」开关）。"""
+        if not (text or "").strip():
+            return False
+        self.stop_speaking()
+        self._speak(text, force=True)
+        return True
 
     def export_message(self, text: str) -> dict[str, Any]:
         """分享：把消息导出为 Markdown 文件（系统保存对话框）。"""
@@ -1666,8 +2018,8 @@ class DesktopAPI:
         w = self._window
         if w is None:
             return False
-        base_w = getattr(w, "initial_width", None) or 1280
-        base_h = getattr(w, "initial_height", None) or 840
+        base_w = getattr(w, "initial_width", None) or 1440
+        base_h = getattr(w, "initial_height", None) or 900
         try:
             if on:
                 w.resize(int(base_w * 1.5), base_h)
@@ -1729,10 +2081,9 @@ class DesktopAPI:
         proj = self.projects.get(self.projects.active)
         display = text
         if getattr(self, "_conv_seed2", None):  # 续接历史对话：带上下文
-            seed = "\n".join(
-                f"{'用户' if m['role'] == 'user' else '助手'}：{m['text']}"
-                for m in self._conv_seed2)
-            text = f"（本会话之前的对话记录）\n{seed}\n\n（用户新消息）\n{text}"
+            seed = _format_conv_seed(self._conv_seed2)
+            if seed:
+                text = f"（本会话之前的对话记录）\n{seed}\n\n（用户新消息）\n{text}"
             self._conv_seed2 = []
         if proj is not None:
             if not self._conv_id2:
@@ -1800,10 +2151,9 @@ class DesktopAPI:
             self._attachments = []
             display = f"{display}\n📎 {names}".strip()
         if getattr(self, "_conv_seed", None):  # 续接历史对话：带上下文
-            seed = "\n".join(
-                f"{'用户' if m['role'] == 'user' else '助手'}：{m['text']}"
-                for m in self._conv_seed)
-            text = f"（本会话之前的对话记录）\n{seed}\n\n（用户新消息）\n{text}"
+            seed = _format_conv_seed(self._conv_seed)
+            if seed:
+                text = f"（本会话之前的对话记录）\n{seed}\n\n（用户新消息）\n{text}"
             self._conv_seed = []
         if proj is not None:  # 所有对话保留在项目文件夹
             if not self._conv_id:
@@ -1828,6 +2178,11 @@ class DesktopAPI:
             self._cancel.set()
             loop = self._loop
         self.confirmer.cancel_all()
+        try:
+            from codeagent.voice.tts import stop_audio
+            stop_audio()
+        except Exception:  # noqa: BLE001
+            pass
         if loop is not None and loop.is_running():
             def _cancel_all() -> None:
                 for task in asyncio.all_tasks(loop):
@@ -1872,9 +2227,12 @@ class DesktopAPI:
                 self._push("status", chan=chan,
                            text=f"路由：{decision['taskType']} → {decision['chosen']}")
                 agent = self._build_agent_with(provider, chan=chan)
+            agent.settings = self._settings_with_patches()
             if cancel.is_set():
                 stopped = True
                 return
+
+            self._chat_browser_urls = []
 
             async def _go() -> str:
                 setattr(self, loop_attr, asyncio.get_running_loop())
@@ -1892,9 +2250,21 @@ class DesktopAPI:
                 stopped = True
                 return
             proj = self.projects.get(self.projects.active)
+            emotion_name = ""
+            display = answer
+            try:
+                from codeagent.voice.emotion import parse_emotion
+                emotion, display = parse_emotion(answer)
+                emotion_name = emotion.value
+            except Exception:  # noqa: BLE001
+                pass
             if proj is not None and conv_id:
-                append_message(proj, conv_id, "assistant", answer)
-            self._push("done", chan=chan, text=answer)
+                append_message(proj, conv_id, "assistant", display)
+            try:
+                self._maybe_showcase_website(text, display or answer or "", agent, chan)
+            except Exception:  # noqa: BLE001
+                log.exception("website showcase")
+            self._push("done", chan=chan, text=display, emotion=emotion_name)
             self._speak(answer)
         except Exception as exc:  # noqa: BLE001 — surface to the UI
             if cancel.is_set():
@@ -2029,12 +2399,54 @@ class DesktopAPI:
             pass
         return workspace_skill_hints(root, extra=" ".join(extra))
 
+    # ------------------------------------------------------------------
+    # internal browser (GUI pump + live window)
+    # ------------------------------------------------------------------
+
+    def browser_pump(self) -> int:
+        """Drain GUI jobs for the in-app browser window. Called from JS."""
+        return self._browser_host.pump()
+
+    def browser_status(self) -> dict[str, Any]:
+        return self._browser.ui_state()
+
+    def browser_goto(self, url: str) -> dict[str, Any]:
+        """Open a page in the internal browser (worker thread + GUI pump)."""
+
+        def work() -> None:
+            try:
+                asyncio.run(self._browser.run("navigate", url=url))
+            except Exception as exc:  # noqa: BLE001
+                log.exception("browser goto")
+                self._push("browser", error=str(exc)[:300], **self._browser.ui_state())
+                return
+            self._push("browser", **self._browser.ui_state())
+
+        threading.Thread(target=work, name="cca-browser", daemon=True).start()
+        return {"ok": True, "url": url}
+
+    def browser_reload(self) -> dict[str, Any]:
+        url = self._browser.url
+        if not url:
+            return {"ok": False, "error": "还没有打开页面"}
+        return self.browser_goto(url)
+
+    def browser_show_window(self) -> dict[str, Any]:
+        try:
+            self._browser_host.ensure_window(
+                self._browser.url or "about:blank", queued=False,
+            )
+            return {"ok": True}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)[:200]}
+
     def _agent_tools(self):
         """Default tools + knowledge vault + video ops when configured."""
         from codeagent.knowledge.tools import knowledge_tools
         from codeagent.videoops.tools import video_ops_tools
 
         registry = default_tools(self.root)
+        registry.register(BrowserTool(engine=self._browser))
         for tool in knowledge_tools() + video_ops_tools():
             registry.register(tool)
         return registry
@@ -2054,7 +2466,12 @@ class DesktopAPI:
             provider=provider,
             tools=self._agent_tools(),
             permissions=policy,
-            budget=Budget(max_total_tokens=500_000),
+            max_iterations=self._effective_max_iterations(),
+            soft_iterations=True,
+            budget=Budget(max_total_tokens=DESKTOP_TOKEN_BUDGET, soft=True),
+            compactor=ConversationCompactor(
+                provider, CompactionConfig(max_messages=24, keep_recent=8),
+            ),
             skills=self._load_skills(),
             settings=self._settings_with_patches(),
             on_event=on_event,
@@ -2071,37 +2488,230 @@ class DesktopAPI:
     # voice reply
     # ------------------------------------------------------------------
 
-    def _speak(self, text: str) -> None:
-        if not self.config.voice_enabled or not text.strip():
+    def set_voice_session(self, on: bool = True) -> dict[str, Any]:
+        """Start or stop continuous listen→think→speak on the chat page."""
+        self._voice_session = bool(on)
+        if not self._voice_session:
+            try:
+                self.stop_native_listen()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                from codeagent.voice.tts import stop_audio
+                stop_audio()
+            except Exception:  # noqa: BLE001
+                pass
+            self._push("voice", state="idle")
+        else:
+            self._push("voice", state="listening")
+        return {"ok": True, "on": self._voice_session}
+
+    def start_native_listen(self, locale: str = "zh-CN") -> dict[str, Any]:
+        """Use macOS Speech framework (not WKWebView webkitSpeechRecognition).
+
+        Starts on a background thread so the UI bridge never freezes while the
+        audio engine / Speech framework initializes.
+        """
+        from codeagent.desktop.voice_listen import NativeSpeechSession
+
+        if self._native_listen is None:
+            self._native_listen = NativeSpeechSession()
+
+        last_partial = {"t": 0.0, "text": ""}
+
+        def on_text(text: str, final: bool) -> None:
+            if final:
+                self._push("voice", state="heard", text=text)
+                return
+            # Throttle partials — Speech fires dozens/sec; each used to block on
+            # evaluate_js and freeze the window.
+            now = time.monotonic()
+            if text == last_partial["text"] and now - last_partial["t"] < 0.35:
+                return
+            if now - last_partial["t"] < 0.18 and not final:
+                return
+            last_partial["t"] = now
+            last_partial["text"] = text
+            self._push("voice", state="partial", text=text)
+
+        def on_error(message: str) -> None:
+            self._push("voice", state="listen_error", text=message)
+
+        def _work() -> None:
+            try:
+                result = self._native_listen.start(
+                    on_text, on_error, locale=locale or "zh-CN",
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.exception("native listen worker failed")
+                self._push(
+                    "voice", state="listen_error",
+                    text=str(exc)[:180], open_settings=True,
+                )
+                return
+            if result.get("ok"):
+                self._push("voice", state="listening")
+                return
+            self._push(
+                "voice",
+                state="listen_error",
+                text=result.get("error") or "无法启动系统听写",
+                path=result.get("path") or "",
+                open_settings=bool(result.get("open_settings")),
+            )
+
+        threading.Thread(target=_work, daemon=True, name="cca-native-listen").start()
+        return {"ok": True, "async": True, "engine": "speech.framework"}
+
+    def stop_native_listen(self) -> bool:
+        sess = self._native_listen
+        if sess is not None:
+            sess.stop()
+        return True
+
+    def mic_permission_status(self) -> dict[str, Any]:
+        """Query OS microphone / speech TCC status (instant, no dialogs)."""
+        from codeagent.desktop.mic import mic_permission_status
+
+        return mic_permission_status()
+
+    def ensure_mic_permission(self) -> dict[str, Any]:
+        """Gate voice start: authorized, need browser prompt, or open Settings."""
+        from codeagent.desktop.mic import ensure_mic_permission
+
+        return ensure_mic_permission()
+
+    def request_mic_access(self) -> dict[str, Any]:
+        """向系统申请麦克风 + 语音识别权限（短超时，避免卡死界面）。"""
+        from codeagent.desktop.mic import request_mic_access
+
+        return request_mic_access()
+
+    def open_mic_settings(self) -> dict[str, Any]:
+        """Open system Privacy → Microphone settings."""
+        from codeagent.desktop.mic import open_mic_settings
+
+        return open_mic_settings()
+
+    def open_speech_settings(self) -> dict[str, Any]:
+        """Open system Privacy → Speech Recognition settings."""
+        from codeagent.desktop.mic import open_speech_settings
+
+        return open_speech_settings()
+
+    def stop_speaking(self) -> bool:
+        try:
+            from codeagent.voice.tts import stop_audio
+            stop_audio()
+        except Exception:  # noqa: BLE001
+            return False
+        # Notify UI; do not start another engine — cancel is final for this utterance.
+        self._push("voice", state="spoken")
+        return True
+
+    def _should_speak(self) -> bool:
+        return self._voice_session or self.config.voice_enabled
+
+    def _speak(self, text: str, force: bool = False) -> None:
+        # Mic continuous session must always voice-answer after the user speaks.
+        speak = force or self._should_speak()
+        if not speak or not (text or "").strip():
+            if self._voice_session:
+                self._push("voice", state="spoken")
             return
 
         def _play() -> None:
-            try:
-                from codeagent.voice.speech import cute_style, to_speech_text
-                from codeagent.voice.tts import EdgeTTSProvider, play_audio, resolve_voice
+            from codeagent.voice.tts import (
+                PlaybackCancelled,
+                begin_utterance,
+                playback_generation,
+            )
 
-                spoken = to_speech_text(text)
+            gen = begin_utterance()
+            try:
+                from codeagent.voice.emotion import parse_emotion, style_for
+                from codeagent.voice.speech import cute_style, overlay_style, to_speech_text
+                from codeagent.voice.tts import EdgeTTSProvider, resolve_voice, system_say
+
+                emotion, clean = parse_emotion(text)
+                spoken = to_speech_text(clean, max_len=800)
                 if not spoken:
+                    spoken = " ".join((clean or "").split())[:800]
+                if not spoken:
+                    self._push("voice", state="error", text="这条没有可朗读的文字")
                     return
-                tts = EdgeTTSProvider(
-                    voice=resolve_voice(self.config.voice_name),
-                    emotion_voices=False,
-                )
-                style = cute_style(
-                    self.config.voice_pitch,
-                    self.config.voice_rate,
-                    self.config.voice_cute_tone,
-                )
+                if playback_generation() != gen:
+                    return
+                self._push("voice", state="speaking", emotion=emotion.value)
+
+                # Continuous mic chat: prefer OS say first (fast, offline), then
+                # edge-tts. Typing "voice_enabled" still prefers neural edge.
+                prefer_system = bool(self._voice_session)
 
                 async def _go() -> None:
-                    path = await tts.synthesize(spoken, style=style)
-                    await play_audio(path)
+                    from codeagent.voice.tts import play_audio as _play_file
 
-                asyncio.run(_go())
-            except Exception:  # noqa: BLE001 — voice is best-effort
-                log.exception("tts failed")
+                    if playback_generation() != gen:
+                        raise PlaybackCancelled()
+                    if prefer_system:
+                        try:
+                            await asyncio.get_running_loop().run_in_executor(
+                                None, lambda: system_say(spoken, self.config.voice_name)
+                            )
+                            return
+                        except PlaybackCancelled:
+                            raise
+                        except Exception:
+                            log.exception("system_say failed, trying edge-tts")
 
-        threading.Thread(target=_play, daemon=True).start()
+                    tts = EdgeTTSProvider(
+                        voice=resolve_voice(self.config.voice_name),
+                        emotion_voices=False,
+                    )
+                    style = overlay_style(
+                        style_for(emotion),
+                        cute_style(
+                            self.config.voice_pitch,
+                            self.config.voice_rate,
+                            self.config.voice_cute_tone,
+                        ),
+                    )
+                    style = type(style)(
+                        voice=None,
+                        rate=style.rate,
+                        pitch=style.pitch,
+                    )
+                    try:
+                        path = await tts.synthesize(spoken, style=style)
+                        if playback_generation() != gen:
+                            raise PlaybackCancelled()
+                        await _play_file(path)
+                    except PlaybackCancelled:
+                        raise
+                    except Exception:
+                        if playback_generation() != gen:
+                            raise PlaybackCancelled()
+                        log.exception(
+                            "edge-tts playback failed, falling back to system voice"
+                        )
+                        await asyncio.get_running_loop().run_in_executor(
+                            None, lambda: system_say(spoken, self.config.voice_name)
+                        )
+
+                try:
+                    asyncio.run(_go())
+                except PlaybackCancelled:
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    if playback_generation() != gen:
+                        return
+                    log.exception("tts failed")
+                    self._push("voice", state="error", text=str(exc)[:180])
+            finally:
+                if playback_generation() == gen:
+                    self._push("voice", state="spoken")
+
+        threading.Thread(target=_play, daemon=True, name="cca-tts").start()
 
     # ------------------------------------------------------------------
     # leader command center

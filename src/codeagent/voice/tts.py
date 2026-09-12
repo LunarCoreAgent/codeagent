@@ -16,6 +16,7 @@ import tempfile
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 from codeagent.voice.emotion import VoiceStyle
 
@@ -116,20 +117,193 @@ _PLAYERS: dict[str, list[list[str]]] = {
     ],
 }
 
+_play_proc: asyncio.subprocess.Process | None = None
+_say_proc: Any = None  # subprocess.Popen | None
+_stop_gen: int = 0
+
+
+class PlaybackCancelled(Exception):
+    """User (or a newer utterance) stopped playback — do not fall back to another engine."""
+
+
+def playback_generation() -> int:
+    return _stop_gen
+
+
+def begin_utterance() -> int:
+    """Cancel any prior playback and return the generation id for a new utterance."""
+    stop_audio()
+    return _stop_gen
+
+
+def _which(name: str) -> str | None:
+    """Resolve a player/binary; GUI-launched apps often have a thin PATH."""
+    found = shutil.which(name)
+    if found:
+        return found
+    if sys.platform == "darwin" and name in {"afplay", "say"}:
+        fallback = f"/usr/bin/{name}"
+        if Path(fallback).is_file():
+            return fallback
+    return None
+
+
+def _win_player(path: str) -> list[str]:
+    safe = path.replace("'", "''")
+    ps = (
+        "Add-Type -AssemblyName presentationCore; "
+        "$m = New-Object System.Windows.Media.MediaPlayer; "
+        f"$m.Open([uri]'{safe}'); $m.Play(); "
+        "while(-not $m.NaturalDuration.HasTimeSpan){ Start-Sleep -Milliseconds 40 }; "
+        "Start-Sleep -Milliseconds ([int]$m.NaturalDuration.TimeSpan.TotalMilliseconds + 180)"
+    )
+    return ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps]
+
+
+def _macos_say_voice(hint: str) -> str:
+    low = (hint or "").lower()
+    if any(tok in low for tok in ("tw", "hsiao", "meijia", "edge-tw", "yunjhe")):
+        return "Meijia"
+    return "Tingting"
+
+
+def _run_say(argv: list[str], gen: int) -> None:
+    """Run OS TTS as a killable process; respect stop_audio() mid-flight."""
+    import subprocess
+    import time
+
+    global _say_proc
+    if _stop_gen != gen:
+        raise PlaybackCancelled()
+    proc = subprocess.Popen(
+        argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    _say_proc = proc
+    try:
+        while proc.poll() is None:
+            if _stop_gen != gen:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                raise PlaybackCancelled()
+            time.sleep(0.05)
+        if _stop_gen != gen:
+            raise PlaybackCancelled()
+        if proc.returncode not in (0, None):
+            # Killed by stop_audio → treat as cancel; other failures bubble.
+            if _stop_gen != gen:
+                raise PlaybackCancelled()
+            raise subprocess.CalledProcessError(proc.returncode or 1, argv)
+    finally:
+        if _say_proc is proc:
+            _say_proc = None
+
+
+def system_say(text: str, voice_hint: str = "") -> None:
+    """Offline OS TTS when edge-tts / afplay is unavailable."""
+    import subprocess
+
+    spoken = (text or "").strip()
+    if not spoken:
+        raise RuntimeError("没有可朗读的文字")
+    gen = _stop_gen
+    if sys.platform == "darwin":
+        say = _which("say") or "say"
+        voice = _macos_say_voice(voice_hint)
+        try:
+            _run_say([say, "-v", voice, spoken], gen)
+            return
+        except PlaybackCancelled:
+            raise
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            if _stop_gen != gen:
+                raise PlaybackCancelled()
+            _run_say([say, spoken], gen)
+            return
+    if sys.platform == "win32":
+        safe = spoken.replace("'", "''")[:800]
+        ps = (
+            "Add-Type -AssemblyName System.Speech; "
+            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+            f"$s.Speak('{safe}')"
+        )
+        _run_say(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            gen,
+        )
+        return
+    raise RuntimeError("当前系统没有可用的朗读引擎")
+
 
 async def play_audio(path: str | Path) -> None:
     """Play an audio file with whatever player the OS offers."""
-    candidates = _PLAYERS.get(sys.platform, _PLAYERS["linux"])
+    global _play_proc
+    target = str(path)
+    gen = _stop_gen
+    if sys.platform == "win32":
+        candidates = [_win_player(target)]
+    else:
+        candidates = _PLAYERS.get(sys.platform, _PLAYERS["linux"])
+    tried = False
     for player in candidates:
-        if shutil.which(player[0]):
-            process = await asyncio.create_subprocess_exec(
-                *player, str(path),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await process.wait()
+        if _stop_gen != gen:
+            raise PlaybackCancelled()
+        if player[0] == "powershell":
+            argv = list(player)
+        else:
+            binary = _which(player[0])
+            if binary is None:
+                continue
+            argv = [binary, *player[1:], target]
+        tried = True
+        process = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        _play_proc = process
+        try:
+            rc = await process.wait()
+        finally:
+            if _play_proc is process:
+                _play_proc = None
+        if _stop_gen != gen:
+            raise PlaybackCancelled()
+        if rc == 0:
             return
+        # Non-zero after an explicit stop is cancel, not "try next engine".
+        if _stop_gen != gen:
+            raise PlaybackCancelled()
+    if _stop_gen != gen:
+        raise PlaybackCancelled()
     raise RuntimeError(
-        "No audio player found (tried afplay/ffplay/mpg123); "
+        "No audio player found (tried afplay/ffplay/mpg123/MediaPlayer); "
         f"audio file saved at {path}"
+        if tried else
+        f"No audio player binary available; audio file saved at {path}"
     )
+
+
+def stop_audio() -> None:
+    """Interrupt in-flight playback (file player and OS say)."""
+    global _play_proc, _say_proc, _stop_gen
+    _stop_gen += 1
+    proc = _play_proc
+    _play_proc = None
+    if proc is not None:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        except Exception:  # noqa: BLE001
+            pass
+    say = _say_proc
+    _say_proc = None
+    if say is not None:
+        try:
+            say.kill()
+        except ProcessLookupError:
+            pass
+        except Exception:  # noqa: BLE001
+            pass

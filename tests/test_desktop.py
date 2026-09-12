@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from codeagent.desktop.api import DesktopAPI, DesktopConfig
+from codeagent.core.budget import BudgetExceededError
+from codeagent.desktop.api import DesktopAPI, DesktopConfig, _format_conv_seed
 from codeagent.desktop.ui import HTML
 
 
@@ -23,9 +24,23 @@ class FakeWindow:
         self.calls: list[dict] = []
 
     def evaluate_js(self, script: str):
-        prefix = "window._onEvent("
-        assert script.startswith(prefix)
-        self.calls.append(json.loads(script[len(prefix):-1]))
+        # Production push wraps: try{window._onEvent({...})}catch(e){}
+        marker = "window._onEvent("
+        start = script.find(marker)
+        assert start >= 0, script[:120]
+        start += len(marker)
+        depth = 0
+        end = None
+        for i, ch in enumerate(script[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        assert end is not None
+        self.calls.append(json.loads(script[start:end]))
 
     def kinds(self) -> list[str]:
         return [c["kind"] for c in self.calls]
@@ -179,6 +194,25 @@ def test_save_config_persists_and_resets_agent(api, tmp_path):
     assert reloaded.model == "gpt-4o-mini"
 
 
+def test_companion_settings_roundtrip(api, tmp_path):
+    r = api.save_config({
+        "companion_enabled": True,
+        "companion_preset": "2",
+        "companion_name": "晚柠",
+        "companion_nature": "温柔治愈，擅长倾听",
+    })
+    assert r["companion_enabled"] is True
+    assert r["companion_name"] == "晚柠"
+    loaded = DesktopConfig.load(tmp_path / "desktop.json")
+    assert loaded.companion_enabled is True
+    assert loaded.companion_preset == "2"
+    assert "温柔" in loaded.companion_nature
+    block = api._companion_prompt_rule()
+    assert "晚柠" in block and "陪伴模式已开启" in block
+    patched = api._settings_with_patches()
+    assert "陪伴模式已开启" in patched.instructions
+
+
 def test_save_settings_updates_personalization(api):
     api.save_settings({"nickname": "石头", "language": "中文"})
     assert api.settings.nickname == "石头"
@@ -310,6 +344,75 @@ def test_diagnose_messages(api):
     assert "服务" in algo
     assert "再发" in algo
     assert "chatcmpl" not in algo
+    budget = api._diagnose(BudgetExceededError(
+        "Token budget exceeded: 519841 tokens used (budget: 500000)"
+    ))
+    assert "token" in budget.lower()
+    assert "新对话" in budget
+    assert "519841" not in budget
+    from codeagent.core.agent import MaxIterationsError
+
+    iters = api._diagnose(MaxIterationsError("Agent did not finish within 50 iterations"))
+    assert "往返" in iters and "新对话" in iters
+    assert "50 iterations" not in iters
+
+
+def test_desktop_agent_uses_soft_iterations(api, monkeypatch):
+    from codeagent.desktop import api as api_mod
+
+    captured = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(api_mod, "Agent", FakeAgent)
+    monkeypatch.setattr(api, "_build_provider", lambda: object())
+    monkeypatch.setattr(api, "_agent_tools", lambda: None)
+    monkeypatch.setattr(api, "_load_skills", lambda: None)
+    monkeypatch.setattr(api, "_settings_with_patches", lambda: None)
+    monkeypatch.setattr(api, "_workspace_skill_hints", lambda: "")
+    api.config.max_iterations = 120
+    api._build_agent()
+    assert captured.get("max_iterations") == 120
+    assert captured.get("soft_iterations") is True
+
+
+def test_max_iterations_config_clamped(api, tmp_path):
+    from codeagent.desktop.api import DesktopConfig, clamp_max_iterations
+
+    assert clamp_max_iterations(5) == 10
+    assert clamp_max_iterations(999) == 300
+    assert clamp_max_iterations("abc") == 80
+    api.save_config({"max_iterations": 300})
+    assert api.config.max_iterations == 300
+    api.save_config({"max_iterations": 999})
+    assert api.config.max_iterations == 300
+    api.save_config({"max_iterations": 1})
+    assert api.config.max_iterations == 10
+    loaded = DesktopConfig.load(tmp_path / "desktop.json")
+    # last save was 10
+    assert loaded.max_iterations == 10
+
+
+def test_ui_max_iterations_settings():
+    assert 'id="sectAgentLimits"' in HTML
+    assert 'id="cfg_max_iterations"' in HTML
+    assert "agentLimitsFromForm" in HTML
+    assert "syncMaxIterationsSlider" in HTML
+    assert "max=\"300\"" in HTML
+    assert "Agent 执行上限" in HTML
+def test_format_conv_seed_truncates_long_history():
+    msgs = [
+        {"role": "user", "text": "hello"},
+        {"role": "assistant", "text": "x" * 5000},
+        {"role": "user", "text": "continue"},
+    ]
+    seed = _format_conv_seed(msgs)
+    assert "hello" in seed
+    assert "continue" in seed
+    assert "已截断" in seed
+    assert len(seed) < 5000
 
 
 def test_get_overview(api):
@@ -493,6 +596,10 @@ def test_get_skills_includes_bundled(api):
     assert "browser-skill" in names
     assert "ego-browser" in names
     assert "voice-surface" in names
+    assert "mobile-app-ui" in names
+    assert "wechat-miniprogram" in names
+    assert "weapp-agent-mcp" in names
+    assert "m3e-canvas" in names
     assert "stop-slop-zh" in names
     stop = next(s for s in api.get_skills() if s["name"] == "stop-slop-zh")
     assert "github.com/VincentOld/stop-slop-zh" in stop["source"]
@@ -545,8 +652,40 @@ def test_ui_has_all_pages_and_bridge():
     assert "pywebview.api.get_logs" in HTML
     assert "pywebview.api.get_models_page" in HTML
     assert "pywebview.api.save_mixture" in HTML
-    assert "语音面 Voice Surface" in HTML
+    assert "语音面 · 嗲嗲声" in HTML
     assert "cfg_cute" in HTML
+    assert "开启嗲嗲声" in HTML
+    assert "试听嗲嗲声" in HTML
+    assert "syncCuteSliders" in HTML
+    assert "previewCuteVoice" in HTML
+    assert "voiceConfigFromForm" in HTML
+    assert "陪伴型 AI" in HTML
+    assert 'id="sectCompanion"' in HTML
+    assert 'id="cfg_companion"' in HTML
+    assert "companionConfigFromForm" in HTML
+    assert "COMPANION_PRESETS" in HTML
+    assert "applyCompanionPreset" in HTML
+    assert "开启陪伴模式" in HTML
+    assert "max-width: 1040px" in HTML
+    assert ".chat-col" in HTML
+    assert 'id="micBtn"' in HTML
+    assert "toggleVoice" in HTML
+    assert "micPermDialog" in HTML
+    assert "open_mic_settings" in HTML
+    assert "ensure_mic_permission" in HTML
+    assert "allowMicAndStart" in HTML
+    assert "request_mic_access" in HTML
+    assert "start_native_listen" in HTML
+    assert "stop_native_listen" in HTML
+    assert "系统听写" in HTML
+    assert "state==='heard'" in HTML
+    assert "隐私与安全性 → 麦克风" in HTML
+    assert "打开「麦克风」系统页" in HTML
+    assert "LunarCore Agent 是另一个软件" in HTML
+    assert "register_mic_with_tcc_async" in Path(
+        __file__).resolve().parents[1].joinpath("src/codeagent/desktop/app.py").read_text(encoding="utf-8")
+    assert "webkitSpeechRecognition" in HTML
+    assert "pywebview.api.set_voice_session" in HTML
     assert "pywebview.api.route_sandbox" in HTML
     assert "pywebview.api.set_permission_level" in HTML
     assert "pywebview.api.resolve_confirm" in HTML
@@ -559,6 +698,10 @@ def test_ui_has_all_pages_and_bridge():
     assert "pywebview.api.set_patch_status" in HTML
     assert "pywebview.api.approve_skill" in HTML
     assert "pywebview.api.get_nav_status" in HTML
+    assert "pywebview.api.browser_status" in HTML
+    assert "pywebview.api.browser_pump" in HTML
+    assert 'id="page-browser"' in HTML
+    assert 'data-page="browser"' in HTML
     assert "function bootUi" in HTML
     assert "pywebviewready" in HTML
     assert "pywebview.api.get_privacy_policy" in HTML
@@ -877,10 +1020,44 @@ def test_chat_free_route_empty_assets_friendly_error(api, monkeypatch):
     api.set_active_model("route:free")
     api.config.provider = ""
     api.config.model = ""
+    monkeypatch.setattr(api, "_probed_local", lambda ttl=30.0: {})
     assert api.send("随便聊聊") is True
     err = wait_for(api._window, "error")
     assert "自由路由" in err["text"]
     assert "Empty provider spec" not in err["text"]
+
+
+def test_chat_free_route_falls_back_to_local(api, monkeypatch):
+    """自由路由未命中规则时，可用本机模型兜底，不再要求空关键词规则。"""
+    from codeagent.core.types import LLMResponse
+
+    seen = {}
+
+    class FakeProvider:
+        def __init__(self, model):
+            self.model = model
+            self.name = "fake"
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            seen["model"] = self.model
+            return LLMResponse(content="ok")
+
+    monkeypatch.setattr(
+        "codeagent.desktop.api.parse_provider_spec",
+        lambda *a, **k: FakeProvider("legacy"),
+    )
+    monkeypatch.setattr(
+        "codeagent.llm.ollama.OllamaProvider",
+        lambda model, base_url: FakeProvider(model),
+    )
+    ep = api.assets.endpoints[0]
+    monkeypatch.setattr(api, "_probed_local", lambda ttl=30.0: {ep.id: ["qwen3:8b"]})
+    api.set_active_model("route:free")
+    api.config.provider = ""
+    api.config.model = ""
+    assert api.send("你好呀") is True
+    wait_for(api._window, "done")
+    assert seen["model"] == "qwen3:8b"
 
 
 # ---------------------------------------------------------------------------
@@ -1266,6 +1443,219 @@ def test_nav_status_counts_configured_assets(api):
     assert s["local"] >= 1
 
 
+def test_internal_browser_ready_without_bsk(api):
+    st = api.browser_status()
+    assert "内置浏览器" in st["ready_text"]
+    assert st["backend"] == "idle"
+    assert not api._browser.has_gui
+    assert api.browser_pump() == 0
+    assert api._browser.has_gui  # JS interval arms the live window
+    brow = api._agent_tools().get("browser")
+    assert brow is not None
+    assert brow.engine is api._browser
+
+
+def test_voice_session_injects_emotion_prompt(api):
+    assert api.set_voice_session(True)["on"] is True
+    text = api._settings_with_patches().instructions or ""
+    assert "[emotion:happy]" in text
+    assert "语音连续对话" in text
+    assert api.set_voice_session(False)["on"] is False
+    kinds = api._window.kinds()
+    assert "voice" in kinds
+
+
+def test_open_mic_settings_uses_privacy_microphone_url(monkeypatch):
+    from codeagent.desktop import mic as mic_mod
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(list(cmd))
+
+        class R:
+            returncode = 0
+            stderr = ""
+
+        return R()
+
+    monkeypatch.setattr(mic_mod.sys, "platform", "darwin")
+    monkeypatch.setattr(mic_mod.subprocess, "run", fake_run)
+    r = mic_mod.open_mic_settings()
+    assert r["ok"] is True
+    assert "Privacy_Microphone" in calls[0][1]
+    assert "com.apple.settings.PrivacySecurity.extension" in calls[0][1]
+    assert "麦克风" in r["path"]
+    assert "CodeCoreAgent" in r["hint"]
+
+
+def test_mic_permission_status_and_ensure(api, monkeypatch):
+    from codeagent.desktop import mic as mic_mod
+
+    monkeypatch.setattr(mic_mod, "mic_permission_status", lambda: {
+        "status": "authorized", "speech_status": "authorized", "platform": "darwin",
+    })
+    assert api.mic_permission_status()["status"] == "authorized"
+    assert api.ensure_mic_permission()["ok"] is True
+
+    monkeypatch.setattr(mic_mod, "mic_permission_status", lambda: {
+        "status": "authorized", "speech_status": "not_determined", "platform": "darwin",
+    })
+    monkeypatch.setattr(
+        mic_mod, "request_mic_access",
+        lambda timeout=90.0: {
+            "ok": True, "status": "authorized", "speech_status": "authorized",
+            "registered": True,
+        },
+    )
+    r = api.ensure_mic_permission()
+    assert r["ok"] is True and r.get("speech_status") == "authorized"
+
+    opened = {}
+    monkeypatch.setattr(mic_mod, "mic_permission_status", lambda: {
+        "status": "authorized", "speech_status": "denied", "platform": "darwin",
+    })
+    monkeypatch.setattr(
+        mic_mod, "request_mic_access",
+        lambda timeout=90.0: {
+            "ok": False, "status": "authorized", "speech_status": "denied",
+            "message": mic_mod.SPEECH_SETTINGS_HINT, "path": mic_mod.SPEECH_SETTINGS_PATH,
+        },
+    )
+    monkeypatch.setattr(
+        mic_mod, "open_speech_settings",
+        lambda: opened.update(speech=True) or {
+            "ok": True, "path": mic_mod.SPEECH_SETTINGS_PATH,
+        },
+    )
+    r = api.ensure_mic_permission()
+    assert r["ok"] is False and r["open_settings"] is True
+    assert opened.get("speech") is True
+    assert "语音识别" in (r.get("message") or "")
+
+    opened.clear()
+    monkeypatch.setattr(mic_mod, "mic_permission_status", lambda: {
+        "status": "denied", "speech_status": "denied", "platform": "darwin",
+    })
+    monkeypatch.setattr(
+        mic_mod, "open_mic_settings",
+        lambda: opened.update(ok=True) or {"ok": True, "path": "x"},
+    )
+    r = api.ensure_mic_permission()
+    assert r["ok"] is False and r["open_settings"] is True
+    assert opened.get("ok") is True
+    assert api.open_mic_settings()["ok"] is True
+
+
+def test_request_mic_access_api(api, monkeypatch):
+    from codeagent.desktop import mic as mic_mod
+
+    monkeypatch.setattr(
+        mic_mod, "request_mic_access",
+        lambda timeout=90.0: {
+            "ok": True, "status": "authorized", "speech_status": "authorized",
+            "registered": True,
+        },
+    )
+    assert api.request_mic_access()["registered"] is True
+
+
+def test_html_mentions_speech_recognition_gate():
+    assert "语音识别" in HTML
+    assert "open_speech_settings" in HTML
+    assert "只开麦克风不够" in HTML
+
+
+def test_html_mic_perm_settings_section():
+    assert 'id="sectMicPerm"' in HTML
+    assert "麦克风与语音识别权限" in HTML
+    assert "refreshMicPermStatus" in HTML
+    assert "requestMicFromSettings" in HTML
+    assert "openMicFromSettings" in HTML
+    assert "openSpeechFromSettings" in HTML
+
+
+def test_start_native_listen_wires_events(api, monkeypatch):
+    class FakeSession:
+        def __init__(self):
+            self.started = False
+            self.on_text = None
+            self._ev = threading.Event()
+
+        def start(self, on_text, on_error=None, locale="zh-CN"):
+            self.started = True
+            self.on_text = on_text
+            self._ev.set()
+            return {"ok": True, "engine": "speech.framework", "locale": locale}
+
+        def stop(self):
+            self.started = False
+
+    fake = FakeSession()
+    monkeypatch.setattr(
+        "codeagent.desktop.voice_listen.NativeSpeechSession",
+        lambda: fake,
+    )
+    r = api.start_native_listen("zh-CN")
+    assert r["ok"] is True and r.get("async") is True
+    assert fake._ev.wait(2.0)
+    assert fake.started
+    fake.on_text("你好世界", True)
+    time.sleep(0.05)
+    kinds = api._window.kinds()
+    assert "voice" in kinds
+    assert api.stop_native_listen() is True
+
+
+def test_native_speech_commit_once():
+    from codeagent.desktop.voice_listen import NativeSpeechSession
+
+    sess = NativeSpeechSession()
+    calls: list[tuple[str, bool]] = []
+    sess._on_text = lambda t, f: calls.append((t, f))
+    sess._active = True
+    sess._committed = False
+    sess._finish_utterance = lambda: None  # type: ignore[method-assign]
+    sess._commit("你好呀")
+    sess._commit("你好呀")
+    sess._commit("")
+    assert calls == [("你好呀", True)]
+    assert sess._committed is True
+
+
+def test_html_mentions_voice_answer_chip():
+    assert "说完了 — 正在想并准备语音回答" in HTML
+
+
+def test_macos_mic_status_mapping(monkeypatch):
+    from codeagent.desktop import mic as mic_mod
+
+    class Device:
+        @staticmethod
+        def authorizationStatusForMediaType_(media):
+            assert media == "soun"
+            return 3
+
+    class Bundle:
+        def load(self):
+            return True
+
+    monkeypatch.setattr(mic_mod.sys, "platform", "darwin")
+    import sys
+    import types
+
+    fake_objc = types.ModuleType("objc")
+    fake_objc.lookUpClass = lambda name: Device
+    fake_foundation = types.ModuleType("Foundation")
+    fake_foundation.NSBundle = types.SimpleNamespace(
+        bundleWithPath_=lambda path: Bundle()
+    )
+    monkeypatch.setitem(sys.modules, "objc", fake_objc)
+    monkeypatch.setitem(sys.modules, "Foundation", fake_foundation)
+    assert mic_mod._macos_status() == "authorized"
+    assert mic_mod.mic_permission_status()["status"] == "authorized"
+
+
 # ---------------------------------------------------------------------------
 # theme (浅色主题)
 # ---------------------------------------------------------------------------
@@ -1384,7 +1774,110 @@ def test_remove_attachment(api):
 
 
 def test_copy_text_uses_system_clipboard(api):
-    assert api.copy_text("hello 剪贴板") is True  # macOS pbcopy
+    sample = "hello 剪贴板"
+    assert api.copy_text(sample) is True  # macOS pbcopy
+    assert sample in api.read_clipboard()
+
+
+def test_clipboard_copy_falls_back_to_usr_bin_pbcopy(monkeypatch):
+    import subprocess
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(list(cmd))
+
+        class R:
+            returncode = 0
+            stdout = b""
+
+        return R()
+
+    monkeypatch.setattr("codeagent.desktop.api._macos_pasteboard_write", lambda text: False)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    from codeagent.desktop.api import _clipboard_copy
+
+    assert _clipboard_copy("hello") is True
+    assert calls[0] == ["/usr/bin/pbcopy"]
+
+
+def test_webkit_clipboard_prefs_enable_dom_paste():
+    seen: list[tuple] = []
+
+    class Prefs:
+        def setValue_forKey_(self, value, key):
+            seen.append((key, value))
+
+        def setJavaScriptCanAccessClipboard_(self, value):
+            seen.append(("setter", value))
+
+    class Config:
+        def preferences(self):
+            return Prefs()
+
+    class Web:
+        def configuration(self):
+            return Config()
+
+    class View:
+        webview = Web()
+
+    from codeagent.desktop.app import apply_webkit_clipboard_prefs
+
+    apply_webkit_clipboard_prefs(View())
+    assert ("DOMPasteAllowed", True) in seen
+    assert ("javaScriptCanAccessClipboard", True) in seen
+    assert ("setter", True) in seen
+
+
+def test_speak_text_replays_without_voice_toggle(api, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(api, "stop_speaking", lambda: True)
+    monkeypatch.setattr(
+        api, "_speak", lambda text, force=False: seen.update(text=text, force=force)
+    )
+    assert api.speak_text("请回播这一段") is True
+    assert seen["text"] == "请回播这一段"
+    assert seen["force"] is True
+    assert api.speak_text("   ") is False
+
+
+def test_stop_speaking_pushes_spoken(api, monkeypatch):
+    stopped = {}
+    monkeypatch.setattr(
+        "codeagent.voice.tts.stop_audio",
+        lambda: stopped.update(ok=True),
+    )
+    assert api.stop_speaking() is True
+    assert stopped.get("ok") is True
+    assert "voice" in api._window.kinds()
+    assert any(
+        c.get("kind") == "voice" and c.get("state") == "spoken"
+        for c in api._window.calls
+    )
+
+
+def test_clipboard_copy_windows_uses_utf16(monkeypatch):
+    import subprocess
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append((list(cmd), kw.get("input")))
+
+        class R:
+            returncode = 0
+            stdout = b""
+
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr("sys.platform", "win32")
+    from codeagent.desktop.api import _clipboard_copy, _win_clip_bin
+
+    assert _clipboard_copy("你好") is True
+    assert calls[0][0] == [_win_clip_bin()]
+    assert calls[0][1] == "你好".encode("utf-16le")
 
 
 def test_thinking_config_validation(api):
@@ -1420,10 +1913,27 @@ def test_ui_chat_composer_features():
     assert "curBot.innerHTML=renderReply" in HTML
     assert "msg-actions" in HTML and "copy_text" in HTML
     assert "copyChatAll" in HTML and "复制全部" in HTML
+    assert 'id="replayBtn"' in HTML and "speakText" in HTML
+    assert 'id="stopSpeakTool"' in HTML and "stopSpeak()" in HTML
+    assert "停止播报" in HTML
+    assert "setSpeakingUi" in HTML
+    assert "stop_speaking" in HTML
+    assert "⏹ 停止播报" in HTML
+    assert "回播失败" in HTML
+    assert "🔊 回播" in HTML
+    assert "speak_text" in HTML
     assert "chatPlainText" in HTML
     assert "user-select: text" in HTML
-    assert "text_select=True" in Path(
-        __file__).resolve().parents[1].joinpath("src/codeagent/desktop/app.py").read_text(encoding="utf-8")
+    assert "_ctxSel" in HTML and "insertAtCursor" in HTML
+    assert "execCommand('copy')" in HTML
+    assert HTML.find("pywebview.api.copy_text") < HTML.find("navigator.clipboard.writeText")
+    assert "WKWebView 需打开 DOMPasteAllowed" in HTML
+    app_src = Path(__file__).resolve().parents[1].joinpath(
+        "src/codeagent/desktop/app.py"
+    ).read_text(encoding="utf-8")
+    assert "text_select=True" in app_src
+    assert "private_mode=False" in app_src
+    assert "DOMPasteAllowed" in app_src
     assert "export_message" in HTML
     assert "pick_attachments" in HTML
     assert 'id="stopBtn"' in HTML and "stopChat()" in HTML
@@ -2075,6 +2585,11 @@ def test_ui_second_window_markup():
     assert 'id="copyChatBtnB"' in CHAT_HTML
     assert "pywebview.api.send2" in CHAT_HTML and "pywebview.api.stop2" in CHAT_HTML
     assert "pywebview.api.read_clipboard" in CHAT_HTML  # 右键粘贴回退
+    assert "_ctxSel" in CHAT_HTML and "WKWebView 需打开 DOMPasteAllowed" in CHAT_HTML
+    assert "speakText" in CHAT_HTML and "replayLast" in CHAT_HTML
+    assert 'id="stopSpeakToolB"' in CHAT_HTML and "停止播报" in CHAT_HTML
+    assert "stopSpeak()" in CHAT_HTML
+    assert "⏹ 停止播报" in CHAT_HTML
     assert "resolve_confirm2" in CHAT_HTML  # B 通道工具确认
     assert "window._onEvent" in CHAT_HTML and "ev.chan" in CHAT_HTML
     assert "pywebview.api.open_second_window" in HTML  # 主窗口「新窗口」按钮
@@ -2089,6 +2604,15 @@ def test_push_b_routes_to_second_window(api):
     assert win_b.calls[0]["chan"] == "B" and win_b.calls[0]["text"] == "独立窗口内容"
     api._push("tool", chan="A", name="shell")
     assert len(api._window.calls) == 2 and len(win_b.calls) == 1
+
+
+def test_voice_push_does_not_require_blocking_evaluate_js(api):
+    """Recognition callbacks must use fire-and-forget push (no semaphore wait)."""
+    api._push("voice", state="partial", text="你好")
+    api._push("voice", state="heard", text="你好世界")
+    voice = [c for c in api._window.calls if c.get("kind") == "voice"]
+    assert [c["state"] for c in voice] == ["partial", "heard"]
+    assert hasattr(api, "_eval_js_fire_and_forget")
 
 
 def test_open_second_window_safe(api):

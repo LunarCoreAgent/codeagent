@@ -4,7 +4,12 @@ from types import SimpleNamespace
 import pytest
 
 from codeagent.mcp import MCPManager, MCPServerConfig, MCPTool, keenable, load_mcp_config
-from codeagent.mcp.presets import chrome_devtools_mcp, playwright_mcp
+from codeagent.mcp.presets import (
+    chrome_devtools_mcp,
+    drawio_mcp,
+    playwright_mcp,
+    weapp_agent_mcp,
+)
 
 
 def test_load_mcp_config(tmp_path):
@@ -113,6 +118,25 @@ def test_chrome_devtools_mcp_preset():
     assert cfg.name == "chrome-devtools"
     assert "chrome-devtools-mcp@latest" in cfg.args
     assert "--headless" not in cfg.args
+
+
+def test_weapp_agent_mcp_preset():
+    cfg = weapp_agent_mcp()
+    assert cfg.name == "weapp-agent-mcp"
+    assert cfg.command == "npx"
+    assert cfg.args == ["-y", "@chaixueyuan/weapp-agent-mcp"]
+    assert cfg.env == {"WEAPP_WS_ENDPOINT": "ws://localhost:9420"}
+    assert cfg.transport == "stdio"
+    custom = weapp_agent_mcp("ws://127.0.0.1:9421")
+    assert custom.env == {"WEAPP_WS_ENDPOINT": "ws://127.0.0.1:9421"}
+
+
+def test_drawio_mcp_preset():
+    cfg = drawio_mcp()
+    assert cfg.name == "drawio"
+    assert cfg.command == "npx"
+    assert cfg.args == ["-y", "@next-ai-drawio/mcp-server@latest"]
+    assert cfg.transport == "stdio"
 
 
 class FakeSession:

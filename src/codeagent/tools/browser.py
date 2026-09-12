@@ -1,7 +1,7 @@
-"""Drive the user's real browser via BrowserSkill (bsk) or ego-lite.
+"""Drive a browser for the agent.
 
-Does not vendor those projects. The agent calls this tool; we shell out to
-whatever bridge is already installed on the machine.
+Default is the software's own internal browser (desktop window, or HTTP
+fetch). Optional bridges: BrowserSkill (bsk) or ego-lite, if installed.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from codeagent.browser.engine import InternalBrowser
 from codeagent.security.policy import RiskLevel
 from codeagent.tools.base import Tool
 
@@ -19,7 +20,7 @@ SESSION_PATH = Path("~/.codeagent/bsk-session").expanduser()
 MAX_OUTPUT = 40_000
 
 INSTALL_HINT = (
-    "未检测到浏览器桥。装好后对话里会自动调用，无需点选。\n"
+    "需要操作你已经登录的 Chrome/Edge 时，可另装外接桥（内置浏览器无需安装）：\n"
     "1) BrowserSkill（Chrome/Edge，macOS/Linux/Windows）：\n"
     "   curl -fsSL https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.sh | sh\n"
     "   再从 Chrome 应用店或 Edge 附加组件安装 BrowserSkill 扩展。\n"
@@ -57,10 +58,14 @@ def parse_bsk_session_id(text: str) -> str:
 class BrowserTool(Tool):
     name = "browser"
     description = (
-        "Drive the user's real logged-in browser (click, fill, open pages, "
-        "screenshot). Prefer this over web_fetch when the page needs login "
-        "or interaction. Uses BrowserSkill (bsk) if installed, else ego-lite. "
-        "Call this yourself — do not ask the user to operate the browser."
+        "Open pages, read them, click and fill forms in the software's "
+        "built-in browser. Prefer this over web_fetch when the page needs "
+        "interaction. On desktop the user sees a live window. When a website "
+        "or frontend task is finished, navigate to the local preview URL "
+        "(http://127.0.0.1 / localhost — never file://) to showcase the "
+        "product before summarizing. Optional: BrowserSkill (bsk) or ego-lite "
+        "if installed, for the user's already logged-in Chrome. Call this "
+        "yourself — do not ask the user to browse."
     )
     parameters = {
         "type": "object",
@@ -94,9 +99,11 @@ class BrowserTool(Tool):
         self,
         session_path: str | Path | None = None,
         default_timeout: int = 90,
+        engine: InternalBrowser | None = None,
     ) -> None:
         self.session_path = Path(session_path or SESSION_PATH).expanduser()
         self.default_timeout = default_timeout
+        self.engine = engine if engine is not None else InternalBrowser()
 
     def risk_for(self, arguments: dict[str, Any]) -> RiskLevel:
         action = str(arguments.get("action") or "").strip().lower()
@@ -121,20 +128,30 @@ class BrowserTool(Tool):
         backend = detect_browser_backend()
         if action == "status":
             return self._status(backend)
-        if not backend:
-            return INSTALL_HINT
+        # Desktop injects a live in-app window — always use it.
+        if self.engine.has_gui:
+            return await self.engine.run(
+                action, url=url, target=target, value=value, script=script, timeout=wait,
+            )
         if backend == "bsk":
             return await self._bsk(action, url, target, value, script, out, session, wait)
-        return await self._ego(action, url, target, value, script, out, wait)
+        if backend == "ego":
+            return await self._ego(action, url, target, value, script, out, wait)
+        return await self.engine.run(
+            action, url=url, target=target, value=value, script=script, timeout=wait,
+        )
 
     def _status(self, backend: str) -> str:
+        lines = [self.engine.status_text()]
         if backend == "bsk":
             sid = self._read_session()
             extra = f" 当前会话 {sid}" if sid else " 尚无会话（navigate 会自动开）"
-            return "后端 BrowserSkill (bsk)。" + extra
-        if backend == "ego":
-            return "后端 ego-lite (ego-browser)。用 task space，不打扰你的标签。"
-        return INSTALL_HINT
+            lines.append("外接 BrowserSkill (bsk) 可用。" + extra)
+        elif backend == "ego":
+            lines.append("外接 ego-lite (ego-browser) 可用。用 task space，不打扰你的标签。")
+        else:
+            lines.append(INSTALL_HINT)
+        return "\n".join(lines)
 
     def _read_session(self) -> str:
         try:

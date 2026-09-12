@@ -42,3 +42,30 @@ def chrome_devtools_mcp(headless: bool = True) -> MCPServerConfig:
     if headless:
         args.append("--headless")
     return MCPServerConfig(name="chrome-devtools", command="npx", args=args)
+
+
+def weapp_agent_mcp(endpoint: str = "ws://localhost:9420") -> MCPServerConfig:
+    """WeChat DevTools automation via ``@chaixueyuan/weapp-agent-mcp``.
+
+    Requires Node.js and WeChat DevTools with the automation / service
+    port open. Default WebSocket is ``ws://localhost:9420``.
+    """
+    return MCPServerConfig(
+        name="weapp-agent-mcp",
+        command="npx",
+        args=["-y", "@chaixueyuan/weapp-agent-mcp"],
+        env={"WEAPP_WS_ENDPOINT": endpoint},
+    )
+
+
+def drawio_mcp() -> MCPServerConfig:
+    """Next AI Draw.io MCP: natural-language draw.io diagrams in a browser.
+
+    Requires Node.js. Launches ``npx @next-ai-drawio/mcp-server@latest``.
+    Pair with the ``next-ai-draw-io`` fusion skill.
+    """
+    return MCPServerConfig(
+        name="drawio",
+        command="npx",
+        args=["-y", "@next-ai-drawio/mcp-server@latest"],
+    )

@@ -35,3 +35,22 @@ def cute_style(
     pitch = max(-50, min(50, int(pitch_hz)))
     rate = max(-20, min(20, int(rate_pct)))
     return VoiceStyle(rate=f"{rate:+d}%", pitch=f"{pitch:+d}Hz")
+
+
+def _num(token: str, suffix: str) -> int:
+    raw = (token or "").replace(suffix, "").replace("+", "").strip() or "0"
+    try:
+        return int(float(raw))
+    except ValueError:
+        return 0
+
+
+def overlay_style(emotion: VoiceStyle, cute: VoiceStyle) -> VoiceStyle:
+    """Stack 嗲音 on emotion prosody; keep the emotion voice if set."""
+    rate = max(-50, min(50, _num(emotion.rate, "%") + _num(cute.rate, "%")))
+    pitch = max(-50, min(50, _num(emotion.pitch, "Hz") + _num(cute.pitch, "Hz")))
+    return VoiceStyle(
+        voice=emotion.voice,
+        rate=f"{rate:+d}%",
+        pitch=f"{pitch:+d}Hz",
+    )

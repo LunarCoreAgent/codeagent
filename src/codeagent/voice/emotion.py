@@ -89,3 +89,23 @@ EMOTION_VOICE_MAP: dict[Emotion, VoiceStyle] = {
 
 def style_for(emotion: Emotion) -> VoiceStyle:
     return EMOTION_VOICE_MAP.get(emotion, EMOTION_VOICE_MAP[Emotion.NEUTRAL])
+
+
+EMOTION_LABELS: dict[Emotion, str] = {
+    Emotion.NEUTRAL: "平静",
+    Emotion.HAPPY: "开心",
+    Emotion.SAD: "难过",
+    Emotion.ANGRY: "生气",
+    Emotion.SURPRISED: "惊讶",
+    Emotion.THINKING: "思考",
+    Emotion.LOVING: "温柔",
+    Emotion.SLEEPY: "困倦",
+}
+
+
+VOICE_CHAT_HINT = (
+    "当前是语音连续对话：像身边的人一样说话，有情绪、有温度，不要像说明书或客服。"
+    "每条回复第一行必须是一个 [emotion:...] 标签。"
+    "用口语短句，少列表、少代码；先回应心情再办事。"
+    "用户说「再见」「停止语音」「退出」时简短道别。"
+)

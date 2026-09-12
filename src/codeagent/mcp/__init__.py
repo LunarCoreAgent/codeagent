@@ -4,12 +4,14 @@ from codeagent.mcp.client import (
     MCPTool,
     load_mcp_config,
 )
-from codeagent.mcp.presets import keenable
+from codeagent.mcp.presets import drawio_mcp, keenable, weapp_agent_mcp
 
 __all__ = [
     "MCPManager",
     "MCPServerConfig",
     "MCPTool",
+    "drawio_mcp",
     "keenable",
     "load_mcp_config",
+    "weapp_agent_mcp",
 ]

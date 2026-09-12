@@ -106,6 +106,15 @@ def test_fusion_pack_and_chinese_routing():
     assert "browser-skill" in FUSION_SKILLS
     assert "ego-browser" in FUSION_SKILLS
     assert "voice-surface" in FUSION_SKILLS
+    assert "y-ai-accompany" in FUSION_SKILLS
+    assert "ai-companion" in FUSION_SKILLS
+    assert "mobile-app-ui" in FUSION_SKILLS
+    assert "wechat-miniprogram" in FUSION_SKILLS
+    assert "weapp-agent-mcp" in FUSION_SKILLS
+    assert "m3e-canvas" in FUSION_SKILLS
+    assert "jianying-editor" in FUSION_SKILLS
+    assert "hyperframes" in FUSION_SKILLS
+    assert "next-ai-draw-io" in FUSION_SKILLS
     lib = fusion_library()
     anime = lib.search("用 anime.js 做入场交错")
     assert anime[0].name == "anime-js"
@@ -117,6 +126,10 @@ def test_fusion_pack_and_chinese_routing():
     assert core[0].name == "cpython"
     brow = lib.search("用 BrowserSkill 打开已登录网页")
     assert brow[0].name == "browser-skill"
+    acc = lib.search("YAML 人设 永久记忆 生命节律")
+    assert acc[0].name == "y-ai-accompany"
+    comp = lib.search("AI伴侣 恋人预设 多会话")
+    assert comp[0].name == "ai-companion"
     hits = lib.search("把这段中文去AI味")
     assert {s.name for s in hits} & {"stop-slop-zh", "humanizer-zh"}
     ui = lib.search("做个落地页")
@@ -132,9 +145,13 @@ def test_install_fusion_skills(tmp_path):
     assert "fusion-router" in written
     assert "anime-js" in written
     assert "cpython" in written
+    assert "jianying-editor" in written
+    assert "hyperframes" in written
+    assert "next-ai-draw-io" in written
     assert (tmp_path / "karpathy-craft" / "SKILL.md").is_file()
-    assert (tmp_path / "anime-js" / "SKILL.md").is_file()
-    assert (tmp_path / "cpython" / "SKILL.md").is_file()
+    assert (tmp_path / "jianying-editor" / "SKILL.md").is_file()
+    assert (tmp_path / "hyperframes" / "SKILL.md").is_file()
+    assert (tmp_path / "next-ai-draw-io" / "SKILL.md").is_file()
     assert "fusion-router" in ensure_fusion_skills(tmp_path)
 
 
@@ -179,12 +196,33 @@ def test_expand_and_match_work_content():
     assert "cpython" in {s.name for s in match_work_skills(lib, "给 CPython 加一个 C 模块")}
     assert "cpython" not in {s.name for s in match_work_skills(lib, "写个读取 csv 的脚本")}
     assert "browser" in expand_work_query("打开网页点一下登录按钮")
+    from codeagent.skills.runtime import STUDIO_SKILL_RULES
+    assert "展示成品" in STUDIO_SKILL_RULES or "内置浏览器" in STUDIO_SKILL_RULES
+    assert "http://127.0.0.1" in STUDIO_SKILL_RULES
     names = {s.name for s in match_work_skills(lib, "用浏览器打开已登录的后台")}
     assert names & {"browser-skill", "ego-browser"}
     assert "Comfy" in expand_work_query("出一张图")
     assert "导演台" in expand_work_query("帮我拍一条短片")
     assert "comfyui" in {s.name for s in match_work_skills(lib, "用节点图出一张图")}
     assert "voice-surface" in {s.name for s in match_work_skills(lib, "把语音面嗲音调低一点")}
+    assert "y-ai-accompany" in {s.name for s in match_work_skills(lib, "做个有永久记忆的情感陪伴 Agent")}
+    assert "ai-companion" in {s.name for s in match_work_skills(lib, "AI伴侣恋人预设多会话")}
+    assert "手机App" in expand_work_query("做个健身App首页")
+    assert "mobile-app-ui" in {s.name for s in match_work_skills(lib, "做个健身App首页")}
+    assert "微信小程序" in expand_work_query("做一个微信小程序")
+    assert "wechat-miniprogram" in {s.name for s in match_work_skills(lib, "做一个微信小程序并提审")}
+    assert "weapp-agent" in expand_work_query("在微信开发者工具里点按钮")
+    assert "weapp-agent-mcp" in {
+        s.name for s in match_work_skills(lib, "在微信开发者工具里点按钮截图")
+    }
+    assert "m3e-canvas" in expand_work_query("用 Material 3 画布出提示词")
+    assert "m3e-canvas" in {s.name for s in match_work_skills(lib, "用 Material 3 画布出提示词")}
+    assert "剪映" in expand_work_query("用剪映自动配字幕导出")
+    assert "jianying-editor" in {s.name for s in match_work_skills(lib, "用剪映自动配字幕导出")}
+    assert "HyperFrames" in expand_work_query("用 HyperFrames 做产品发布片")
+    assert "hyperframes" in {s.name for s in match_work_skills(lib, "用 HyperFrames 渲染 HTML 成片")}
+    assert "draw.io" in expand_work_query("画一张 AWS 架构图 draw.io")
+    assert "next-ai-draw-io" in {s.name for s in match_work_skills(lib, "用自然语言画 draw.io 流程图")}
 
 
 def test_workspace_hints_see_frontend_files(tmp_path):
@@ -211,6 +249,20 @@ def test_workspace_hints_see_cpython_tree(tmp_path):
     assert "CPython" in hints
     names = {s.name for s in match_work_skills(fusion_library(), "", hints=hints)}
     assert "cpython" in names
+
+
+def test_workspace_hints_see_miniprogram(tmp_path):
+    from codeagent.skills.fusion import fusion_library
+    from codeagent.skills.runtime import match_work_skills, workspace_skill_hints
+
+    (tmp_path / "app.json").write_text('{"pages":["pages/index/index"]}\n')
+    (tmp_path / "project.config.json").write_text('{"appid":"wx000"}\n')
+    (tmp_path / "pages").mkdir()
+    (tmp_path / "pages" / "index.wxml").write_text("<view>hi</view>\n")
+    hints = workspace_skill_hints(tmp_path)
+    assert "微信小程序" in hints
+    names = {s.name for s in match_work_skills(fusion_library(), "", hints=hints)}
+    assert "wechat-miniprogram" in names
 
 
 async def test_use_skill_tool_loads_and_lists():

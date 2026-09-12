@@ -22,6 +22,10 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
 先看用户要什么，再执行对应技能，不要同时套全部规则。
 
 - 做界面 / 改视觉 / React 动效 → impeccable-craft、taste-craft、ui-ux-pro、react-bits、anime-js、agent-style
+- 手机 App 界面 / 拇指热区 / 移动端组件 → mobile-app-ui
+- Material 3 Expressive 画布 / 导出实现提示词 → m3e-canvas（内置浏览器打开）
+- 微信小程序从需求到提审发布 → wechat-miniprogram
+- 微信开发者工具里点页面、截图、巡检 → weapp-agent-mcp
 - 网页时间线、交错、SVG 描边/路径动画 → anime-js（必要时叠 react-bits）
 - 中文要像人话、去 AI 味、改稿 → stop-slop-zh、humanizer-zh、shuorenhua、chinese-style
 - 判断一段话像不像 AI 写的 → aigc-detect
@@ -31,9 +35,13 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
 - 蒸馏某个人的思维方式 → nuwa-distill
 - 从零讲清模型/系统 → karpathy-craft
 - 本地扩散工作流 / 节点图 / 文生图 / ComfyUI → comfyui，直接调用 comfy 工具；成片也可用 video_generate provider=comfy
+- 剪映专业版自动化剪辑 / 草稿 / 字幕配乐导出 → jianying-editor（需本机剪映 + ffmpeg）
+- HTML/CSS 写成片 / HyperFrames / 产品发布片 / PR 解说视频 → hyperframes（Node 22+ / ffmpeg；与 Remotion 二选一或迁移）
+- draw.io / 架构图 / 流程图 / 自然语言画图 → next-ai-draw-io（优先 MCP `@next-ai-drawio/mcp-server`；也可用在线演示）
 - CPython 内核 / C API / GIL / 从源码编 Python / 给解释器加模块 → cpython（写普通 .py 应用不要套）
-- 打开网页 / 登录站 / 点按钮 / 填表 / 操作已登录浏览器 → 直接调用 browser 工具；技能 browser-skill 或 ego-browser
+- 打开网页 / 登录站 / 点按钮 / 填表 → 直接调用 browser 工具（软件内置浏览器，无需安装；已登录 Chrome 可另用 browser-skill / ego-browser）
 - 语音面 / 麦克风 / 播报 / 嗲音 / barge-in → voice-surface
+- 情感陪伴 / AI 伴侣 / 人设 YAML / 永久记忆 / 口癖 → y-ai-accompany、ai-companion
 """,
     ),
     "voice-surface": (
@@ -62,7 +70,86 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
 - query 直答；analysis 先复述再确认；trade 语音只到预填单，必须人手点确认
 - 凭证只写不读（safeStorage）；旧明文凭据迁入保险库后从状态删除
 - 缺麦克风/whisper/edge-tts 就说怎么开，不要假装已经听懂
-- CodeCoreAgent 桌面端：偏好设置「语音面」；打字提问同样播报回答
+- CodeCoreAgent 桌面端：对话页麦克风按钮连续听→想→说；偏好设置可让打字提问也播报
+- 语音回复带 [emotion:...] 标签，播报按情绪调语速/音调，嗲音叠加上去
+""",
+    ),
+    "y-ai-accompany": (
+        "情感 Agent 托管：YAML 人设、三级记忆、OCEAN 演化、情绪动力学、生命节律与角色化拒答",
+        "情感陪伴,AI陪伴,AI伴侣,人设,永久记忆,口癖,OCEAN,生命节律,剧情记忆,拒答,y-ai-accompany,小暖",
+        "https://github.com/anrror/y-ai-accompany",
+        """# y-ai-accompany（情感 Agent 托管）
+来源：https://github.com/anrror/y-ai-accompany （基于 y-ai-agent-base；仓库为 MVP）。
+做长期情感陪伴、人设不崩、记得用户、主动想起、安全拒答时启用。
+自己调用 use_skill("y-ai-accompany")。不要把整仓 Go/pgvector 拷进本软件。
+
+## 产品公式
+陪伴价值 ≈ 身份 × 记忆 × 性格 × 安全 × 生命节律 × 人设锚定 × 口癖指纹 × 剧情 × 角色化拒答。
+
+## CodeCoreAgent 落地（优先）
+- 人设写进偏好「额外说明 / 用户与主机上下文」，必要时对话里声明当前角色名
+- 跨轮细节用本机记忆/对话历史；主动复述用户提过的名字、猫、面试等具体点
+- 语音陪伴叠 voice-surface + 嗲嗲声；情绪用 [emotion:...]，先倾听再建议
+- 不假装真人；危机话题：关心 + 求助热线/身边可信的人，不给伤害方法
+
+## YAML 人设骨架（一行配置思想）
+每条 Agent：`identity`（name/persona/speaking_style/greeting）+ `personality`（OCEAN 0~1）
++ `memory_config` + `safety_config`；进阶：`anchoring.always/never`、`speaking_quirks`
+（catchphrases / sentence_tendency / avoid / examples）、`refusal_rules`（hard / in_character / deflect）、
+`story`（L0 槽 + 定期蒸馏）、`daily_schedule`（quiet_hours、max_daily_messages、按时段 personality_prompt）。
+示例角色：小暖（温柔姐姐）、墨羽、星尘、咚咚、明远等——按场景选，不要一次叠全部。
+
+## 管线要点
+- 记忆：工作记忆（近轮）→ 短期 → 长期检索（top_k）；同 user_id+agent 连续请求要接得上
+- 性格：OCEAN 可随互动微调，但 always/never 锚定优先，防长聊人设漂移
+- 情绪：用户检测（共情 α≈0.3）与事件评价（Appraisal）分通道；Agent 自有 Emotion→Mood→基线，
+  注入 MOOD BLOCK；禁止简单镜像用户情绪（防精分/回声筒）
+- 生命节律：作息 + 饥饿/精力/社交欲；深夜 quiet_hours 不主动吵；道别收尾：总结→正向→祝愿→未来邀约，
+  禁止「别走」类操控
+- 拒答：危机 hard_refuse（可 escalate）；人设内温和拒绝；其余 deflect 换话题
+
+## 上游自跑（征得同意再装）
+- 需要完整托管平台时：clone 仓库 → `server/` 配 `YAI_PROVIDERS_API_KEY` / `BASE_URL`（不要带 /v1）/
+  `CHAT_MODEL` / `YAI_AUTH_JWT_SECRET` → `go run ./cmd/server_v2/`（:8080）
+- OpenAI 兼容：`POST /api/v1/chat/completions`，`model` 用 agent_id（如 xiaonuan），带 `user_id`
+- 轻量 Python demo：`demo/` + requirements；测评：`eval/probes`（人设稳定 / 上头度 / 剧情）
+- 缺依赖就说明怎么装，不要假装已经连上远程 Agent 平台
+""",
+    ),
+    "ai-companion": (
+        "轻量 AI 伴侣：昵称+性格预设、多会话记忆、文字/语音闲聊与情绪倾听",
+        "AI伴侣,智能伴侣,情感陪伴,恋人预设,会话记忆,DeepSeek伴侣,ai-companion,撒娇,倾诉",
+        "https://github.com/huxiaoxiao03/ai-companion",
+        """# ai-companion（轻量情感伴侣）
+来源：https://github.com/huxiaoxiao03/ai-companion
+FastAPI + 单页前端：设昵称/性格（或 10 个预设）→ 多会话文字聊天 → 本地存记录。
+要「像恋人/朋友陪聊」、切人设、管多个陪伴会话时启用。
+自己调用 use_skill("ai-companion")。需要更深的记忆/节律/拒答栈时叠 y-ai-accompany。
+
+## CodeCoreAgent 落地（优先）
+- 开聊前确认：称呼（昵称）、性格一句话、要不要语音播报
+- 把昵称/性格写入偏好或本轮 system；回复口语、短句、先情绪后建议
+- 多段关系用不同对话/项目分开，不要把 A 会话细节串到 B
+- 预设风格参考（勿照抄整段 NSFW）：元气黏人、温柔治愈、奶系示弱、外冷内热、阳光玩伴、
+  成熟知性、氛围感调情、古风含蓄、木讷真诚、独立酷感——按用户选一档，稳定不崩
+- 可叠 voice-surface / 嗲嗲声做语音陪伴；事务协助（提醒、总结）与情感倾听分开说清
+
+## 上游自跑（征得同意再装）
+```bash
+export deepseek="sk-..."   # 环境变量名就是 deepseek
+cd assistant && uv sync && uv run uvicorn main:app --host 0.0.0.0 --port 8000
+# 可选：nginx-ai-partner 托管前端，/api 反代到 8000
+```
+- API：`GET /api/presets`；`POST /api/sessions`（nick_name, nature）；
+  `POST /api/chat`（session_name, message, nick_name, nature）；
+  `GET/DELETE /api/sessions/{session_name}`
+- 统一响应 `{code,message,data}`；会话落盘在 `assistant/sessions/`
+- 缺 DeepSeek Key / Python≥3.14 / uv 就说怎么开，不要假装已经聊上
+
+## 铁律
+- 不替代专业心理咨询或危机干预；自伤/他伤意图要劝求现实援助
+- 不假装真人；不索要或泄露隐私凭证
+- 不要把 nginx 整包或 sessions 目录提交进本仓库
 """,
     ),
     "browser-skill": (
@@ -71,8 +158,8 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
         "https://github.com/Tencent/BrowserSkill/",
         """# BrowserSkill
 来源：https://github.com/Tencent/BrowserSkill/
-用本机 `bsk` CLI + 浏览器扩展，在独立 Agent 窗口操作**用户已登录**的 Chrome/Edge。
-需要打开网页、点按钮、填表、读已登录页时：直接调用工具 `browser`，不要让用户去点，不要只用 web_fetch。
+默认用软件**内置浏览器**（`browser` 工具，桌面有独立窗口）。只有需要用户**已登录的 Chrome/Edge** 时，才走本机 `bsk` CLI + 扩展。
+需要打开网页、点按钮、填表时：直接调用工具 `browser`，不要让用户去点，不要只用 web_fetch。
 禁止从页面提取 cookie、token、密码。
 
 ## 本机准备
@@ -96,7 +183,7 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
         """# ego-lite / ego-browser
 来源：https://github.com/citrolabs/ego-lite （文档 https://lite.ego.app/document/）
 macOS 上的 Agent 浏览器：每个任务一个 Space，复用你的登录，不抢你正在看的标签。
-有 `ego-browser`、没有 `bsk` 时，`browser` 工具走这条后端。两者都有时优先 BrowserSkill。
+有 `ego-browser`、没有桌面窗口、也没有 `bsk` 时，`browser` 工具走这条后端。桌面版优先内置浏览窗口。
 需要网页交互时直接调 `browser`，不要让用户点选。
 
 ## 本机准备
@@ -193,7 +280,7 @@ macOS 上的 Agent 浏览器：每个任务一个 Space，复用你的登录，�
 - 精修保留身份；重做替换视觉世界，禁止把旧脸打磨成新脸
 - 命令语汇：shape / critique / audit / polish / bolder / quieter / distill / harden / animate / typeset / layout
 - 禁止：紫色渐变套餐、Inter+卡片阴影、假数据英雄区、无层次的灰字、为动而动
-- 一次做完再验收：桌面+移动各看一遍，缺陷一批改，最多再确认一轮
+- 一次做完再验收：启动本地预览后，用 browser 工具 navigate 打开页面，桌面+移动视口各看一遍；缺陷一批改，最多再确认一轮。禁止只交文字不展示。
 - 非 UI 任务不要套本技能
 """,
     ),
@@ -398,6 +485,72 @@ macOS 上的 Agent 浏览器：每个任务一个 Space，复用你的登录，�
 - 结论用「在…条件下观察到…」，禁止「业界最佳」
 """,
     ),
+    "mobile-app-ui": (
+        "手机 App 界面：60/30/10、8pt 网格、拇指热区、Peak-End",
+        "手机App,移动端,拇指热区,8pt,60/30/10,iOS,Android,健身App",
+        "https://github.com/ceorkm/mobile-app-ui-design",
+        """# 手机 App 界面
+来源思想：ceorkm/mobile-app-ui-design（skills.yangsir.net/skill/gh-mobile-app-ui-design）。
+做原生感手机界面、改组件层级、对标 Airbnb/Spotify 时启用。网页落地页走 impeccable-craft。
+
+- 60/30/10：主色约 60%、辅色 30%、强调色 10%；先定语义色再铺组件
+- 8pt 网格：间距/圆角/字号对齐 8 的倍数；触控目标 ≥44pt
+- 拇指热区：主操作放屏幕下半；返回/次要放上沿或边缘
+- Peak-End：关键成功瞬间与结束态单独设计，不要平均铺满装饰
+- 先信息架构与状态（空/加载/错/成功），再动效
+""",
+    ),
+    "wechat-miniprogram": (
+        "微信小程序全流程：需求、原型、AppID、开发、体验版、提审、发布",
+        "微信小程序,小程序,AppID,提审,体验版,project.config,wxml,wxss",
+        "https://github.com/niuhuoshan/launch-wechat-miniprogram",
+        """# 微信小程序
+来源思想：niuhuoshan/launch-wechat-miniprogram；官方示例 wechat-miniprogram/miniprogram-demo；
+工程习惯 Sun-sunshine06/miniprogram-skills。做小程序或仓库里已有 app.json + project.config.json 时启用。
+
+流程（按用户进度，不要一次全做）：
+1. 需求与页面清单；原生组件优先，少套无关 UI 框架
+2. 注册 AppID、类目、隐私与备案（用户自己在公众平台完成）
+3. 脚手架对齐：app.json 页面路由、tabBar、sitemap；project.config.json 的 appid
+4. 开发：WXML/WXSS/JS；组件与 API 对照官方 demo，不要把整个 demo 仓库拷进工程
+5. 开发者工具编译、真机预览、体验版；再提审发布
+
+卡住时：
+- 开发者工具打不开/编译失败：先核对基础库、appid、合法域名，再清缓存重编译
+- CLI / 自动化端口：对齐 weapp-agent-mcp
+- 改完后做一次界面巡检：主路径、空态、授权弹窗、tab 切换
+- 文案：短、按钮动词明确，去掉套话
+不要把 AppSecret、支付密钥写进仓库或对话。
+""",
+    ),
+    "weapp-agent-mcp": (
+        "微信开发者工具 MCP：截图、点击、健康检查，需本机工具与 npx",
+        "微信开发者工具,小程序调试,mp_screenshot,element_tap,weapp-agent",
+        "https://github.com/Chaixueyuan/weapp-agent-mcp",
+        """# weapp-agent-mcp
+来源：Chaixueyuan/weapp-agent-mcp（npm @chaixueyuan/weapp-agent-mcp；目录 myagenthub.cn）。
+要在已打开的微信开发者工具里点页面、截图、巡检时启用。不要把 MCP 工具再包一层 Python。
+
+前置：本机已装 Node.js；微信开发者工具已开项目，并打开「服务端口」/自动化调试。
+默认 WebSocket：WEAPP_WS_ENDPOINT=ws://localhost:9420
+启动：npx -y @chaixueyuan/weapp-agent-mcp
+软件预设：codeagent.mcp.presets.weapp_agent_mcp()；或 mcp.json 里挂同名 stdio 服务。
+
+常用能力（名称以实际 MCP 列表为准）：mp_healthCheck、mp_screenshot、element_tap。
+先 healthCheck，再截图定位，再点；失败就停并报告端口/项目是否连上。
+""",
+    ),
+    "m3e-canvas": (
+        "Material 3 Expressive 画布：浏览器里画草图，导出实现提示词",
+        "Material 3,M3E,m3e-canvas,Material You,Expressive",
+        "https://github.com/lnkiai/m3e-canvas",
+        """# m3e-canvas
+来源：lnkiai/m3e-canvas。用户要 Material 3 Expressive 草图或导出 vibe-coding 提示词时启用。
+不要把画布应用拷进本仓库。用内置 browser 打开：
+https://lnkiai.github.io/m3e-canvas/
+画完导出提示词，再按提示词改工程。网页营销页仍走 impeccable-craft；手机 App 叠 mobile-app-ui。
+""",
+    ),
     "paper-spine": (
         "论文脊柱：题目、贡献、相关工作、实验表，一条脊梁贯穿",
         "论文,投稿,贡献,相关工作,实验",
@@ -422,6 +575,101 @@ macOS 上的 Agent 浏览器：每个任务一个 Space，复用你的登录，�
 - 图题自洽；轴、单位、图例齐全
 - 回审：逐条引用意见编号，同意就改，不同意给证据
 - 中文稿仍遵守学术规范，不要用 slop 技能拆被动语态
+""",
+    ),
+    "jianying-editor": (
+        "剪映专业版自动化：素材、TTS、字幕、配乐、特效、录屏变焦与导出",
+        "剪映,jianying,JyProject,自动化剪辑,字幕对齐,云端音乐,智能变焦,草稿导出",
+        "https://github.com/isYangs/jianying-editor-skill",
+        """# jianying-editor（剪映 AI 自动化剪辑）
+来源：https://github.com/isYangs/jianying-editor-skill （v1.0.0）。
+用户要用剪映专业版做草稿、配音字幕、配乐特效、录屏智能变焦、自动导出时启用。
+自己调用 use_skill("jianying-editor")。不要把整仓拷进本软件仓库根；业务脚本写在当前项目目录。
+
+## 能力边界
+- 素材导入、AI 配音、字幕拆句对齐、本地/云端配乐、特效/转场/滤镜检索
+- 录屏 + 智能变焦；HTML/JS/Canvas 动效录成视频素材；导出 MP4（1080P~4K）
+- Windows 完整支持自动导出；macOS 可用（自动导出可能需 Windows Agent）
+- 依赖：Python 3.8+、ffmpeg、剪映专业版（自动导出建议 ≤5.9）
+
+## CodeCoreAgent 落地
+- 征得用户同意后安装到工作区 skills：
+  `git clone https://github.com/isYangs/jianying-editor-skill.git skills/jianying-editor`
+  再 `pip install -r skills/jianying-editor/requirements.txt`
+- 设环境变量 `JY_SKILL_ROOT` 指向该目录；脚本里用 `jy_wrapper.JyProject`
+- **禁止**在 skill 安装目录里写业务剪辑脚本；放项目根或 `scripts/`
+- 简单演示可用默认音乐；正式片优先检索 `data/cloud_music_library.csv` 并问用户选曲
+- 草稿检查：`python $JY_SKILL_ROOT/scripts/draft_inspector.py list --limit 20`
+- 资产搜索：`python $JY_SKILL_ROOT/scripts/asset_search.py "复古" -c filters`
+- 导出：`python $JY_SKILL_ROOT/scripts/auto_exporter.py "DraftName" "out.mp4" --res 1080`
+- 读 playbook：`docs/agent-playbook.md`、`docs/minimal-command-sop.md` 再动手
+- 与导演台 / video_studio / Comfy / HyperFrames 分工：剪映时间线与导出走本技能；
+  HTML 确定性成片走 hyperframes；镜头生成合成走导演台
+
+## 铁律
+- 缺剪映/ffmpeg/JY_SKILL_ROOT 就说明怎么装，不要假装已经导出成功
+- 克隆模板用 wrapper `clone --template`，勿直接改坏原模板
+""",
+    ),
+    "hyperframes": (
+        "HTML 写成片：HyperFrames 组合、预览、确定性渲染 MP4（面向 Agent）",
+        "HyperFrames,hyperframes,HTML视频,产品发布片,PR解说,motion graphics,frame.md,无旁白短片",
+        "https://github.com/heygen-com/hyperframes",
+        """# HyperFrames
+来源：https://github.com/heygen-com/hyperframes （HeyGen 开源，Apache 2.0）。
+用 HTML/CSS + 可 seek 动画写成片；Agent 友好。做产品发布片、无脸解说、PR 解说、
+字幕叠轨、talking-head 包装、短 motion、音乐卡点、slideshow、通用多镜片时启用。
+自己调用 use_skill("hyperframes")。不要整仓 LFS 拷进本软件；按需 init 项目。
+
+## 快速环
+- Node.js 22+、FFmpeg；Agent 安装核心技能：`npx hyperframes skills update`
+  （交互可用 `npx skills add heygen-com/hyperframes`；非交互勿盲装全部 20 个）
+- 脚手架：`npx hyperframes init my-video` → `npx hyperframes preview` → `npx hyperframes render`
+- 先读路由技能 `/hyperframes`，再按意图进 creation workflow（product-launch-video、
+  faceless-explainer、pr-to-video、embedded-captions、talking-head-recut、
+  motion-graphics、music-to-video、slideshow、general-video、remotion-to-hyperframes）
+- 组合契约：`data-start` / `data-duration` / `data-track-index`、`class="clip"`；
+  动画用 GSAP/CSS/Lottie/Three/Anime.js/WAAPI 等 **seekable** adapter；
+  挂到 `window.__timelines.<compositionId>`
+- 目录块：`npx hyperframes add <block>`；设计系统用 `frame.md`（DESIGN.md 超集）
+- 文档：https://hyperframes.heygen.com/introduction ；展示 https://hyperframes.heygen.com/showcase
+
+## 与本软件分工
+- Remotion React 片 → remotion-video / 或 `/remotion-to-hyperframes` 迁移到 HTML
+- 剪映时间线 → jianying-editor；Comfy/WAN 镜头 → 导演台 video_studio
+- 预览可用内置 browser 打开本地 preview URL（禁止 file:// 成品路径）
+
+## 铁律
+- 缺 Node/ffmpeg 就说明怎么装；渲染失败先 `npx hyperframes doctor` / lint
+- 同一输入应对齐同一帧；不要用墙钟动画冒充可 seek
+- 不要默认 `skills add --all`；保持 core + 按需 workflow
+""",
+    ),
+    "next-ai-draw-io": (
+        "自然语言画 draw.io：架构图/流程图，MCP 实时出图",
+        "draw.io,drawio,架构图,流程图,时序图,next-ai-draw-io,diagram,MCP画图",
+        "https://github.com/DayuanJiang/next-ai-draw-io",
+        """# next-ai-draw-io
+来源：https://github.com/DayuanJiang/next-ai-draw-io （Apache 2.0）。
+用自然语言创建/改 draw.io 图（云架构、流程图、动画连线、读图复刻）时启用。
+自己调用 use_skill("next-ai-draw-io")。不要把整仓 Next 应用塞进用户业务仓库，除非用户要自建。
+
+## CodeCoreAgent 优先路径（MCP）
+- 预设：`codeagent.mcp.presets.drawio_mcp()` → `npx @next-ai-drawio/mcp-server@latest`
+- mcp.json 示例：
+  `{"mcpServers":{"drawio":{"command":"npx","args":["@next-ai-drawio/mcp-server@latest"]}}}`
+- 连上后让模型画图；浏览器里实时出现画布。先确认 MCP 已挂，再下复杂图指令。
+
+## 其它入口
+- 在线演示：https://next-ai-drawio.jiang.jp/ （可用内置 browser 打开；自备 API Key 可在设置里填）
+- 自建：`git clone … && npm install && cp env.example .env.local && npm run dev` → :6002
+- Docker / Vercel / EdgeOne / Cloudflare 见上游 docs；桌面版见 Releases
+- 模型要强：长 XML + 严格格式；云架构 logo 图优先 Claude 系
+
+## 铁律
+- 图是 draw.io XML；改图用增量对话，保留历史版本意识
+- 缺 Node/MCP 就说明怎么装，不要假装图已经生成
+- 纯 UI 落地页仍走 impeccable-craft；本技能只管示意图/架构图
 """,
     ),
 }

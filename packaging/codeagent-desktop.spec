@@ -3,14 +3,18 @@
 
 import sys
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hiddenimports = (
     collect_submodules("codeagent")
     + collect_submodules("mcp")
     + collect_submodules("edge_tts")
+    + collect_submodules("aiohttp")
     + collect_submodules("webview")
 )
+if sys.platform == "darwin":
+    # Native mic / speech TCC registration (appears under 系统设置 → 麦克风).
+    hiddenimports += collect_submodules("AVFoundation") + collect_submodules("Speech")
 
 excludes = [
     "faster_whisper", "whisper", "ctranslate2",
@@ -25,7 +29,7 @@ a = Analysis(
     ["entry_desktop.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=collect_data_files("certifi"),
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
@@ -58,8 +62,10 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleName": "CodeCoreAgent",
             "CFBundleDisplayName": "CodeCoreAgent",
-            "CFBundleShortVersionString": "0.37.0",
+            "CFBundleShortVersionString": "0.65.0",
             "NSHighResolutionCapable": True,
+            "NSMicrophoneUsageDescription": "语音对话需要使用麦克风听你说话。",
+            "NSSpeechRecognitionUsageDescription": "语音对话需要把你说的话转成文字。",
         },
     )
 else:

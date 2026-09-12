@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from codeagent import Agent, Emotion, VoiceChatLoop, parse_emotion
 from codeagent.core.types import LLMResponse
 from codeagent.llm.base import LLMProvider
@@ -192,7 +194,8 @@ def test_voice_presets_resolve_aliases():
 
 
 def test_to_speech_text_and_cute_style():
-    from codeagent.voice.speech import cute_style, to_speech_text
+    from codeagent.voice.speech import cute_style, overlay_style, to_speech_text
+    from codeagent.voice.emotion import Emotion, style_for
 
     assert "略去代码" in to_speech_text("见 ```print(1)``` 后涨 3%")
     assert "print" not in to_speech_text("见 `print(1)` 后涨 3%")
@@ -200,6 +203,9 @@ def test_to_speech_text_and_cute_style():
     assert style.pitch == "-10Hz"
     assert style.rate == "-5%"
     assert cute_style(enabled=False).pitch == "+0Hz"
+    stacked = overlay_style(style_for(Emotion.HAPPY), cute_style(-10, -5, True))
+    assert stacked.rate == "+7%"
+    assert stacked.pitch == "+15Hz"
 
 
 def test_edge_tts_voice_pinning():
@@ -213,4 +219,93 @@ def test_edge_tts_voice_pinning():
     default = EdgeTTSProvider()
     assert default.voice == "zh-CN-XiaoxiaoNeural"
     assert default.emotion_voices is True
+
+
+async def test_play_audio_passes_path_to_afplay(tmp_path, monkeypatch):
+    from codeagent.voice import tts as tts_mod
+
+    mp3 = tmp_path / "clip.mp3"
+    mp3.write_bytes(b"xx")
+    seen: dict = {}
+
+    class Proc:
+        async def wait(self):
+            return 0
+
+    async def fake_exec(*argv, **kw):
+        seen["argv"] = argv
+        return Proc()
+
+    monkeypatch.setattr(tts_mod.sys, "platform", "darwin")
+    monkeypatch.setattr(tts_mod.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(tts_mod.asyncio, "create_subprocess_exec", fake_exec)
+    await tts_mod.play_audio(mp3)
+    assert seen["argv"][0] == "/usr/bin/afplay"
+    assert seen["argv"][1] == str(mp3)
+
+
+async def test_play_audio_raises_when_player_fails(tmp_path, monkeypatch):
+    from codeagent.voice import tts as tts_mod
+
+    mp3 = tmp_path / "clip.mp3"
+    mp3.write_bytes(b"xx")
+
+    class Proc:
+        async def wait(self):
+            return 1
+
+    async def fake_exec(*argv, **kw):
+        return Proc()
+
+    monkeypatch.setattr(tts_mod.sys, "platform", "darwin")
+    monkeypatch.setattr(tts_mod.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(tts_mod.asyncio, "create_subprocess_exec", fake_exec)
+    with pytest.raises(RuntimeError, match="No audio player"):
+        await tts_mod.play_audio(mp3)
+
+
+async def test_play_audio_stop_raises_cancelled_not_error(tmp_path, monkeypatch):
+    """Killing afplay must not look like a player failure (no system_say fallback)."""
+    from codeagent.voice import tts as tts_mod
+
+    mp3 = tmp_path / "clip.mp3"
+    mp3.write_bytes(b"xx")
+    started = {}
+
+    class Proc:
+        async def wait(self):
+            tts_mod.stop_audio()
+            return -9
+
+        def kill(self):
+            started["killed"] = True
+
+    async def fake_exec(*argv, **kw):
+        started["argv"] = argv
+        return Proc()
+
+    monkeypatch.setattr(tts_mod.sys, "platform", "darwin")
+    monkeypatch.setattr(tts_mod.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(tts_mod.asyncio, "create_subprocess_exec", fake_exec)
+    gen_before = tts_mod.playback_generation()
+    with pytest.raises(tts_mod.PlaybackCancelled):
+        await tts_mod.play_audio(mp3)
+    assert tts_mod.playback_generation() > gen_before
+
+
+def test_begin_utterance_bumps_generation():
+    from codeagent.voice import tts as tts_mod
+
+    a = tts_mod.playback_generation()
+    b = tts_mod.begin_utterance()
+    assert b == tts_mod.playback_generation()
+    assert b > a
+
+
+def test_macos_say_voice_mapping():
+    from codeagent.voice.tts import _macos_say_voice
+
+    assert _macos_say_voice("edge-tw") == "Meijia"
+    assert _macos_say_voice("hsiaochen") == "Meijia"
+    assert _macos_say_voice("xiaoxiao") == "Tingting"
 

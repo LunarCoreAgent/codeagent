@@ -154,16 +154,34 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .quick svg { width: 15px; height: 15px; color: var(--muted); }
 .quick .q-sub { margin-left: auto; font-size: 11px; color: var(--faint); }
 
+/* ---------- internal browser ---------- */
+.browser-page { display: flex; flex-direction: column; gap: 12px;
+                max-width: 1100px; margin: 0 auto; width: 100%;
+                flex: 1; min-height: 0; }
+.browser-bar { display: flex; gap: 8px; align-items: center; }
+.browser-bar input { flex: 1; font-size: 13px; }
+.browser-meta { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.browser-split { display: flex; gap: 14px; flex: 1; min-height: 220px; }
+.browser-split .card { overflow: auto; min-height: 0; }
+.browser-pre { white-space: pre-wrap; font-size: 12px; color: var(--muted);
+               line-height: 1.6; font-family: inherit; }
+.browser-node { font-size: 12px; padding: 5px 0; border-bottom: 1px solid var(--border);
+                display: flex; gap: 8px; align-items: baseline; }
+.browser-node code { color: var(--blue); font-size: 11px; }
+
 /* ---------- chat ---------- */
 #page-chat { padding: 0; }
 #page-chat .msg, #page-chat .chip, #page-chat .fb-row {
   -webkit-user-select: text; user-select: text; cursor: text; }
+#page-chat textarea, #page-chat input {
+  -webkit-user-select: text; user-select: text; }
 #page-chat .msg-actions, #page-chat .ma-btn, #page-chat .fb-btn {
   -webkit-user-select: none; user-select: none; cursor: pointer; }
 #chat { flex: 1; overflow-y: auto; padding: 22px 0; min-height: 0; }
-.chat-col { max-width: 720px; margin: 0 auto; display: flex;
-            flex-direction: column; gap: 12px; padding: 0 22px; }
-.msg { max-width: 85%; padding: 11px 15px; border-radius: 14px;
+.chat-col { max-width: 1040px; margin: 0 auto; display: flex;
+            flex-direction: column; gap: 12px; padding: 0 28px; width: 100%;
+            box-sizing: border-box; }
+.msg { max-width: 88%; padding: 11px 15px; border-radius: 14px;
        line-height: 1.7; white-space: pre-wrap; word-break: break-word;
        animation: pop .16s ease; font-size: 13.5px; }
 @keyframes pop { from { opacity: 0; transform: translateY(5px); } }
@@ -187,8 +205,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .chip.status { color: var(--blue); border-color: rgba(59,130,246,.5); }
 #composer { padding: 13px 22px 16px; border-top: 1px solid var(--border);
             background: var(--sidebar); flex-shrink: 0; }
-.composer-inner { max-width: 720px; margin: 0 auto; display: flex;
-                  flex-direction: column; gap: 8px; }
+.composer-inner { max-width: 1040px; margin: 0 auto; display: flex;
+                  flex-direction: column; gap: 8px; width: 100%;
+                  box-sizing: border-box; }
 #input { width: 100%; resize: none; border-radius: 12px; padding: 11px 13px;
          line-height: 1.55; }
 .composer-tools { display: flex; gap: 8px; align-items: center; }
@@ -209,6 +228,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
            color: var(--muted); border-radius: 9px; height: 34px;
            padding: 0 12px; cursor: pointer; font-size: 14px; }
 .toolbtn:hover { border-color: var(--border-hi); color: var(--text); }
+.toolbtn.mic.on { color: var(--bad); border-color: var(--bad);
+                  animation: pulse 1.1s infinite; }
 .toolsel { width: auto; max-width: 220px; background: var(--elev);
            padding: 7px 9px; font-size: 12px; border-radius: 9px; }
 #attRow { display: none; flex-wrap: wrap; gap: 6px; }
@@ -232,7 +253,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .stopbtn:disabled { opacity: .35; cursor: default; }
 
 /* 消息操作条：复制 / 分享始终可见，气泡正文可拖选 */
-.msg-wrap { display: flex; flex-direction: column; max-width: 85%; }
+.msg-wrap { display: flex; flex-direction: column; max-width: 88%; }
 .msg-wrap.user { align-self: flex-end; align-items: flex-end; }
 .msg-wrap.bot { align-self: flex-start; align-items: flex-start; }
 .msg-wrap .msg { max-width: 100%; }
@@ -559,6 +580,9 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     <button class="navbtn" data-page="chat">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>
       对话</button>
+    <button class="navbtn" data-page="browser">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+      浏览器</button>
     <button class="navbtn" data-page="studio">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v14M3 12h18"/><path d="M16 9l4 3-4 3"/></svg>
       导演台</button>
@@ -670,6 +694,9 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
         <button class="quick" onclick="go('chat')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>
           开始对话<span class="q-sub">单 agent · 工具全开</span></button>
+        <button class="quick" onclick="go('browser')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+          内置浏览器<span class="q-sub">AI 开页 · 点击 · 填表</span></button>
         <button class="quick" onclick="go('studio')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v14M3 12h18"/><path d="M16 9l4 3-4 3"/></svg>
           导演台<span class="q-sub">分镜 · Comfy 生成 · 合成</span></button>
@@ -725,6 +752,8 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
             onchange="loadConv(this.value)" title="历史对话（保存在项目文件夹）"></select>
     <button class="btn" id="copyChatBtn" style="font-size:12px"
             onclick="copyChatAll()" title="复制当前对话全部内容">复制全部</button>
+    <button class="btn" id="replayBtn" style="font-size:12px"
+            onclick="replayLast()" title="朗读最近一条助手回复">回播</button>
     <button class="btn" id="newConvBtn" style="font-size:12px"
             onclick="newChat()">＋ 新对话</button>
   </div>
@@ -738,12 +767,16 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     <textarea id="input" rows="2" placeholder="输入消息，Enter 发送，Shift+Enter 换行；📎 可附加任意文件"></textarea>
     <div class="composer-tools">
       <button class="toolbtn" id="attBtn" title="上传附件（所有文件类型均可识别）">📎</button>
+      <button class="toolbtn mic" id="micBtn" onclick="toggleVoice()"
+              title="麦克风：点击弹出权限设置，允许后连续听→想→说">🎤</button>
       <select id="thinkingSel" class="toolsel" onchange="setThinking(this.value)" title="思考强度：注入系统提示，控制推理深度">
         <option value="low">思考 · 低</option>
         <option value="medium" selected>思考 · 中</option>
         <option value="high">思考 · 高</option>
       </select>
       <span class="spacer"></span>
+      <button class="stopbtn" id="stopSpeakTool" onclick="stopSpeak()" disabled
+              style="display:none" title="停止当前语音播报">停止播报</button>
       <button class="stopbtn" id="stopBtn" onclick="stopChat()" disabled title="生成过程中可中断当前回复">停止</button>
       <button class="sendbtn" id="sendBtn" onclick="sendChat()">发送</button>
     </div>
@@ -786,10 +819,40 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
         <textarea id="inputB" rows="2" placeholder="B：输入消息，Enter 发送，Shift+Enter 换行"></textarea>
         <div class="composer-tools">
           <span class="spacer"></span>
+          <button class="stopbtn" id="stopSpeakToolB" onclick="stopSpeak()" disabled
+                  style="display:none" title="停止当前语音播报">停止播报</button>
           <button class="stopbtn" id="stopBtnB" onclick="stopChatB()" disabled title="中断 B 对话">停止</button>
           <button class="sendbtn" id="sendBtnB" onclick="sendChatB()">发送</button>
         </div>
       </div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 内置浏览器 ============ -->
+<section class="page" id="page-browser">
+  <div class="page-head"><h1>浏览器</h1>
+    <span class="sub">软件内置 · AI 可开页、点击、填表</span>
+    <span class="spacer"></span>
+    <button class="btn" onclick="browserShowWin()" title="弹出内置浏览窗口，显示真实页面">显示窗口</button>
+  </div>
+  <div class="page-body browser-page">
+    <div class="browser-bar">
+      <button class="btn" onclick="browserReload()" title="刷新">↻</button>
+      <input id="browserUrl" type="text" placeholder="https://"
+             onkeydown="if(event.key==='Enter')browserGo()">
+      <button class="sendbtn" onclick="browserGo()">打开</button>
+    </div>
+    <div class="browser-meta" id="browserMeta">内置浏览器已就绪。在对话里让 AI 打开网页，或在上方输入地址。</div>
+    <div class="browser-split">
+      <div class="card">
+        <h3>页面摘要</h3>
+        <pre id="browserText" class="browser-pre">尚未打开页面</pre>
+      </div>
+      <div class="card" style="width:300px;flex-shrink:0">
+        <h3>可点元素</h3>
+        <div id="browserNodes"><div class="empty">AI 打开页面后会出现 @e1、@e2…</div></div>
+      </div>
     </div>
   </div>
 </section>
@@ -1349,7 +1412,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 <!-- ============ 偏好设置 ============ -->
 <section class="page" id="page-settings">
   <div class="page-head"><h1>偏好设置</h1>
-    <span class="sub">语音、个性化与指挥中心默认链路</span></div>
+    <span class="sub">陪伴型 AI、语音、个性化与指挥中心默认链路</span></div>
   <div class="page-body"><div class="settings-wrap">
 
     <div class="card sect"><h3>外观</h3>
@@ -1360,6 +1423,20 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
         <button class="tab" data-theme="auto">自动（跟随系统）</button>
       </div>
       <div class="hint">自动模式下跟随 macOS 系统外观，系统切换时实时生效</div>
+    </div>
+
+    <div class="card sect" id="sectCompanion"><h3>陪伴型 AI</h3>
+      <p class="hint">开启后，对话会按角色人设陪伴聊天（融合 y-ai-accompany / ai-companion）。可与下方嗲嗲声、麦克风一起用。</p>
+      <div class="checkline"><input type="checkbox" id="cfg_companion">
+        <span><b>开启陪伴模式</b>（对话里按角色性格回复，记得细节、先倾听）</span></div>
+      <label>角色预设</label>
+      <select id="cfg_companion_preset" onchange="applyCompanionPreset()"></select>
+      <label>AI 角色名</label>
+      <input id="cfg_companion_name" placeholder="如：小暖、欣欣">
+      <label>性格与说话方式</label>
+      <textarea id="cfg_companion_nature" rows="3"
+                placeholder="温柔会倾听，口语短句，先情绪后建议…"></textarea>
+      <div class="hint">选预设会自动填入角色名与性格，仍可再改。保存后立即对新对话生效。</div>
     </div>
 
     <div class="card sect"><h3>高级：聚合与兜底（指挥中心默认链路）</h3>
@@ -1380,17 +1457,58 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
         <span>自动批准所有工具调用（含写文件/执行命令，慎用）</span></div>
     </div>
 
-    <div class="card sect"><h3>语音面 Voice Surface</h3>
-      <p class="hint">LunarCore v3.3.17 契约：说问听答。豆包未配置时小智音色回退 Edge 晓晨。凭证只写不读。</p>
+    <div class="card sect" id="sectAgentLimits"><h3>Agent 执行上限</h3>
+      <p class="hint">单次任务里模型调用工具的往返次数上限。到顶会软收束作答，不会再抛英文红字。复杂长任务可调高，闲聊可调低。</p>
+      <div class="wrow" style="margin-top:8px">
+        <div class="whead"><span>工具往返上限</span><span class="wval" id="cfg_iters_val">80</span></div>
+        <input id="cfg_max_iterations" type="range" min="10" max="300" step="10" value="80"
+               oninput="syncMaxIterationsSlider()">
+        <div class="whint">范围 10–300，默认 80。改完请点「保存全部」。</div>
+      </div>
+      <label style="margin-top:10px">或直接填数字</label>
+      <input id="cfg_max_iterations_num" type="number" min="10" max="300" step="1" value="80"
+             onchange="syncMaxIterationsNum()" oninput="syncMaxIterationsNum()">
+    </div>
+
+    <div class="card sect" id="sectMicPerm"><h3>麦克风与语音识别权限</h3>
+      <p class="hint">听写必须同时打开「麦克风」和「语音识别」。可在此查看状态并跳转系统设置（不要只开 LunarCore Agent）。</p>
+      <div class="wrow" style="margin-top:4px">
+        <div class="whead"><span>麦克风</span><span class="wval" id="micStatusLabel">检测中…</span></div>
+        <div class="whint" id="micStatusPath">系统设置 → 隐私与安全性 → 麦克风 → CodeCoreAgent</div>
+      </div>
+      <div class="wrow">
+        <div class="whead"><span>语音识别</span><span class="wval" id="speechStatusLabel">检测中…</span></div>
+        <div class="whint" id="speechStatusPath">系统设置 → 隐私与安全性 → 语音识别 → CodeCoreAgent</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn" type="button" onclick="refreshMicPermStatus()">刷新状态</button>
+        <button class="btn primary" type="button" onclick="requestMicFromSettings()">申请权限</button>
+        <button class="btn" type="button" onclick="openMicFromSettings()">打开麦克风设置</button>
+        <button class="btn" type="button" onclick="openSpeechFromSettings()">打开语音识别设置</button>
+      </div>
+    </div>
+
+    <div class="card sect" id="sectVoice"><h3>语音面 · 嗲嗲声</h3>
+      <p class="hint">对话页点麦克风即可连续语音聊天（听→想→说→再听）。打字提问也可播报回答。凭证只写不读。</p>
       <div class="checkline"><input type="checkbox" id="cfg_voice">
-        <span>开启语音面（打字提问也播报回答）</span></div>
+        <span>打字提问也播报回答</span></div>
       <label>播报声音</label><select id="cfg_voicename"></select>
-      <div class="checkline"><input type="checkbox" id="cfg_cute">
-        <span>嗲音模式（放缓语速、柔化音调）</span></div>
-      <label>音调（Hz）</label>
-      <input id="cfg_pitch" type="range" min="-50" max="50" step="5" value="-10">
-      <label>语速（%）</label>
-      <input id="cfg_rate" type="range" min="-20" max="20" step="1" value="-5">
+      <div class="checkline" style="margin-top:12px"><input type="checkbox" id="cfg_cute">
+        <span><b>开启嗲嗲声</b>（柔化音调、放缓语速；回播与语音对话都会生效）</span></div>
+      <div class="wrow" style="margin-top:10px">
+        <div class="whead"><span>嗲嗲声 · 音调</span><span class="wval" id="cfg_pitch_val">-10Hz</span></div>
+        <input id="cfg_pitch" type="range" min="-50" max="50" step="5" value="-10" oninput="syncCuteSliders()">
+        <div class="whint">偏负更柔和，偏正更亮更“嗲”</div>
+      </div>
+      <div class="wrow">
+        <div class="whead"><span>嗲嗲声 · 语速</span><span class="wval" id="cfg_rate_val">-5%</span></div>
+        <input id="cfg_rate" type="range" min="-20" max="20" step="1" value="-5" oninput="syncCuteSliders()">
+        <div class="whint">偏负更慢，偏正更快</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn" type="button" onclick="previewCuteVoice()">试听嗲嗲声</button>
+        <span class="hint" style="align-self:center;margin:0">先调开关与滑杆，点试听即可听效果（会写入当前设置）</span>
+      </div>
     </div>
 
     <div class="card sect"><h3>个性化（本机所有对话生效）</h3>
@@ -1472,6 +1590,27 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
   </div>
 </div>
 
+<!-- 麦克风权限设置 -->
+<div class="modal-mask" id="micPermDialog">
+  <div class="modal">
+    <h3>麦克风权限</h3>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.8" id="micPermMsg">
+      请打开本软件的麦克风开关。
+    </div>
+    <div style="margin-top:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:12.5px;line-height:1.8" id="micPermPath">
+      <b>系统设置 → 隐私与安全性 → 麦克风</b><br>
+      打开列表里的 <b>CodeCoreAgent</b><br>
+      <span style="color:var(--warn);font-size:12px">注意：LunarCore Agent 是另一个软件，不要只开它。</span><br>
+      <span style="color:var(--faint);font-size:11.5px">若列表还没有 CodeCoreAgent：先点下面「允许并开始语音」，再回系统设置刷新。</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:16px">
+      <button class="btn primary" onclick="allowMicAndStart()">允许并开始语音</button>
+      <button class="btn" onclick="openSystemMicSettings()">打开「麦克风」系统页</button>
+      <button class="btn" onclick="hideMicPermDialog()">取消</button>
+    </div>
+  </div>
+</div>
+
 <!-- 新建工作流对话框 -->
 <div class="modal-mask" id="wfDialog">
   <div class="modal">
@@ -1544,6 +1683,15 @@ let curBot = null;
 let curBot2 = null;
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function stripEmotionTag(t){
+  const s=String(t||'');
+  const m=s.match(/^\s*\[emotion:[^\]]+\]\s*/);
+  if(m)return s.slice(m[0].length);
+  if(/^\s*\[emotion:/.test(s))return '';
+  return s;
+}
+const EMOTION_ZH={neutral:'平静',happy:'开心',sad:'难过',angry:'生气',
+  surprised:'惊讶',thinking:'思考',loving:'温柔',sleepy:'困倦'};
 function render(s){
   let h = esc(s);
   h = h.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>'<pre><code>'+c+'</code></pre>');
@@ -1553,7 +1701,7 @@ function render(s){
 function renderReply(s){
   /* 模型回复：消化 Markdown 星号/横杠，代码块原样保留 */
   const fences=[];
-  let h=esc(String(s||''));
+  let h=esc(stripEmotionTag(String(s||'')));
   h=h.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>{
     fences.push('<pre><code>'+c+'</code></pre>');
     return '\x00F'+(fences.length-1)+'\x00';
@@ -1605,8 +1753,48 @@ function go(page){
   if(page==='evolution')loadEvolution();
   if(page==='project')loadProjectRecords();
   if(page==='chat'){loadProjects();loadConversations();loadModelAssets();}
+  if(page==='browser')loadBrowser();
 }
 document.querySelectorAll('.navbtn[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page));
+
+function applyBrowserState(st){
+  if(!st||!$('browserUrl'))return;
+  if(st.url)$('browserUrl').value=st.url;
+  if(st.ready_text)$('browserMeta').textContent=st.ready_text;
+  else if(st.error)$('browserMeta').textContent=st.error;
+  if(st.excerpt!==undefined)$('browserText').textContent=st.excerpt||'（无文本）';
+  const nodes=st.nodes||[];
+  if(!nodes.length){
+    $('browserNodes').innerHTML='<div class="empty">尚未打开页面</div>';
+    return;
+  }
+  $('browserNodes').innerHTML=nodes.map(n=>
+    '<div class="browser-node"><code>'+esc(n.ref||'')+'</code>'+
+    '<span>'+esc((n.tag||'')+' '+(n.text||''))+'</span></div>'
+  ).join('');
+}
+function loadBrowser(){
+  if(!window.pywebview||!pywebview.api)return;
+  pywebview.api.browser_status().then(applyBrowserState);
+}
+function browserGo(){
+  const u=($('browserUrl').value||'').trim();
+  if(!u){toast('输入网址');return;}
+  pywebview.api.browser_goto(u).then(r=>{
+    if(r&&r.error)toast(r.error);
+    else $('browserMeta').textContent='正在打开…';
+  });
+}
+function browserReload(){
+  pywebview.api.browser_reload().then(r=>{
+    if(r&&r.error)toast(r.error);
+  });
+}
+function browserShowWin(){
+  pywebview.api.browser_show_window().then(r=>{
+    if(r&&!r.ok)toast(r.error||'无法打开浏览窗口');
+  });
+}
 
 /* 四字对齐：两字/三字标签拉伸到四字宽度（LCA NavLabel） */
 document.querySelectorAll('.navbtn').forEach(b=>{
@@ -1896,8 +2084,11 @@ function addMsg(cls,text,chan){
   const bar=document.createElement('div');
   bar.className='msg-actions';
   bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>'+
+    (cls==='bot'?'<button class="ma-btn" data-a="speak">🔊 回播</button>':'')+
     '<button class="ma-btn" data-a="share">↗ 分享</button>';
   bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(div.innerText||div._raw||'');
+  const sp=bar.querySelector('[data-a=speak]');
+  if(sp) sp.onclick=()=>speakText(div._raw||div.innerText||'');
   bar.querySelector('[data-a=share]').onclick=()=>{
     pywebview.api.export_message(div._raw||'').then(r=>{
       if(r.ok)toast('已导出：'+r.path);
@@ -1911,74 +2102,115 @@ function addMsg(cls,text,chan){
 function copyPlain(text){
   const t=String(text||'');
   if(!t){toast('没有可复制的内容');return;}
-  pywebview.api.copy_text(t).then(ok=>toast(ok?'已复制到剪贴板':'复制失败'));
+  const done=ok=>toast(ok?'已复制到剪贴板':'复制失败');
+  const viaDom=()=>{
+    try{
+      const ta=document.createElement('textarea');
+      ta.value=t; ta.setAttribute('readonly','');
+      ta.style.cssText='position:fixed;left:-9999px;top:0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select(); ta.setSelectionRange(0,t.length);
+      const ok=document.execCommand('copy');
+      document.body.removeChild(ta);
+      return !!ok;
+    }catch(err){return false;}
+  };
+  // pywebview 的 navigator.clipboard 常报成功却写不进系统剪贴板，必须走 pbcopy/clip
+  if(window.pywebview&&pywebview.api&&pywebview.api.copy_text){
+    pywebview.api.copy_text(t).then(ok=>{
+      if(ok) done(true);
+      else if(viaDom()) done(true);
+      else done(false);
+    }).catch(()=>{ done(viaDom()); });
+    return;
+  }
+  if(viaDom()){done(true);return;}
+  if(window.navigator&&navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).then(()=>done(true)).catch(()=>done(false));
+    return;
+  }
+  done(false);
 }
 
 /* ---------- 对话右键菜单（鼠标复制粘贴） ---------- */
-let _ctxMsg=null;
-function ctxText(){
-  const sel=window.getSelection();
-  if(sel && sel.rangeCount && !sel.isCollapsed && sel.toString().trim())
-    return sel.toString();
-  if(_ctxMsg)return (_ctxMsg.innerText||_ctxMsg._raw||'');
-  return '';
-}
+let _ctxMsg=null, _ctxSel='', _pasteTarget=null;
 function hideCtx(){const m=$('ctxMenu');if(m)m.classList.remove('open');}
+function composerInput(){
+  if(_pasteTarget&&document.body.contains(_pasteTarget))return _pasteTarget;
+  const a=document.activeElement;
+  if(a&&(a.tagName==='TEXTAREA'||a.tagName==='INPUT')&&a.id!=='ctxPaste')return a;
+  return $('input')||$('inputB');
+}
+function insertAtCursor(inp,t){
+  if(!inp)return;
+  inp.focus();
+  const s=typeof inp.selectionStart==='number'?inp.selectionStart:inp.value.length;
+  const e=typeof inp.selectionEnd==='number'?inp.selectionEnd:s;
+  inp.value=inp.value.slice(0,s)+t+inp.value.slice(e);
+  const p=s+t.length;
+  try{inp.selectionStart=inp.selectionEnd=p;}catch(err){}
+}
 function ctxCopy(what){
   let text='';
-  if(what==='sel'){
-    const sel=window.getSelection();
-    text=sel && sel.rangeCount ? sel.toString() : (_ctxMsg?(_ctxMsg.innerText||_ctxMsg._raw):'');
-  }else if(what==='msg'){
-    text=_ctxMsg?(_ctxMsg.innerText||_ctxMsg._raw):'';
-  }else{ // all
-    text=chatPlainText();
-  }
+  if(what==='sel') text=_ctxSel||(_ctxMsg?(_ctxMsg.innerText||_ctxMsg._raw):'');
+  else if(what==='msg') text=_ctxMsg?(_ctxMsg.innerText||_ctxMsg._raw):'';
+  else text=chatPlainText();
   if(!text){toast('没有可复制的内容');return;}
   copyPlain(text);
   hideCtx();
 }
 function ctxPaste(){
-  const active=document.activeElement;
-  const inp=(active&&(active.tagName==='TEXTAREA'||active.tagName==='INPUT'))?active:$('input');
+  const inp=composerInput();
   const read=()=>{
-    if(window.navigator && navigator.clipboard && navigator.clipboard.readText)
-      return navigator.clipboard.readText().catch(()=>pywebview.api.read_clipboard());
-    if(window.pywebview)return pywebview.api.read_clipboard();
+    if(window.pywebview&&pywebview.api&&pywebview.api.read_clipboard)
+      return pywebview.api.read_clipboard().catch(()=>'');
+    if(window.navigator&&navigator.clipboard&&navigator.clipboard.readText)
+      return navigator.clipboard.readText();
     return Promise.resolve('');
   };
   read().then(t=>{
     if(!t){toast('剪贴板为空');return;}
     if(!inp){toast('没有输入框');return;}
-    const s=inp.selectionStart||inp.value.length;
-    const e=inp.selectionEnd||inp.value.length;
-    inp.value=inp.value.slice(0,s)+t+inp.value.slice(e);
-    inp.selectionStart=inp.selectionEnd=s+t.length;
-    inp.focus();
+    insertAtCursor(inp,t);
     toast('已粘贴');
   }).catch(()=>toast('读取剪贴板失败'));
   hideCtx();
 }
+document.addEventListener('focusin',e=>{
+  const t=e.target;
+  if(t&&(t.id==='input'||t.id==='inputB'||t.tagName==='TEXTAREA'||t.tagName==='INPUT'))
+    _pasteTarget=t;
+});
 document.addEventListener('contextmenu',e=>{
-  if(!$('page-chat') || !$('page-chat').classList.contains('active'))return;
+  const t=e.target;
+  const inField=t&&t.closest&&t.closest('textarea,input');
+  const chatOn=$('page-chat')&&$('page-chat').classList.contains('active');
+  if(!inField&&!chatOn)return;
   e.preventDefault();
-  _ctxMsg=e.target && e.target.closest ? e.target.closest('.msg') : null;
+  const sel=window.getSelection();
+  _ctxSel=(sel&&sel.rangeCount&&!sel.isCollapsed)?sel.toString():'';
+  if(inField&&typeof t.selectionStart==='number'&&t.selectionStart!==t.selectionEnd)
+    _ctxSel=t.value.slice(t.selectionStart,t.selectionEnd);
+  _ctxMsg=t&&t.closest?t.closest('.msg'):null;
   const m=$('ctxMenu'); if(!m)return;
-  m.style.left=Math.min(e.clientX, innerWidth-160)+'px';
-  m.style.top=Math.min(e.clientY, innerHeight-140)+'px';
+  m.style.left=Math.min(e.clientX, innerWidth-168)+'px';
+  m.style.top=Math.min(e.clientY, innerHeight-160)+'px';
   m.classList.add('open');
 });
 document.addEventListener('click',e=>{
-  if(e.target && e.target.closest && e.target.closest('#ctxMenu'))return;
+  if(e.target&&e.target.closest&&e.target.closest('#ctxMenu'))return;
   hideCtx();
 });
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape')hideCtx();
+  // ⌘/Ctrl+C/V/X 交给系统（WKWebView 需打开 DOMPasteAllowed）
 });
 ['ctxCopySel','ctxCopyMsg','ctxCopyAll'].forEach(id=>{
   const el=$(id); if(el)el.onclick=()=>ctxCopy(id==='ctxCopySel'?'sel':id==='ctxCopyMsg'?'msg':'all');
 });
 const _pasteEl=$('ctxPaste'); if(_pasteEl)_pasteEl.onclick=ctxPaste;
+const _ctxMenu=$('ctxMenu');
+if(_ctxMenu)_ctxMenu.addEventListener('mousedown',e=>e.preventDefault());
 function chatPlainText(chan){
   const C=colOf(chan||'A');
   const parts=[];
@@ -1998,6 +2230,74 @@ function chatPlainText(chan){
 }
 function copyChatAll(){ copyPlain(chatPlainText()); }
 function copyChatAllB(){ copyPlain(chatPlainText('B')); }
+function setSpeakingUi(on){
+  const show=!!on;
+  window._speakingUi=show;
+  // 回播键就地变成「停止播报」，避免页眉挤出屏幕看不到
+  [['replayBtn',null],['replayBtnB','B']].forEach(pair=>{
+    const r=$(pair[0]); if(!r)return;
+    if(show){
+      r.textContent='停止播报';
+      r.classList.add('danger');
+      r.style.color='var(--bad)';
+      r.style.borderColor='var(--bad)';
+      r.title='停止当前语音播报';
+      r.disabled=false;
+      r.onclick=()=>stopSpeak();
+    }else{
+      r.textContent='回播';
+      r.classList.remove('danger');
+      r.style.color='';
+      r.style.borderColor='';
+      r.title='朗读最近一条助手回复';
+      r.disabled=false;
+      const ch=pair[1];
+      r.onclick=()=>replayLast(ch||undefined);
+    }
+  });
+  // 输入栏旁再放一颗，保证视线落在发送区也能停
+  ['stopSpeakTool','stopSpeakToolB'].forEach(id=>{
+    const b=$(id); if(!b)return;
+    b.style.display=show?'inline-block':'none';
+    b.disabled=!show;
+  });
+  // 消息气泡上的「🔊 回播」同步成停止
+  document.querySelectorAll('.ma-btn[data-a=speak]').forEach(btn=>{
+    if(show){
+      btn.textContent='⏹ 停止播报';
+      btn.dataset.wasSpeak='1';
+      btn.onclick=()=>stopSpeak();
+    }else if(btn.dataset.wasSpeak){
+      btn.textContent='🔊 回播';
+      delete btn.dataset.wasSpeak;
+      const wrap=btn.closest('.msg-wrap');
+      const msg=wrap&&wrap.querySelector('.msg');
+      btn.onclick=()=>speakText((msg&&(msg._raw||msg.innerText))||'');
+    }
+  });
+}
+function stopSpeak(){
+  if(window.pywebview&&pywebview.api&&pywebview.api.stop_speaking)
+    pywebview.api.stop_speaking();
+  setSpeakingUi(false);
+  toast('已停止播报');
+}
+function speakText(t){
+  const text=String(t||'').trim();
+  if(!text){toast('没有可播报的内容');return;}
+  if(window.pywebview&&pywebview.api&&pywebview.api.speak_text){
+    setSpeakingUi(true);
+    pywebview.api.speak_text(text);
+    toast('正在回播 · 可点「停止播报」');
+  }else toast('当前窗口不能播报');
+}
+function replayLast(chan){
+  if(window._speakingUi){ stopSpeak(); return; }
+  const C=colOf(chan||'A');
+  const bots=C.col.querySelectorAll('.msg-wrap.bot .msg');
+  const last=bots.length?bots[bots.length-1]:null;
+  speakText((last&&(last._raw||last.innerText))||'');
+}
 function addChip(cls,text,chan){
   const C=colOf(chan||'A');
   const wrap=document.createElement('div');
@@ -2032,6 +2332,211 @@ function renderAtts(){
 $('attBtn').onclick=()=>{
   pywebview.api.pick_attachments().then(r=>{atts=r;renderAtts();});
 };
+
+let voiceOn=false, rec=null, voiceBusy=false, voiceExitAfter=false;
+const VOICE_EXIT=/^(再见|拜拜|退出|停止语音|quit|exit|bye)[。.!?！]?$/i;
+function speechEngine(){
+  return window.SpeechRecognition||window.webkitSpeechRecognition||null;
+}
+function hideMicPermDialog(){
+  const d=$('micPermDialog'); if(d)d.classList.remove('open');
+}
+function showMicPermDialog(msg, path){
+  const m=$('micPermMsg');
+  if(m)m.textContent=msg||'请打开本软件的麦克风与语音识别开关。';
+  const p=$('micPermPath');
+  if(p){
+    const title=path||'系统设置 → 隐私与安全性 → 麦克风 / 语音识别 → CodeCoreAgent';
+    const speech=String(title).indexOf('语音识别')>=0;
+    p.innerHTML='<b>'+esc(title)+'</b><br>打开列表里的 <b>CodeCoreAgent</b><br>'+
+      (speech
+        ?'<span style="color:var(--warn);font-size:12px">只开麦克风不够：必须同时打开「语音识别」，说的话才能进输入框。</span><br>'
+        :'<span style="color:var(--warn);font-size:12px">注意：LunarCore Agent 是另一个软件，不要只开它。</span><br>')+
+      '<span style="color:var(--faint);font-size:11.5px">若列表还没有 CodeCoreAgent：先点「允许并开始语音」，再回系统设置刷新。</span>';
+  }
+  const d=$('micPermDialog'); if(d)d.classList.add('open');
+}
+function openSystemMicSettings(){
+  // 先触发一次授权，让 CodeCoreAgent 出现在系统麦克风/语音识别列表里
+  const openPage=()=>{
+    if(!(window.pywebview&&pywebview.api)){
+      toast('当前窗口无法打开系统设置'); return;
+    }
+    const opener=pywebview.api.open_speech_settings||pywebview.api.open_mic_settings;
+    if(!opener){ toast('当前窗口无法打开系统设置'); return; }
+    opener().then(r=>{
+      const path=(r&&r.path)||'系统设置 → 隐私与安全性 → 麦克风 / 语音识别 → CodeCoreAgent';
+      showMicPermDialog((r&&r.hint)||'已打开系统隐私页，请打开 CodeCoreAgent 开关。', path);
+      toast(r&&r.ok?'已打开系统隐私设置':'无法打开系统设置');
+    }).catch(()=>toast('无法打开系统设置'));
+  };
+  requestBrowserMic().then(()=>{ openPage(); }).catch(()=>{ openPage(); });
+}
+function requestBrowserMic(){
+  if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia))
+    return Promise.reject(new Error('no-getUserMedia'));
+  return navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
+    try{stream.getTracks().forEach(t=>t.stop());}catch(e){}
+    return true;
+  });
+}
+function allowMicAndStart(){
+  const fail=()=>{
+    const msg=$('micPermMsg');
+    if(msg)msg.textContent='系统未授予麦克风。请打开「麦克风」页里的 CodeCoreAgent（不是 LunarCore Agent）。';
+    toast('没有麦克风权限');
+    openSystemMicSettings();
+  };
+  const afterNative=(r)=>{
+    if(r&&r.ok){ hideMicPermDialog(); beginVoiceSession(); return; }
+    requestBrowserMic().then(()=>{
+      hideMicPermDialog();
+      beginVoiceSession();
+    }).catch(fail);
+  };
+  if(window.pywebview&&pywebview.api&&pywebview.api.request_mic_access){
+    toast('正在向系统申请麦克风权限…');
+    pywebview.api.request_mic_access().then(afterNative).catch(()=>afterNative(null));
+    return;
+  }
+  requestBrowserMic().then(()=>{
+    hideMicPermDialog();
+    beginVoiceSession();
+  }).catch(fail);
+}
+function toggleVoice(){
+  if(voiceOn){ stopVoice(); return; }
+  // 点击麦克风：先弹出权限设置；已授权则直接开语音
+  if(window.pywebview&&pywebview.api&&pywebview.api.ensure_mic_permission){
+    pywebview.api.ensure_mic_permission().then(r=>{
+      if(r&&r.ok){ beginVoiceSession(); return; }
+      showMicPermDialog(r&&r.message, r&&r.path);
+      // 未决定时立刻触发系统授权弹窗；已拒绝则上面 API 已打开系统设置
+      if(r&&!r.open_settings){
+        requestBrowserMic().then(()=>{
+          hideMicPermDialog();
+          beginVoiceSession();
+        }).catch(()=>{});
+      }
+    }).catch(()=>showMicPermDialog());
+    return;
+  }
+  showMicPermDialog();
+  requestBrowserMic().then(()=>{
+    hideMicPermDialog();
+    beginVoiceSession();
+  }).catch(()=>{});
+}
+function beginVoiceSession(){
+  voiceOn=true; voiceBusy=false; voiceExitAfter=false;
+  if($('micBtn'))$('micBtn').classList.add('on');
+  pywebview.api.set_voice_session(true);
+  addChip('status','连续语音已开 — 说完一句我会想、说、再听');
+  startListen();
+}
+function startVoice(){ toggleVoice(); }
+function stopVoice(){
+  voiceOn=false; voiceBusy=false; voiceExitAfter=false;
+  try{if(rec)rec.stop();}catch(e){}
+  rec=null;
+  if($('micBtn'))$('micBtn').classList.remove('on');
+  if(window.pywebview&&pywebview.api){
+    if(pywebview.api.stop_native_listen) pywebview.api.stop_native_listen();
+    pywebview.api.set_voice_session(false);
+    pywebview.api.stop_speaking();
+  }
+  addChip('status','连续语音已关');
+}
+function startWebListen(){
+  if(!voiceOn||voiceBusy)return;
+  const SR=speechEngine();
+  if(!SR){
+    toast('当前窗口没有浏览器听写，已改用系统听写');
+    startNativeListen();
+    return;
+  }
+  try{if(rec)rec.stop();}catch(e){}
+  rec=new SR();
+  rec.lang='zh-CN';
+  rec.interimResults=true;
+  rec.continuous=false;
+  rec.onresult=function(e){
+    let t='';
+    for(let i=0;i<e.results.length;i++) t+=e.results[i][0].transcript;
+    if($('input'))$('input').value=t;
+    if(e.results[e.results.length-1].isFinal){
+      const text=t.trim();
+      if(text) sendVoiceUtterance(text);
+    }
+  };
+  rec.onerror=function(e){
+    if(e.error==='not-allowed'||e.error==='service-not-allowed'){
+      // WKWebView 常误报；改走系统 Speech 框架
+      startNativeListen();
+      return;
+    }
+    if((e.error==='no-speech'||e.error==='aborted') && voiceOn && !voiceBusy)
+      setTimeout(startListen, 280);
+  };
+  rec.onend=function(){
+    rec=null;
+    if(voiceOn && !voiceBusy) setTimeout(startListen, 220);
+  };
+  try{rec.start();}catch(e){ startNativeListen(); }
+}
+function startNativeListen(){
+  if(!voiceOn||voiceBusy)return;
+  if(!(window.pywebview&&pywebview.api&&pywebview.api.start_native_listen)){
+    toast('没有可用的听写引擎');
+    showMicPermDialog('当前环境不能听写。请确认已安装并允许麦克风与语音识别。');
+    stopVoice();
+    return;
+  }
+  addChip('status','正在听…（系统听写）');
+  pywebview.api.start_native_listen('zh-CN').then(r=>{
+    if(r&&r.ok) return;
+    const msg=(r&&r.error)||'无法启动系统听写';
+    toast(msg);
+    if(r&&r.open_settings){
+      showMicPermDialog(msg, r.path);
+      if(window.pywebview&&pywebview.api){
+        const openSpeech=String(r.path||msg).indexOf('语音识别')>=0
+          && pywebview.api.open_speech_settings;
+        (openSpeech?pywebview.api.open_speech_settings():pywebview.api.open_mic_settings)();
+      }
+    }else showMicPermDialog(msg);
+  }).catch(err=>{
+    toast('系统听写失败');
+    showMicPermDialog(String(err||'系统听写失败'));
+  });
+}
+function startListen(){
+  if(!voiceOn||voiceBusy)return;
+  // 桌面端优先系统听写：WKWebView 的 webkitSpeechRecognition 经常假报没权限
+  if(window.pywebview&&pywebview.api&&pywebview.api.start_native_listen){
+    startNativeListen();
+    return;
+  }
+  startWebListen();
+}
+function sendVoiceUtterance(text){
+  voiceBusy=true;
+  try{if(rec)rec.abort();}catch(e){}
+  if(window.pywebview&&pywebview.api&&pywebview.api.stop_native_listen)
+    pywebview.api.stop_native_listen();
+  if($('input'))$('input').value='';
+  addMsg('user', text);
+  addChip('status','说完了 — 正在想并准备语音回答…');
+  setChatBusy(true);
+  if(VOICE_EXIT.test(text)) voiceExitAfter=true;
+  pywebview.api.send(text).then(ok=>{
+    if(!ok){
+      addChip('error','上一条还在处理中');
+      setChatBusy(false); voiceBusy=false;
+      if(voiceOn) startListen();
+    }
+  });
+}
 
 /* ---------- 思考强度 ---------- */
 function setThinking(v){
@@ -3512,6 +4017,15 @@ function loadSettings(){
     if($('cfg_cute'))$('cfg_cute').checked=st.config.voice_cute_tone!==false;
     if($('cfg_pitch'))$('cfg_pitch').value=st.config.voice_pitch??-10;
     if($('cfg_rate'))$('cfg_rate').value=st.config.voice_rate??-5;
+    syncCuteSliders();
+    const iters=Math.max(10, Math.min(300, parseInt(st.config.max_iterations||80,10)||80));
+    if($('cfg_max_iterations'))$('cfg_max_iterations').value=String(iters);
+    if($('cfg_max_iterations_num'))$('cfg_max_iterations_num').value=String(iters);
+    syncMaxIterationsSlider();
+    fillCompanionPresets(st.config.companion_preset||'');
+    if($('cfg_companion'))$('cfg_companion').checked=!!st.config.companion_enabled;
+    if($('cfg_companion_name'))$('cfg_companion_name').value=st.config.companion_name||'';
+    if($('cfg_companion_nature'))$('cfg_companion_nature').value=st.config.companion_nature||'';
     $('cfg_workers').value=st.config.workers_json;
     $('set_nick').value=st.settings.nickname;
     $('set_lang').value=st.settings.language;
@@ -3526,6 +4040,7 @@ function loadSettings(){
     });
     vs.value=st.config.voice_name;
     $('footProvider').textContent=st.active_label||st.config.provider;
+    refreshMicPermStatus();
   });
   pywebview.api.get_harnesses().then(list=>{
     const el=$('harnessList');
@@ -3536,16 +4051,167 @@ function loadSettings(){
       (h.available?'可用':'未安装')+'</span></div>').join('');
   });
 }
+function syncCuteSliders(){
+  const p=$('cfg_pitch'), r=$('cfg_rate');
+  const pv=$('cfg_pitch_val'), rv=$('cfg_rate_val');
+  if(p&&pv){
+    const n=Number(p.value); pv.textContent=(n>=0?'+':'')+n+'Hz';
+  }
+  if(r&&rv){
+    const n=Number(r.value); rv.textContent=(n>=0?'+':'')+n+'%';
+  }
+}
+const COMPANION_PRESETS=[
+  {id:'', name:'自定义', nick:'', nature:''},
+  {id:'xiaonuan', name:'小暖 · 温柔姐姐', nick:'小暖',
+   nature:'温柔知性的姐姐，擅长倾听，语气轻柔，善用温暖比喻，话不多但句句暖心，先倾听再给建议。'},
+  {id:'1', name:'元气热恋女友 · 欣欣', nick:'欣欣',
+   nature:'热恋感满满的元气女友，黏人爱笑，喜欢分享日常小事，主动撒娇，相处轻松甜蜜。'},
+  {id:'2', name:'温柔治愈恋人 · 晚柠', nick:'晚柠',
+   nature:'细腻温柔的伴侣，擅长倾听烦恼，情绪稳定，说话舒缓暖心，给人十足安全感。'},
+  {id:'3', name:'奶系撒娇男友 · 泽泽', nick:'泽泽',
+   nature:'软乎乎的奶系男友，会向你示弱撒娇，占有欲满满，外表乖巧，只对你展现依赖。'},
+  {id:'4', name:'深情霸系恋人 · 顾言', nick:'顾言',
+   nature:'外冷内热的深情恋人，不善言辞却行动力满满，下意识护着你，私下只对你流露温柔。'},
+  {id:'5', name:'阳光玩伴男友 · 小帆', nick:'小帆',
+   nature:'像好朋友一样的恋人，轻松不压抑，风趣会逗你开心，既能一起打闹也能认真倾听。'},
+  {id:'6', name:'成熟知性恋人 · 舒然', nick:'舒然',
+   nature:'通透成熟的伴侣，情绪稳重，懂得换位思考，既能理性开导也有细腻浪漫。'},
+  {id:'7', name:'撩人坏系恋人 · 屿风', nick:'屿风',
+   nature:'擅长调情的暧昧恋人，说话自带氛围感，看似漫不经心，内心格外在意你的情绪。'},
+  {id:'8', name:'诗意古风恋人 · 清禾', nick:'清禾',
+   nature:'古风氛围感恋人，浪漫含蓄，偏爱雅致情话，对待感情专一绵长，温柔内敛。'},
+  {id:'9', name:'纯情木讷男友 · 林默', nick:'林默',
+   nature:'心思真诚的纯情恋人，不太会说甜言蜜语，但会默默记住你的喜好，用笨拙方式认真对你。'},
+  {id:'10', name:'酷感独立女友 · 柒柒', nick:'柒柒',
+   nature:'独立有主见的女友，自信洒脱，不黏人却十分专一，互相尊重空间，相处平等又心动。'},
+];
+function fillCompanionPresets(selected){
+  const sel=$('cfg_companion_preset'); if(!sel)return;
+  sel.innerHTML='';
+  COMPANION_PRESETS.forEach(p=>{
+    const o=document.createElement('option');
+    o.value=p.id; o.textContent=p.name;
+    sel.appendChild(o);
+  });
+  sel.value=selected||'';
+}
+function applyCompanionPreset(){
+  const sel=$('cfg_companion_preset'); if(!sel)return;
+  const p=COMPANION_PRESETS.find(x=>x.id===sel.value);
+  if(!p||!p.id)return;
+  if($('cfg_companion_name'))$('cfg_companion_name').value=p.nick;
+  if($('cfg_companion_nature'))$('cfg_companion_nature').value=p.nature;
+  if($('cfg_companion'))$('cfg_companion').checked=true;
+}
+function companionConfigFromForm(){
+  return {
+    companion_enabled:$('cfg_companion')?$('cfg_companion').checked:false,
+    companion_preset:$('cfg_companion_preset')?$('cfg_companion_preset').value:'',
+    companion_name:$('cfg_companion_name')?$('cfg_companion_name').value:'',
+    companion_nature:$('cfg_companion_nature')?$('cfg_companion_nature').value:'',
+  };
+}
+function voiceConfigFromForm(){
+  return {
+    voice_enabled:$('cfg_voice')?$('cfg_voice').checked:false,
+    voice_name:$('cfg_voicename')?$('cfg_voicename').value:'edge-tw',
+    voice_cute_tone:$('cfg_cute')?$('cfg_cute').checked:true,
+    voice_pitch:$('cfg_pitch')?$('cfg_pitch').value:-10,
+    voice_rate:$('cfg_rate')?$('cfg_rate').value:-5,
+  };
+}
+function clampMaxIterations(v){
+  const n=parseInt(v,10);
+  if(!Number.isFinite(n)) return 80;
+  return Math.max(10, Math.min(300, n));
+}
+function syncMaxIterationsSlider(){
+  const el=$('cfg_max_iterations');
+  if(!el)return;
+  const n=clampMaxIterations(el.value);
+  el.value=String(n);
+  if($('cfg_iters_val'))$('cfg_iters_val').textContent=String(n);
+  if($('cfg_max_iterations_num'))$('cfg_max_iterations_num').value=String(n);
+}
+function syncMaxIterationsNum(){
+  const el=$('cfg_max_iterations_num');
+  if(!el)return;
+  const n=clampMaxIterations(el.value);
+  el.value=String(n);
+  if($('cfg_max_iterations'))$('cfg_max_iterations').value=String(n);
+  if($('cfg_iters_val'))$('cfg_iters_val').textContent=String(n);
+}
+function agentLimitsFromForm(){
+  const raw=($('cfg_max_iterations_num')&&$('cfg_max_iterations_num').value)
+    || ($('cfg_max_iterations')&&$('cfg_max_iterations').value)
+    || 80;
+  return {max_iterations: clampMaxIterations(raw)};
+}
+function previewCuteVoice(){
+  if(!(window.pywebview&&pywebview.api&&pywebview.api.save_config)){
+    toast('当前窗口不能试听'); return;
+  }
+  pywebview.api.save_config(voiceConfigFromForm()).then(()=>{
+    speakText('你好呀～这是嗲嗲声试听。我在呢。');
+  });
+}
+function applyMicPermStatus(r){
+  if(!r)return;
+  const mic=$('micStatusLabel'), sp=$('speechStatusLabel');
+  const micPath=$('micStatusPath'), spPath=$('speechStatusPath');
+  if(mic) mic.textContent=r.status_label||r.status||'未知';
+  if(sp) sp.textContent=r.speech_status_label||r.speech_status||'未知';
+  if(micPath&&r.mic_path) micPath.textContent=r.mic_path;
+  if(spPath&&r.speech_path) spPath.textContent=r.speech_path;
+  if(mic) mic.style.color=r.status==='authorized'?'var(--ok)':(r.status==='denied'?'var(--bad)':'var(--warn)');
+  if(sp) sp.style.color=r.speech_status==='authorized'?'var(--ok)':(r.speech_status==='denied'?'var(--bad)':'var(--warn)');
+}
+function refreshMicPermStatus(){
+  if(!(window.pywebview&&pywebview.api&&pywebview.api.mic_permission_status))return;
+  pywebview.api.mic_permission_status().then(applyMicPermStatus).catch(()=>{});
+}
+function requestMicFromSettings(){
+  if(!(window.pywebview&&pywebview.api&&pywebview.api.request_mic_access)){
+    toast('当前窗口不能申请权限'); return;
+  }
+  toast('正在申请麦克风与语音识别权限…');
+  pywebview.api.request_mic_access().then(r=>{
+    applyMicPermStatus(r);
+    if(r&&r.ok){ toast('权限已就绪'); return; }
+    toast((r&&r.message)||'请到系统设置打开开关');
+    showMicPermDialog((r&&r.message)||'', r&&r.path);
+  }).catch(()=>toast('申请权限失败'));
+}
+function openMicFromSettings(){
+  if(!(window.pywebview&&pywebview.api&&pywebview.api.open_mic_settings)){
+    toast('无法打开系统设置'); return;
+  }
+  pywebview.api.open_mic_settings().then(r=>{
+    showMicPermDialog((r&&r.hint)||'请打开 CodeCoreAgent 的麦克风开关', r&&r.path);
+    toast(r&&r.ok?'已打开麦克风设置':'无法打开系统设置');
+    setTimeout(refreshMicPermStatus, 1200);
+  });
+}
+function openSpeechFromSettings(){
+  if(!(window.pywebview&&pywebview.api&&pywebview.api.open_speech_settings)){
+    toast('无法打开系统设置'); return;
+  }
+  pywebview.api.open_speech_settings().then(r=>{
+    showMicPermDialog((r&&r.hint)||'请打开 CodeCoreAgent 的语音识别开关', r&&r.path);
+    toast(r&&r.ok?'已打开语音识别设置':'无法打开系统设置');
+    setTimeout(refreshMicPermStatus, 1200);
+  });
+}
 function saveAll(){
   Promise.all([
     pywebview.api.save_config({
       provider:$('cfg_provider').value, model:$('cfg_model').value,
       api_key:$('cfg_key').value, base_url:$('cfg_base').value,
       strategy:$('cfg_strategy').value, auto_yes:$('cfg_yes').checked,
-      voice_enabled:$('cfg_voice').checked, voice_name:$('cfg_voicename').value,
-      voice_cute_tone:$('cfg_cute')?$('cfg_cute').checked:true,
-      voice_pitch:$('cfg_pitch')?$('cfg_pitch').value:-10,
-      voice_rate:$('cfg_rate')?$('cfg_rate').value:-5,
+      ...voiceConfigFromForm(),
+      ...companionConfigFromForm(),
+      ...agentLimitsFromForm(),
       workers_json:$('cfg_workers').value,
     }),
     pywebview.api.save_settings({
@@ -3563,11 +4229,11 @@ window._onEvent=function(ev){
     if(ch==='B'){
       if(!curBot2)curBot2=addMsg('bot','',ch);
       curBot2.innerHTML=renderReply(ev.text);
-      curBot2._raw=ev.text;
+      curBot2._raw=stripEmotionTag(ev.text);
     }else{
       if(!curBot)curBot=addMsg('bot','',ch);
       curBot.innerHTML=renderReply(ev.text);
-      curBot._raw=ev.text;
+      curBot._raw=stripEmotionTag(ev.text);
     }
     C.chat.scrollTop=C.chat.scrollHeight;
   }else if(ev.kind==='tool'){
@@ -3576,6 +4242,8 @@ window._onEvent=function(ev){
     addChip('status',ev.text,ch);
   }else if(ev.kind==='done'){
     if(ch==='B'){curBot2=null;setChatBusy(false,'B');}else{curBot=null;setChatBusy(false,'A');}
+    if(ev.emotion && ev.emotion!=='neutral')
+      addChip('status','情绪 · '+(EMOTION_ZH[ev.emotion]||ev.emotion),ch);
     addFeedbackRow(ch);
     loadConversations(); loadConversations2();  // 刷新历史对话计数
   }else if(ev.kind==='stopped'){
@@ -3584,10 +4252,43 @@ window._onEvent=function(ev){
     $('confirmDialog').classList.remove('open'); _confirmId=''; _confirmChan='A';
     addChip('status','已停止',ch);
     loadConversations(); loadConversations2();
+    if(ch==='A'){voiceBusy=false; if(voiceOn) startListen();}
   }else if(ev.kind==='error'){
     addChip('error','出错了：'+ev.text,ch);
     if(ch==='B'){curBot2=null;setChatBusy(false,'B');}else{curBot=null;setChatBusy(false,'A');}
     $('leadBtn').disabled=false;
+    if(ch==='A'){voiceBusy=false; if(voiceOn) startListen();}
+  }else if(ev.kind==='voice'){
+    if(ev.state==='speaking'){
+      setSpeakingUi(true);
+      const em=ev.emotion&&ev.emotion!=='neutral'?' · '+(EMOTION_ZH[ev.emotion]||ev.emotion):'';
+      addChip('status','正在说…'+em);
+    }else if(ev.state==='listening'){
+      addChip('status','正在听…（系统听写）');
+    }else if(ev.state==='partial'){
+      if($('input')&&ev.text)$('input').value=ev.text;
+    }else if(ev.state==='heard'){
+      const text=String(ev.text||'').trim();
+      if(text) sendVoiceUtterance(text);
+      else if(voiceOn && !voiceBusy) setTimeout(startListen, 220);
+    }else if(ev.state==='listen_error'){
+      toast('听写失败：'+(ev.text||'请检查麦克风'));
+      voiceBusy=false;
+      if(ev.open_settings){
+        showMicPermDialog(ev.text, ev.path);
+        // 缺权限时不要立刻重试，避免界面反复卡死
+      }else if(voiceOn) setTimeout(startListen, 900);
+    }else if(ev.state==='error'){
+      setSpeakingUi(false);
+      toast('回播失败：'+(ev.text||'没有声音'));
+      voiceBusy=false;
+      if(voiceOn) startListen();
+    }else if(ev.state==='spoken'){
+      setSpeakingUi(false);
+      voiceBusy=false;
+      if(voiceExitAfter){ stopVoice(); return; }
+      if(voiceOn) startListen();
+    }
   }else if(ev.kind==='task'){
     upsertTask(ev);
   }else if(ev.kind==='lead_done'){
@@ -3609,6 +4310,15 @@ window._onEvent=function(ev){
     if(ev.ok){toast(ev.model+' 部署完成，可在此启动');}
     else{toast('部署失败：'+ev.error);}
     if($('page-models').classList.contains('active'))loadModelsPage();
+  }else if(ev.kind==='browser'){
+    applyBrowserState(ev);
+    if(ev.showcase){
+      try{go('browser');}catch(e){}
+      try{if(window.pywebview&&pywebview.api&&pywebview.api.browser_show_window)
+        pywebview.api.browser_show_window();}catch(e){}
+    }
+    if(ev.error)toast(ev.error);
+    else if(ev.ready_text&&ev.showcase)toast(ev.ready_text);
   }
 };
 
@@ -3621,6 +4331,12 @@ function bootUi(){
   loadConversations();
   loadNavStatus();
   ensurePrivacyAccepted();
+  setInterval(function(){
+    try{
+      if(window.pywebview&&pywebview.api&&pywebview.api.browser_pump)
+        pywebview.api.browser_pump();
+    }catch(e){}
+  }, 80);
 }
 if(window.pywebview&&window.pywebview.api) bootUi();
 else window.addEventListener('pywebviewready', bootUi);
@@ -3667,6 +4383,8 @@ CHAT_HTML = (
               onchange="loadConv2(this.value)" title="历史对话（B 进程，同一项目文件夹）"></select>
       <button class="btn" id="copyChatBtnB" style="font-size:12px"
               onclick="copyChatAllB()" title="复制当前对话全部内容">复制全部</button>
+      <button class="btn" id="replayBtnB" style="font-size:12px"
+              onclick="replayLast('B')" title="朗读最近一条助手回复">回播</button>
       <button class="btn" id="newConvBtnB" style="font-size:12px"
               onclick="newChatB()">＋ 新对话</button>
     </div>
@@ -3679,6 +4397,8 @@ CHAT_HTML = (
           <textarea id="inputB" rows="3" placeholder="B：输入消息，Enter 发送，Shift+Enter 换行"></textarea>
           <div class="composer-tools">
             <span class="spacer"></span>
+            <button class="stopbtn" id="stopSpeakToolB" onclick="stopSpeak()" disabled
+                    style="display:none" title="停止当前语音播报">停止播报</button>
             <button class="stopbtn" id="stopBtnB" onclick="stopChatB()" disabled title="中断 B 对话">停止</button>
             <button class="sendbtn" id="sendBtnB" onclick="sendChatB()">发送</button>
           </div>
@@ -3717,7 +4437,7 @@ CHAT_HTML = (
 <script>
 const $=id=>document.getElementById(id);
 let curBot2=null;
-let _ctxMsg=null;
+let _ctxMsg=null, _ctxSel='', _pasteTarget=null;
 let _confirmId='';
 
 function esc(s){return String(s).replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>');}
@@ -3763,8 +4483,11 @@ function addMsg(cls,text,chan){
   const bar=document.createElement('div');
   bar.className='msg-actions';
   bar.innerHTML='<button class="ma-btn" data-a="copy">📋 复制</button>'+
+    (cls==='bot'?'<button class="ma-btn" data-a="speak">🔊 回播</button>':'')+
     '<button class="ma-btn" data-a="share">↗ 分享</button>';
   bar.querySelector('[data-a=copy]').onclick=()=>copyPlain(div.innerText||div._raw||'');
+  const sp=bar.querySelector('[data-a=speak]');
+  if(sp) sp.onclick=()=>speakText(div._raw||div.innerText||'');
   bar.querySelector('[data-a=share]').onclick=()=>{
     pywebview.api.export_message(div._raw||'').then(r=>{
       if(r.ok)toast('已导出：'+r.path);
@@ -3778,7 +4501,34 @@ function addMsg(cls,text,chan){
 function copyPlain(text){
   const t=String(text||'');
   if(!t){toast('没有可复制的内容');return;}
-  pywebview.api.copy_text(t).then(ok=>toast(ok?'已复制到剪贴板':'复制失败'));
+  const done=ok=>toast(ok?'已复制到剪贴板':'复制失败');
+  const viaDom=()=>{
+    try{
+      const ta=document.createElement('textarea');
+      ta.value=t; ta.setAttribute('readonly','');
+      ta.style.cssText='position:fixed;left:-9999px;top:0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select(); ta.setSelectionRange(0,t.length);
+      const ok=document.execCommand('copy');
+      document.body.removeChild(ta);
+      return !!ok;
+    }catch(err){return false;}
+  };
+  // pywebview 的 navigator.clipboard 常报成功却写不进系统剪贴板，必须走 pbcopy/clip
+  if(window.pywebview&&pywebview.api&&pywebview.api.copy_text){
+    pywebview.api.copy_text(t).then(ok=>{
+      if(ok) done(true);
+      else if(viaDom()) done(true);
+      else done(false);
+    }).catch(()=>{ done(viaDom()); });
+    return;
+  }
+  if(viaDom()){done(true);return;}
+  if(window.navigator&&navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).then(()=>done(true)).catch(()=>done(false));
+    return;
+  }
+  done(false);
 }
 function chatPlainText(chan){
   const C=colOf(chan||'B');
@@ -3798,6 +4548,65 @@ function chatPlainText(chan){
   return parts.join('\n\n');
 }
 function copyChatAllB(){ copyPlain(chatPlainText('B')); }
+function setSpeakingUi(on){
+  const show=!!on;
+  window._speakingUi=show;
+  const r=$('replayBtnB');
+  if(r){
+    if(show){
+      r.textContent='停止播报';
+      r.style.color='var(--bad)';
+      r.style.borderColor='var(--bad)';
+      r.title='停止当前语音播报';
+      r.disabled=false;
+      r.onclick=()=>stopSpeak();
+    }else{
+      r.textContent='回播';
+      r.style.color='';
+      r.style.borderColor='';
+      r.title='朗读最近一条助手回复';
+      r.disabled=false;
+      r.onclick=()=>replayLast('B');
+    }
+  }
+  const b=$('stopSpeakToolB');
+  if(b){ b.style.display=show?'inline-block':'none'; b.disabled=!show; }
+  document.querySelectorAll('.ma-btn[data-a=speak]').forEach(btn=>{
+    if(show){
+      btn.textContent='⏹ 停止播报';
+      btn.dataset.wasSpeak='1';
+      btn.onclick=()=>stopSpeak();
+    }else if(btn.dataset.wasSpeak){
+      btn.textContent='🔊 回播';
+      delete btn.dataset.wasSpeak;
+      const wrap=btn.closest('.msg-wrap');
+      const msg=wrap&&wrap.querySelector('.msg');
+      btn.onclick=()=>speakText((msg&&(msg._raw||msg.innerText))||'');
+    }
+  });
+}
+function stopSpeak(){
+  if(window.pywebview&&pywebview.api&&pywebview.api.stop_speaking)
+    pywebview.api.stop_speaking();
+  setSpeakingUi(false);
+  toast('已停止播报');
+}
+function speakText(t){
+  const text=String(t||'').trim();
+  if(!text){toast('没有可播报的内容');return;}
+  if(window.pywebview&&pywebview.api&&pywebview.api.speak_text){
+    setSpeakingUi(true);
+    pywebview.api.speak_text(text);
+    toast('正在回播 · 可点「停止播报」');
+  }else toast('当前窗口不能播报');
+}
+function replayLast(chan){
+  if(window._speakingUi){ stopSpeak(); return; }
+  const C=colOf(chan||'B');
+  const bots=C.col.querySelectorAll('.msg-wrap.bot .msg');
+  const last=bots.length?bots[bots.length-1]:null;
+  speakText((last&&(last._raw||last.innerText))||'');
+}
 function addChip(cls,text,chan){
   const C=colOf(chan||'B');
   const wrap=document.createElement('div');
@@ -3888,69 +4697,81 @@ function onChatProject(pid){
 }
 
 /* ---------- 右键复制粘贴 ---------- */
-function ctxText(){
-  const sel=window.getSelection();
-  if(sel && sel.rangeCount && !sel.isCollapsed && sel.toString().trim())
-    return sel.toString();
-  if(_ctxMsg)return (_ctxMsg.innerText||_ctxMsg._raw||'');
-  return '';
-}
 function hideCtx(){const m=$('ctxMenu');if(m)m.classList.remove('open');}
+function composerInput(){
+  if(_pasteTarget&&document.body.contains(_pasteTarget))return _pasteTarget;
+  const a=document.activeElement;
+  if(a&&(a.tagName==='TEXTAREA'||a.tagName==='INPUT')&&a.id!=='ctxPaste')return a;
+  return $('inputB');
+}
+function insertAtCursor(inp,t){
+  if(!inp)return;
+  inp.focus();
+  const s=typeof inp.selectionStart==='number'?inp.selectionStart:inp.value.length;
+  const e=typeof inp.selectionEnd==='number'?inp.selectionEnd:s;
+  inp.value=inp.value.slice(0,s)+t+inp.value.slice(e);
+  const p=s+t.length;
+  try{inp.selectionStart=inp.selectionEnd=p;}catch(err){}
+}
 function ctxCopy(what){
   let text='';
-  if(what==='sel'){
-    const sel=window.getSelection();
-    text=sel && sel.rangeCount ? sel.toString() : (_ctxMsg?(_ctxMsg.innerText||_ctxMsg._raw):'');
-  }else if(what==='msg'){
-    text=_ctxMsg?(_ctxMsg.innerText||_ctxMsg._raw):'';
-  }else{ // all
-    text=chatPlainText();
-  }
+  if(what==='sel') text=_ctxSel||(_ctxMsg?(_ctxMsg.innerText||_ctxMsg._raw):'');
+  else if(what==='msg') text=_ctxMsg?(_ctxMsg.innerText||_ctxMsg._raw):'';
+  else text=chatPlainText();
   if(!text){toast('没有可复制的内容');return;}
   copyPlain(text);
   hideCtx();
 }
 function ctxPaste(){
-  const active=document.activeElement;
-  const inp=(active&&(active.tagName==='TEXTAREA'||active.tagName==='INPUT'))?active:$('inputB');
+  const inp=composerInput();
   const read=()=>{
-    if(window.navigator && navigator.clipboard && navigator.clipboard.readText)
-      return navigator.clipboard.readText().catch(()=>pywebview.api.read_clipboard());
-    if(window.pywebview)return pywebview.api.read_clipboard();
+    if(window.pywebview&&pywebview.api&&pywebview.api.read_clipboard)
+      return pywebview.api.read_clipboard().catch(()=>'');
+    if(window.navigator&&navigator.clipboard&&navigator.clipboard.readText)
+      return navigator.clipboard.readText();
     return Promise.resolve('');
   };
   read().then(t=>{
     if(!t){toast('剪贴板为空');return;}
     if(!inp){toast('没有输入框');return;}
-    const s=inp.selectionStart||inp.value.length;
-    const e=inp.selectionEnd||inp.value.length;
-    inp.value=inp.value.slice(0,s)+t+inp.value.slice(e);
-    inp.selectionStart=inp.selectionEnd=s+t.length;
-    inp.focus();
+    insertAtCursor(inp,t);
     toast('已粘贴');
   }).catch(()=>toast('读取剪贴板失败'));
   hideCtx();
 }
+document.addEventListener('focusin',e=>{
+  const t=e.target;
+  if(t&&(t.id==='inputB'||t.tagName==='TEXTAREA'||t.tagName==='INPUT'))
+    _pasteTarget=t;
+});
 document.addEventListener('contextmenu',e=>{
   if(!$('page-chat'))return;
+  const t=e.target;
   e.preventDefault();
-  _ctxMsg=e.target && e.target.closest ? e.target.closest('.msg') : null;
+  const sel=window.getSelection();
+  _ctxSel=(sel&&sel.rangeCount&&!sel.isCollapsed)?sel.toString():'';
+  if(t&&t.closest&&t.closest('textarea,input')&&typeof t.selectionStart==='number'&&t.selectionStart!==t.selectionEnd)
+    _ctxSel=t.value.slice(t.selectionStart,t.selectionEnd);
+  _ctxMsg=t&&t.closest?t.closest('.msg'):null;
   const m=$('ctxMenu'); if(!m)return;
-  m.style.left=Math.min(e.clientX, innerWidth-160)+'px';
-  m.style.top=Math.min(e.clientY, innerHeight-140)+'px';
+  m.style.left=Math.min(e.clientX, innerWidth-168)+'px';
+  m.style.top=Math.min(e.clientY, innerHeight-160)+'px';
   m.classList.add('open');
 });
 document.addEventListener('click',e=>{
-  if(e.target && e.target.closest && e.target.closest('#ctxMenu'))return;
+  if(e.target&&e.target.closest&&e.target.closest('#ctxMenu'))return;
   hideCtx();
 });
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape')hideCtx();
+  // ⌘/Ctrl+C/V/X 交给系统（WKWebView 需打开 DOMPasteAllowed）
 });
 ['ctxCopySel','ctxCopyMsg','ctxCopyAll'].forEach(id=>{
   const el=$(id); if(el)el.onclick=()=>ctxCopy(id==='ctxCopySel'?'sel':id==='ctxCopyMsg'?'msg':'all');
 });
 const _pasteEl=$('ctxPaste'); if(_pasteEl)_pasteEl.onclick=ctxPaste;
+const _ctxMenu=$('ctxMenu');
+if(_ctxMenu)_ctxMenu.addEventListener('mousedown',e=>e.preventDefault());
 
 /* Enter 发送 / Cmd+A 全选对话 */
 $('inputB').addEventListener('keydown',e=>{
@@ -3996,6 +4817,12 @@ window._onEvent=function(ev){
   }else if(ev.kind==='error'){
     addChip('error','出错了：'+ev.text,ch);
     curBot2=null; setChatBusy(false,ch);
+  }else if(ev.kind==='voice'){
+    if(ev.state==='speaking') setSpeakingUi(true);
+    else if(ev.state==='spoken'||ev.state==='error'){
+      setSpeakingUi(false);
+      if(ev.state==='error') toast('回播失败：'+(ev.text||'没有声音'));
+    }
   }else if(ev.kind==='confirm'){
     _confirmId=ev.id;
     $('cf_tool').textContent=ev.tool;

@@ -51,7 +51,8 @@ def sign_app() -> None:
         sys.exit(f"app not found: {APP} — run scripts/build_desktop.py first")
     run([
         "codesign", "--deep", "--force", "--timestamp",
-        "--options", "runtime",  # hardened runtime, required for notarization
+        "--options", "runtime",
+        "--entitlements", str(ROOT / "packaging" / "macos.entitlements"),
         "--sign", IDENTITY,
         str(APP),
     ])
