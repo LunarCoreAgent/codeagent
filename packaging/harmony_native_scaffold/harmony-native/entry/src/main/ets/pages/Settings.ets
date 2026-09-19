@@ -40,10 +40,21 @@ struct Settings {
     const want: Want = {
       action: 'ohos.want.action.viewData',
       entities: ['entity.system.browsable'],
-      uri: 'https://lunarcoreagent.com/CodeCoreAgent/index.html',
+      uri: 'http://codecoreagent.com',
     };
     this.ctx.startAbility(want).catch((_err: BusinessError) => {
       promptAction.showToast({ message: '无法打开官网' });
+    });
+  }
+
+  openPrivacyPage() {
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      entities: ['entity.system.browsable'],
+      uri: 'http://codecoreagent.com/privacy.html',
+    };
+    this.ctx.startAbility(want).catch((_err: BusinessError) => {
+      promptAction.showToast({ message: '无法打开隐私安全' });
     });
   }
 
@@ -108,7 +119,14 @@ struct Settings {
             .fontSize(16).fontColor('#007AFF')
             .decoration({ type: TextDecorationType.Underline, color: '#007AFF' })
             .onClick(() => this.openOfficialSite())
-          Text('https://lunarcoreagent.com/CodeCoreAgent/index.html')
+          Text('http://codecoreagent.com')
+            .fontSize(12).fontColor('#888888')
+
+          Text('隐私安全')
+            .fontSize(16).fontColor('#007AFF')
+            .decoration({ type: TextDecorationType.Underline, color: '#007AFF' })
+            .onClick(() => this.openPrivacyPage())
+          Text('http://codecoreagent.com/privacy.html')
             .fontSize(12).fontColor('#888888')
 
           Button('问题反馈')

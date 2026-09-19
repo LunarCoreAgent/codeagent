@@ -698,7 +698,9 @@ def test_ui_has_all_pages_and_bridge():
     assert ">问题反馈<" in HTML
     assert "openOfficialSite" in HTML
     assert "pywebview.api.open_official_site" in HTML
-    assert "https://lunarcoreagent.com/CodeCoreAgent/index.html" in HTML
+    assert "http://codecoreagent.com" in HTML
+    assert "http://codecoreagent.com/privacy.html" in HTML
+    assert "openPrivacyPage" in HTML
     assert ">官网<" in HTML
     assert "pywebview.api.get_workflows" in HTML
     assert "pywebview.api.add_cron_job" in HTML
@@ -1173,7 +1175,16 @@ def test_open_official_site(api, monkeypatch):
     monkeypatch.setattr("webbrowser.open", lambda url, new=0: opened.append(url) or True)
     r = api.open_official_site()
     assert r["ok"]
-    assert r["url"] == "https://lunarcoreagent.com/CodeCoreAgent/index.html"
+    assert r["url"] == "http://codecoreagent.com"
+    assert opened and opened[0] == r["url"]
+
+
+def test_open_privacy_page(api, monkeypatch):
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", lambda url, new=0: opened.append(url) or True)
+    r = api.open_privacy_page()
+    assert r["ok"]
+    assert r["url"] == "http://codecoreagent.com/privacy.html"
     assert opened and opened[0] == r["url"]
 
 

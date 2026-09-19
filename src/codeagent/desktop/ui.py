@@ -1586,6 +1586,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       <p class="hint">官网在系统浏览器中打开。问题反馈会打开本机邮件应用，收件人已填好。</p>
       <div class="savebar" style="margin-top:12px">
         <button class="btn" type="button" onclick="openOfficialSite()">官网</button>
+        <button class="btn" type="button" onclick="openPrivacyPage()">隐私安全</button>
         <button class="btn primary" type="button" onclick="openFeedbackMail()">问题反馈</button>
       </div>
     </div>
@@ -4509,8 +4510,19 @@ function openSpeechFromSettings(){
     setTimeout(refreshMicPermStatus, 1200);
   });
 }
+function openPrivacyPage(){
+  const URL='http://codecoreagent.com/privacy.html';
+  if(window.pywebview&&pywebview.api&&pywebview.api.open_privacy_page){
+    pywebview.api.open_privacy_page().then(r=>{
+      if(r&&r.ok){toast('已打开隐私安全');return;}
+      window.open(URL,'_blank');
+    }).catch(()=>{window.open(URL,'_blank');});
+    return;
+  }
+  window.open(URL,'_blank');
+}
 function openOfficialSite(){
-  const URL='https://lunarcoreagent.com/CodeCoreAgent/index.html';
+  const URL='http://codecoreagent.com';
   if(window.pywebview&&pywebview.api&&pywebview.api.open_official_site){
     pywebview.api.open_official_site().then(r=>{
       if(r&&r.ok){toast('已打开官网');return;}

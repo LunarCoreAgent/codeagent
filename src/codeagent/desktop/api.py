@@ -2783,7 +2783,18 @@ class DesktopAPI:
         """Open the product website in the system browser."""
         import webbrowser
 
-        url = "https://lunarcoreagent.com/CodeCoreAgent/index.html"
+        url = "http://codecoreagent.com"
+        try:
+            webbrowser.open(url, new=2)
+            return {"ok": True, "url": url}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc), "url": url}
+
+    def open_privacy_page(self) -> dict[str, Any]:
+        """Open the public privacy page in the system browser."""
+        import webbrowser
+
+        url = "http://codecoreagent.com/privacy.html"
         try:
             webbrowser.open(url, new=2)
             return {"ok": True, "url": url}

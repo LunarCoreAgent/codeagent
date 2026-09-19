@@ -278,6 +278,7 @@ const KEYS: string[] = [
   "退出账号核验",
   "使用合成生成内容（对话等）前，须通过华为账号完成真实身份核验。核验依据账号绑定的移动电话号码；登录状态仅保存在本机。",
   "· 合成生成内容前须华为账号实名核验（绑定手机号）",
+  "隐私安全",
 ];
 const HANT: string[] = [
   "你是 CodeCoreAgent，一個專業的程式與任務助手。回答簡潔、可執行。",
@@ -557,6 +558,7 @@ const HANT: string[] = [
   "退出帳號核驗",
   "使用合成生成內容（對話等）前，須透過華為帳號完成真實身分核驗。核驗依據帳號綁定的行動電話號碼；登入狀態僅保存在本機。",
   "· 合成生成內容前須華為帳號實名核驗（綁定手機號）",
+  "隱私安全",
 ];
 const EN: string[] = [
   "You are CodeCoreAgent, a practical coding and task assistant. Be concise.",
@@ -836,6 +838,7 @@ const EN: string[] = [
   "Sign out",
   "Before using generative content (chat, etc.), verify your identity with a HUAWEI ID. Verification uses the phone number bound to the account; the sign-in state stays on this device.",
   "· Generative content requires HUAWEI ID identity verification (phone number)",
+  "Privacy and security",
 ];
 const JA: string[] = [
   "あなたは CodeCoreAgent です。簡潔で実行できる回答をしてください。",
@@ -1115,6 +1118,7 @@ const JA: string[] = [
   "本人確認を解除",
   "生成コンテンツ（会話など）を使う前に、Huawei ID で本人確認が必要です。確認はアカウントに紐づく電話番号に基づき、ログイン状態は本機のみに保存されます。",
   "· 生成コンテンツ前に Huawei ID 本人確認（電話番号）が必要",
+  "プライバシーと安全",
 ];
 const FR: string[] = [
   "Vous êtes CodeCoreAgent, un assistant de code et de tâches. Soyez concis.",
@@ -1394,6 +1398,7 @@ const FR: string[] = [
   "Se déconnecter",
   "Avant d’utiliser le contenu généré (chat, etc.), vérifiez votre identité via le compte HUAWEI. La vérification utilise le numéro lié ; l’état de connexion reste sur l’appareil.",
   "· Contenu généré : vérification d’identité HUAWEI (téléphone) requise",
+  "Confidentialité et sécurité",
 ];
 const ES: string[] = [
   "Eres CodeCoreAgent, un asistente de código y tareas. Sé conciso.",
@@ -1673,6 +1678,7 @@ const ES: string[] = [
   "Cerrar sesión",
   "Antes de usar contenido generado (chat, etc.), verifique su identidad con HUAWEI ID. Se usa el teléfono vinculado; el inicio de sesión permanece en este dispositivo.",
   "· Contenido generado: verificación HUAWEI ID (teléfono) requerida",
+  "Privacidad y seguridad",
 ];
 const KO: string[] = [
   "당신은 CodeCoreAgent입니다. 간결하고 실행 가능한 답을 하세요.",
@@ -1952,6 +1958,7 @@ const KO: string[] = [
   "본인 확인 해제",
   "생성형 콘텐츠(대화 등)를 쓰기 전에 Huawei ID로 본인 확인이 필요합니다. 계정에 연결된 전화번호를 사용하며, 로그인 상태는 기기에만 저장됩니다.",
   "· 생성형 콘텐츠 전 Huawei ID 본인 확인(전화번호) 필요",
+  "개인정보 보호",
 ];
 
 function tableOf(lang: string): string[] {

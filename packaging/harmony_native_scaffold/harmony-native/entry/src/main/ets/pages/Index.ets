@@ -712,10 +712,21 @@ struct Index {
     const want: Want = {
       action: 'ohos.want.action.viewData',
       entities: ['entity.system.browsable'],
-      uri: 'https://lunarcoreagent.com/CodeCoreAgent/index.html',
+      uri: 'http://codecoreagent.com',
     };
     this.ctx.startAbility(want).catch((_err: BusinessError) => {
       this.toast = '无法打开官网';
+    });
+  }
+
+  openPrivacyPage() {
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      entities: ['entity.system.browsable'],
+      uri: 'http://codecoreagent.com/privacy.html',
+    };
+    this.ctx.startAbility(want).catch((_err: BusinessError) => {
+      this.toast = '无法打开隐私安全';
     });
   }
 
@@ -2469,7 +2480,15 @@ struct Index {
           .decoration({ type: TextDecorationType.Underline, color: this.accent() })
           .padding({ top: 8, bottom: 4 })
           .onClick(() => this.openOfficialSite())
-        Text('https://lunarcoreagent.com/CodeCoreAgent/index.html')
+        Text('http://codecoreagent.com')
+          .fontSize(12).fontColor(this.muted())
+
+        Text(this.tx("隐私安全"))
+          .fontSize(16).fontColor(this.accent())
+          .decoration({ type: TextDecorationType.Underline, color: this.accent() })
+          .padding({ top: 8, bottom: 4 })
+          .onClick(() => this.openPrivacyPage())
+        Text('http://codecoreagent.com/privacy.html')
           .fontSize(12).fontColor(this.muted())
 
         Button(this.tx("问题反馈")).width('100%').height(44)

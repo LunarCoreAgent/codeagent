@@ -27,7 +27,8 @@
       }
     ],
     "querySchemes": [
-      "https"
+      "https",
+      "http"
     ],
     "metadata": [
       {
