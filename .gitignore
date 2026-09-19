@@ -12,3 +12,9 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .DS_Store
+oh_modules/
+.hvigor/
+*.hap
+*.app
+*.dmg
+*Windows打包.zip

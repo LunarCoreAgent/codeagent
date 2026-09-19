@@ -62,7 +62,7 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleName": "CodeCoreAgent",
             "CFBundleDisplayName": "CodeCoreAgent",
-            "CFBundleShortVersionString": "0.75.1",
+            "CFBundleShortVersionString": "0.77.0",
             "NSHighResolutionCapable": True,
             "NSMicrophoneUsageDescription": "语音对话需要使用麦克风听你说话。",
             "NSSpeechRecognitionUsageDescription": "语音对话需要把你说的话转成文字。",

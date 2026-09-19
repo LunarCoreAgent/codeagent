@@ -1,0 +1,7 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "CodeCoreAgent 纯鸿蒙版" },
+    { "name": "EntryAbility_desc", "value": "CodeCoreAgent" },
+    { "name": "EntryAbility_label", "value": "CodeCoreAgent" }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "color": [
+    { "name": "start_window_background", "value": "#0F0F12" },
+    { "name": "page_bg", "value": "#0F0F12" },
+    { "name": "input_text", "value": "#F2F2F3" },
+    { "name": "input_placeholder", "value": "#9A9AA0" },
+    { "name": "input_bg", "value": "#2A2A30" },
+    { "name": "input_caret", "value": "#64B5FF" }
+  ]
+}

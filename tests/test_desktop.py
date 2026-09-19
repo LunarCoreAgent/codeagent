@@ -691,6 +691,15 @@ def test_ui_has_all_pages_and_bridge():
     assert "pywebview.api.resolve_confirm" in HTML
     assert "pywebview.api.get_versions" in HTML
     assert "pywebview.api.send_feedback" in HTML
+    assert 'id="sectFeedback"' in HTML
+    assert "openFeedbackMail" in HTML
+    assert "pywebview.api.open_feedback_mail" in HTML
+    assert "alan_dan@live.com" in HTML
+    assert ">问题反馈<" in HTML
+    assert "openOfficialSite" in HTML
+    assert "pywebview.api.open_official_site" in HTML
+    assert "https://lunarcoreagent.com/CodeCoreAgent/index.html" in HTML
+    assert ">官网<" in HTML
     assert "pywebview.api.get_workflows" in HTML
     assert "pywebview.api.add_cron_job" in HTML
     assert "pywebview.api.learn_now" in HTML
@@ -1147,6 +1156,25 @@ def test_versions_page_data(api):
 # ---------------------------------------------------------------------------
 # activity stream & self-learning (LCA 卷三 · 自我学习)
 # ---------------------------------------------------------------------------
+
+
+def test_open_feedback_mail(api, monkeypatch):
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", lambda url, new=0: opened.append(url) or True)
+    r = api.open_feedback_mail()
+    assert r["ok"]
+    assert r["mailto"].startswith("mailto:alan_dan@live.com")
+    assert "CodeCoreAgent" in r["mailto"]
+    assert opened and opened[0] == r["mailto"]
+
+
+def test_open_official_site(api, monkeypatch):
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", lambda url, new=0: opened.append(url) or True)
+    r = api.open_official_site()
+    assert r["ok"]
+    assert r["url"] == "https://lunarcoreagent.com/CodeCoreAgent/index.html"
+    assert opened and opened[0] == r["url"]
 
 
 def test_feedback_writes_learn_activity(api):

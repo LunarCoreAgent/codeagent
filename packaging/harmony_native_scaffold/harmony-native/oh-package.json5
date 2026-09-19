@@ -1,0 +1,8 @@
+{
+  "name": "harmony-native",
+  "version": "0.77.0",
+  "modelVersion": "6.0.0",
+  "description": "CodeCoreAgent pure HarmonyOS native app",
+  "dependencies": {},
+  "devDependencies": { "@ohos/hypium": "1.0.21" }
+}

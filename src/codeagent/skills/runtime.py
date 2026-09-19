@@ -38,6 +38,8 @@ AutoCAD / 源 DWG 精确重绘 → autocad-dwg-redraw；图纸照片/扫描件�
 低代码业务库 / Limbas 表单应用 → limbas（Docker/Web 安装器，独立部署）。
 知识库随软件自动部署（本机 LLM Wiki）；分层检索思路 → openviking；\
 团队四类记忆资产 → tencentdb-agent-memory（默认同本地 Wiki，外挂 Docker 可选）。
+鸿蒙 / HarmonyOS NEXT / ArkTS API → harmony-next；.ets 语法与迁移 → arkts-syntax-assistant；\
+编译装机 / UI / hilog → deveco-mcp（MCP `deveco-mcp-server`，需本机 DevEco）。
 """
 
 # Everyday phrasing → skill-search tokens (CJK has no spaces).
@@ -126,6 +128,12 @@ _QUERY_EXPAND: tuple[tuple[re.Pattern[str], str], ...] = (
         r"Material\s*3|M3E|m3e-canvas|Material You|Expressive",
         re.I,
     ), " Material 3 M3E 画布 m3e-canvas"),
+    (re.compile(
+        r"鸿蒙|HarmonyOS|Harmony\s*OS\s*NEXT|harmony-next|@ohos|"
+        r"ArkUI|ApplicationKit|\.ets\b|ArkTS|arkts|"
+        r"DevEco|deveco-mcp|deveco-toolbox|hilog|hvigor|\bhdc\b|HAP\b",
+        re.I,
+    ), " 鸿蒙 HarmonyOS ArkTS DevEco harmony-next arkts-syntax-assistant deveco-mcp"),
 )
 
 _EXT_HINTS: dict[str, str] = {
@@ -150,6 +158,7 @@ _EXT_HINTS: dict[str, str] = {
     ".srt": "视频 字幕 剪辑",
     ".dwg": "AutoCAD DWG 重绘 CAD",
     ".dxf": "AutoCAD DXF CAD 重绘",
+    ".ets": "鸿蒙 ArkTS ets HarmonyOS",
 }
 
 _DIR_HINTS: dict[str, str] = {

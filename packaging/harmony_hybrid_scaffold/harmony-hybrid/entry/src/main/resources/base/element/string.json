@@ -1,0 +1,10 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "CodeCoreAgent 鸿蒙混合版" },
+    { "name": "EntryAbility_desc", "value": "CodeCoreAgent" },
+    { "name": "EntryAbility_label", "value": "CodeCoreAgent" }
+  ],
+  "color": [
+    { "name": "start_window_background", "value": "#FFFFFF" }
+  ]
+}

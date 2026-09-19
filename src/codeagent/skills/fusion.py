@@ -44,6 +44,9 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
 - 低代码业务库 / Limbas 表单应用 / PHP 数据库前台 → limbas（Linux + PHP + Docker/Web 安装器）
 - Agent 上下文库 / viking:// / 会话编译记忆 → openviking（默认用本机知识库；进阶可 pip 外挂）
 - 团队级 Agent 记忆 Hub / 四类资产共享 → tencentdb-agent-memory（默认映射本地 Wiki；进阶 Docker Hub）
+- 鸿蒙 / HarmonyOS NEXT / ArkTS API 查询 → harmony-next（离线路由，勿把 4000+ 文档整包塞进上下文）
+- ArkTS 语法 / .ets / TS 迁移 / 编译错误 → arkts-syntax-assistant
+- 鸿蒙编译安装 / 真机调试 / UI 树 / hilog → deveco-mcp（需本机 DevEco + MCP `deveco-mcp-server`）
 - CPython 内核 / C API / GIL / 从源码编 Python / 给解释器加模块 → cpython（写普通 .py 应用不要套）
 - 打开网页 / 登录站 / 点按钮 / 填表 → 直接调用 browser 工具（软件内置浏览器，无需安装；已登录 Chrome 可另用 browser-skill / ego-browser）
 - 语音面 / 麦克风 / 播报 / 嗲音 / barge-in → voice-surface
@@ -896,6 +899,99 @@ cp .env.example .env   # 填 memory 组 + proxy 组 LLM
 ## 铁律
 - 缺 Docker/LLM 配置就说明怎么装，不要假装 Hub 已运行
 - 默认走本机 Wiki；用户要团队 Proxy 再部署上游栈
+""",
+    ),
+    "harmony-next": (
+        "鸿蒙 NEXT 离线知识路由：API12+ ArkTS/ArkUI/NDK；按 Kit 检索，勿整库灌上下文",
+        "鸿蒙,HarmonyOS,HarmonyOS NEXT,harmony-next,ArkTS,ArkUI,NDK,API12,@ohos",
+        "https://github.com/linhay/harmony-next.skills",
+        """# harmony-next（HarmonyOS NEXT 知识路由）
+来源：https://github.com/linhay/harmony-next.skills
+做鸿蒙 / HarmonyOS NEXT（API 12+）API 查询、Kit 选型、兼容性核对时启用。
+自己调用 use_skill("harmony-next")。不要把上游数千份 Markdown 整仓拷进本软件安装包。
+
+## CodeCoreAgent 用法
+- **默认**：按任务关键词路由到对应 Kit（ArkUI / ApplicationKit / NDK / JsEtsAPIReference）
+- 需要本地全文库时：征得同意后 `git clone` 上游到用户目录，再用 `knowledge_ingest` / 项目文档引用；日常对话只摘相关片段
+- 写 `.ets` / 修编译错误时叠用 `arkts-syntax-assistant`
+- 要编译、装机、点 UI、抓 hilog 时叠用 `deveco-mcp`（MCP）
+
+## 检索纪律（L0→L2）
+1. 先定 Kit / 模块名与 API 级别（12–23）
+2. 只打开与当前问题相关的少量参考页；禁止一次塞进整库
+3. 给出可运行最小示例 + 版本/兼容性注意点
+
+## 铁律
+- 缺本机知识库时说明 clone 路径，不要假装已索引 4000+ 文档
+- 不要用过时 API 9 文档回答 NEXT；版本不明时先问目标 API
+""",
+    ),
+    "arkts-syntax-assistant": (
+        "ArkTS 语法助手：.ets 规范、TS 迁移、状态/组件与编译错误修复",
+        "ArkTS,arkts,.ets,@Component,@State,TypeScript迁移,鸿蒙语法,arkts-syntax-assistant",
+        "https://github.com/SummerKaze/skill-arkts-syntax-assistant",
+        """# arkts-syntax-assistant
+来源：https://github.com/SummerKaze/skill-arkts-syntax-assistant
+处理 `.ets`、ArkTS 关键字、TS→ArkTS 迁移、状态管理与编译错误时启用。
+自己调用 use_skill("arkts-syntax-assistant")。
+
+## 何时启用
+- 编辑或生成 `.ets` 文件
+- 出现 `@Component` / `@Entry` / `@State` / `@Prop` / `@Link` / `@Builder` 等
+- TypeScript 迁移到 ArkTS、严格类型与结构化类型报错
+- 组件性能、状态冗余、不必要的重渲染
+
+## 工作流
+1. 定位报错文件与行；说明 ArkTS 与 TS 差异（如无任意类型滥用、受限语法）
+2. 给出最小可编译补丁；避免无关重构
+3. API / Kit 细节 → `harmony-next`；装机构建 → `deveco-mcp`
+
+## 铁律
+- 不要把浏览器 DOM / React 习惯硬套进 ArkUI
+- 缺 DevEco / hvigor 时说明环境，不要假装已编译通过
+""",
+    ),
+    "deveco-mcp": (
+        "DevEco MCP：不打开 Studio GUI 也能编译、装机、UI 操作与抓日志",
+        "DevEco,deveco-mcp,deveco-toolbox,鸿蒙编译,HAP,hilog,hdc,UI树,HarmonyOS调试",
+        "https://github.com/open-deveco/deveco-toolbox",
+        """# deveco-mcp（DevEco Toolbox MCP）
+来源：https://github.com/open-deveco/deveco-toolbox
+在 CodeCoreAgent / Cursor / VS Code 等 AI IDE 里完成鸿蒙编译、安装、调试时启用。
+自己调用 use_skill("deveco-mcp")。依赖本机已装 **DevEco Studio**（或等价命令行工具链），不要把 Toolbox 整仓打进桌面包。
+
+## 闭环
+开发代码 → MCP 编译 → 安装到模拟器/真机 → 取 UI 树 / 点击滑动 → hilog/faultlog → 改代码。
+
+## 常用 MCP 能力（名称以本机 server 为准）
+- 构建：`build_project`（intent / module / product）
+- 运行：`start_app`（ability / module / device）
+- UI：`get_app_ui_tree`、`perform_ui_action`（click / fling / input / screenshot）
+- 日志：`get_hilog_or_faultlog_recent`
+- 辅助：文档搜索、ETS 静态检查
+
+## CodeCoreAgent 配置
+使用预设 `codeagent.mcp.presets.deveco_mcp`，或手动：
+```json
+{
+  "mcpServers": {
+    "deveco-mcp": {
+      "command": "npx",
+      "args": ["-y", "deveco-mcp-server"],
+      "env": {
+        "PROJECT_PATH": "/绝对路径/鸿蒙工程",
+        "DEVECO_PATH": "/Applications/DevEco-Studio.app/Contents"
+      }
+    }
+  }
+}
+```
+Windows 将 `DEVECO_PATH` 改为本机 Studio 安装目录。也可用上游 `deveco-toolbox` 可视化配置。
+
+## 铁律
+- 先确认本机能 `hvigor`/`hdc` 通，再让 AI 跑闭环
+- 缺 Node / DevEco / 设备时说明怎么装，不要假装已装上 HAP
+- ArkTS 语法问题叠 `arkts-syntax-assistant`；API 细节叠 `harmony-next`
 """,
     ),
 }

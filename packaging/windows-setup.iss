@@ -3,7 +3,7 @@
 ;   iscc /DMyAppVersion=0.26.0 packaging\windows-setup.iss
 
 #ifndef MyAppVersion
-#define MyAppVersion "0.75.1"
+#define MyAppVersion "0.77.0"
 #endif
 #define MyAppName "CodeCoreAgent"
 #define MyAppPublisher "CodeCoreAgent"

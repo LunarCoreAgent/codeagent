@@ -9,7 +9,7 @@ from pathlib import Path
 
 from codeagent.desktop.api import DesktopAPI, DesktopConfig
 from codeagent.desktop.brand import APP_NAME
-from codeagent.desktop.brand_mark import MARK_URI
+from codeagent.desktop.brand_logo import LOGO_URI_DARK, LOGO_URI_LIGHT
 from codeagent.desktop.ui import HTML
 
 
@@ -122,7 +122,8 @@ def _themed_html() -> str:
     重启即清（甚至抛异常），服务端注入是唯一可靠的启动主题来源。"""
     theme = DesktopConfig.load().theme
     light = theme == "light" or (theme == "auto" and _system_light())
-    html = HTML.replace("__BRAND_MARK_SRC__", MARK_URI)
+    html = HTML.replace("__BRAND_LOGO_LIGHT__", LOGO_URI_LIGHT)
+    html = html.replace("__BRAND_LOGO_DARK__", LOGO_URI_DARK)
     if light:
         return html.replace("<body>", '<body class="light">', 1)
     return html

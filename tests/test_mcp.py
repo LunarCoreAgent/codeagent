@@ -7,6 +7,7 @@ from codeagent.mcp import MCPManager, MCPServerConfig, MCPTool, keenable, load_m
 from codeagent.mcp.presets import (
     chrome_devtools_mcp,
     dbx_mcp,
+    deveco_mcp,
     drawio_mcp,
     playwright_mcp,
     weapp_agent_mcp,
@@ -151,6 +152,23 @@ def test_dbx_mcp_preset():
     assert web.env == {
         "DBX_WEB_URL": "http://localhost:4224",
         "DBX_WEB_PASSWORD": "secret",
+    }
+
+
+def test_deveco_mcp_preset():
+    cfg = deveco_mcp()
+    assert cfg.name == "deveco-mcp"
+    assert cfg.command == "npx"
+    assert cfg.args == ["-y", "deveco-mcp-server"]
+    assert cfg.env is None
+    assert cfg.transport == "stdio"
+    wired = deveco_mcp(
+        project_path="/tmp/harmony-app",
+        deveco_path="/Applications/DevEco-Studio.app/Contents",
+    )
+    assert wired.env == {
+        "PROJECT_PATH": "/tmp/harmony-app",
+        "DEVECO_PATH": "/Applications/DevEco-Studio.app/Contents",
     }
 
 

@@ -9,7 +9,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -17,10 +17,54 @@ ART = HERE / "logo-art.png"
 SIZE = 1024
 
 
+# 蒙版内缩像素：原稿圆角方块的直边紧贴画布边缘，导出时在画布最外沿
+# 留下 1~2px 与白色背景混合的淡色线。蒙版内缩后将其整体切除，
+# 最终图标四周带 3px 透明边距（1024 基准下不可察觉）。
+MASK_INSET = 3
+
+
+def premultiply(img: Image.Image) -> Image.Image:
+    """RGB *= alpha/255，使缩放时不产生透明边缘的振铃白边。"""
+    import numpy as np
+    arr = np.asarray(img.convert("RGBA"), dtype=np.float32)
+    arr[..., :3] *= arr[..., 3:4] / 255.0
+    return Image.fromarray(arr.astype(np.uint8), "RGBA")
+
+
+def unpremultiply(img: Image.Image) -> Image.Image:
+    """RGB /= alpha/255，还原直线 alpha（alpha>0 处）。"""
+    import numpy as np
+    arr = np.asarray(img.convert("RGBA"), dtype=np.float32)
+    a = arr[..., 3:4]
+    mask = a > 0
+    arr[..., :3] = np.where(mask, arr[..., :3] / np.maximum(a, 1) * 255.0, 0)
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
+
+
+def resize_clean(img: Image.Image, size: int) -> Image.Image:
+    """缩放并清除透明边缘的振铃白边。
+
+    LANCZOS 缩放在 alpha 边缘产生振铃：低 alpha 像素携带亮 RGB，
+    在深色背景上显为白边。缩放后把 alpha < 阈值的像素 RGB 归零即可。
+    """
+    out = img.resize((size, size), Image.LANCZOS)
+    import numpy as np
+    arr = np.asarray(out.convert("RGBA"), dtype=np.uint8).copy()
+    a = arr[..., 3]
+    # alpha < 16 的像素 RGB 全部归零（彻底消除幽灵白边）
+    mask = a < 16
+    arr[mask, :3] = 0
+    # alpha < 64 的像素再压暗 50%（过渡区更自然）
+    mask2 = (a >= 16) & (a < 64)
+    arr[mask2, :3] = (arr[mask2, :3].astype(np.uint16) * a[mask2, None] // 255).astype(np.uint8)
+    return Image.fromarray(arr, "RGBA")
+
+
 def rounded_mask(size: int, radius: int) -> Image.Image:
     m = Image.new("L", (size, size), 0)
     ImageDraw.Draw(m).rounded_rectangle(
-        [0, 0, size - 1, size - 1], radius=radius, fill=255
+        [MASK_INSET, MASK_INSET, size - 1 - MASK_INSET, size - 1 - MASK_INSET],
+        radius=radius - MASK_INSET, fill=255,
     )
     return m.filter(ImageFilter.GaussianBlur(0.6))
 
@@ -34,10 +78,21 @@ def fit_art(src: Image.Image, size: int) -> Image.Image:
     return src.resize((size, size), Image.LANCZOS)
 
 
+def already_masked(img: Image.Image) -> bool:
+    """四角已经透明的成品图标不再套圆角，避免二次裁切把渐变切出白边。"""
+    w, h = img.size
+    if w < 8 or h < 8:
+        return False
+    pts = ((2, 2), (w - 3, 2), (2, h - 3), (w - 3, h - 3))
+    return all(img.getpixel(p)[3] < 16 for p in pts)
+
+
 def render() -> Image.Image:
     if not ART.is_file():
         raise SystemExit(f"missing artwork: {ART}")
     art = fit_art(Image.open(ART), SIZE)
+    if already_masked(art):
+        return art
     # 四角透明：合并徽标自身 alpha 与圆角 mask（两者都需不透明才保留），
     # 而不是用圆角方块整体替换，否则圆角内的空白会被底色填满。
     from PIL import ImageChops
@@ -47,13 +102,14 @@ def render() -> Image.Image:
 
 
 def make_icns(png: Path, out: Path) -> None:
+    master = Image.open(png).convert("RGBA")
     with tempfile.TemporaryDirectory() as td:
         iconset = Path(td) / "icon.iconset"
         iconset.mkdir()
         for size in (16, 32, 64, 128, 256, 512):
-            img = Image.open(png).resize((size, size), Image.LANCZOS)
+            img = resize_clean(master, size)
             img.save(iconset / f"icon_{size}x{size}.png")
-            img2x = Image.open(png).resize((size * 2, size * 2), Image.LANCZOS)
+            img2x = resize_clean(master, size * 2)
             img2x.save(iconset / f"icon_{size}x{size}@2x.png")
         subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(out)],
                        check=True)
@@ -67,7 +123,7 @@ def make_ico(png: Path, out: Path) -> None:
 
 
 def write_sidebar_mark(master: Image.Image) -> None:
-    mark = master.resize((96, 96), Image.LANCZOS)
+    mark = resize_clean(master, 96)
     dest = HERE / "mark.png"
     mark.save(dest, optimize=True)
     uri = "data:image/png;base64," + base64.b64encode(dest.read_bytes()).decode("ascii")

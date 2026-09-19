@@ -121,6 +121,9 @@ def test_fusion_pack_and_chinese_routing():
     assert "limbas" in FUSION_SKILLS
     assert "openviking" in FUSION_SKILLS
     assert "tencentdb-agent-memory" in FUSION_SKILLS
+    assert "harmony-next" in FUSION_SKILLS
+    assert "arkts-syntax-assistant" in FUSION_SKILLS
+    assert "deveco-mcp" in FUSION_SKILLS
     lib = fusion_library()
     anime = lib.search("用 anime.js 做入场交错")
     assert anime[0].name == "anime-js"
@@ -160,6 +163,9 @@ def test_install_fusion_skills(tmp_path):
     assert "limbas" in written
     assert "openviking" in written
     assert "tencentdb-agent-memory" in written
+    assert "harmony-next" in written
+    assert "arkts-syntax-assistant" in written
+    assert "deveco-mcp" in written
     assert (tmp_path / "karpathy-craft" / "SKILL.md").is_file()
     assert (tmp_path / "jianying-editor" / "SKILL.md").is_file()
     assert (tmp_path / "hyperframes" / "SKILL.md").is_file()
@@ -170,6 +176,9 @@ def test_install_fusion_skills(tmp_path):
     assert (tmp_path / "limbas" / "SKILL.md").is_file()
     assert (tmp_path / "openviking" / "SKILL.md").is_file()
     assert (tmp_path / "tencentdb-agent-memory" / "SKILL.md").is_file()
+    assert (tmp_path / "harmony-next" / "SKILL.md").is_file()
+    assert (tmp_path / "arkts-syntax-assistant" / "SKILL.md").is_file()
+    assert (tmp_path / "deveco-mcp" / "SKILL.md").is_file()
     # 二次 ensure 应跳过重写（防启动卡顿）
     again = ensure_fusion_skills(tmp_path)
     assert again == []
@@ -260,6 +269,16 @@ def test_expand_and_match_work_content():
     assert "TencentDB" in expand_work_query("部署 TencentDB Agent Memory Hub")
     assert "tencentdb-agent-memory" in {
         s.name for s in match_work_skills(lib, "用团队 Agent Memory 共享 Chat Memory")
+    }
+    assert "鸿蒙" in expand_work_query("做一个鸿蒙 ArkTS 页面")
+    assert "harmony-next" in {
+        s.name for s in match_work_skills(lib, "查 HarmonyOS NEXT ArkUI API")
+    }
+    assert "arkts-syntax-assistant" in {
+        s.name for s in match_work_skills(lib, "修复 .ets 里 @State 编译错误")
+    }
+    assert "deveco-mcp" in {
+        s.name for s in match_work_skills(lib, "用 DevEco MCP 编译安装并抓 hilog")
     }
 
 

@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CodeCoreAgent - 开源代码开发 Agent，本机优先</title>
+<meta name="description" content="CodeCoreAgent（CCA）是开源的代码开发 Agent：统一接口驱动大模型读写代码、执行命令、搜索仓库，支持 Claude / OpenAI / 本地 Ollama 与聚合网关，数据全部留在本机。MIT 许可。">
+<meta property="og:title" content="CodeCoreAgent - 开源代码开发 Agent">
+<meta property="og:description" content="会读写代码、能执行命令、可编排多 Agent 团队的开源 Agent。本机优先，MIT 许可。">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "CodeCoreAgent",
+  "alternateName": "CCA",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "macOS, Windows, Linux",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" },
+  "url": "https://github.com/LunarCoreAgent/codeagent"
+}
+</script>
+<style>
+:root{
+  --bg:#0A0B0F;
+  --bg-soft:#0E1016;
+  --panel:#11141B;
+  --panel-2:#151923;
+  --line:#1F2430;
+  --line-soft:#181D27;
+  --text:#EDEFF3;
+  --text-2:#9AA1AC;
+  --text-3:#646C78;
+  --accent:#D92B20;
+  --accent-hi:#FF5A4D;
+  --accent-soft:rgba(217,43,32,.12);
+  --indigo:#5B60A8;
+  --radius:14px;
+  --font-sans:"Avenir Next","Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --font-mono:ui-monospace,"SF Mono","SFMono-Regular","JetBrains Mono",Menlo,Consolas,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:84px}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font-sans);
+  font-size:16px;
+  line-height:1.7;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+::selection{background:var(--accent);color:#fff}
+a{color:inherit;text-decoration:none}
+code,pre{font-family:var(--font-mono)}
+img{max-width:100%;display:block}
+.wrap{max-width:1200px;margin:0 auto;padding:0 32px}
+.ph{font-size:1.15em;line-height:1;vertical-align:-.18em}
+
+/* ---------- reveal ---------- */
+[data-reveal]{opacity:0;transform:translateY(26px);transition:opacity .8s cubic-bezier(.16,1,.3,1),transform .8s cubic-bezier(.16,1,.3,1);transition-delay:calc(var(--d,0)*90ms)}
+[data-reveal].in{opacity:1;transform:none}
+
+/* ---------- nav ---------- */
+.nav{
+  position:fixed;inset:0 0 auto 0;z-index:50;height:64px;
+  display:flex;align-items:center;
+  background:rgba(10,11,15,.72);
+  backdrop-filter:blur(16px) saturate(160%);
+  -webkit-backdrop-filter:blur(16px) saturate(160%);
+  border-bottom:1px solid var(--line-soft);
+}
+.nav-inner{width:100%;max-width:1200px;margin:0 auto;padding:0 32px;display:flex;align-items:center;gap:36px}
+.brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:15.5px;letter-spacing:.01em}
+.brand img{height:26px;width:auto}
+.nav-links{display:flex;gap:28px;margin-left:auto}
+.nav-links a{font-size:14px;color:var(--text-2);transition:color .25s}
+.nav-links a:hover{color:var(--text)}
+.btn{
+  display:inline-flex;align-items:center;gap:8px;
+  font-family:var(--font-sans);font-size:14.5px;font-weight:600;
+  padding:11px 24px;border-radius:999px;border:1px solid transparent;
+  cursor:pointer;transition:transform .18s,background .25s,border-color .25s,color .25s;
+  white-space:nowrap;line-height:1.2;
+}
+.btn:active{transform:translateY(1px) scale(.98)}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:#B82419}
+.btn-ghost{border-color:var(--line);color:var(--text);background:rgba(255,255,255,.02)}
+.btn-ghost:hover{border-color:#343B49;background:rgba(255,255,255,.05)}
+.btn-sm{padding:8px 18px;font-size:13.5px}
+.btn .ph{font-size:1.05em}
+
+/* ---------- hero ---------- */
+.hero{position:relative;padding:96px 0 72px;overflow:hidden}
+.hero::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:
+    radial-gradient(620px 420px at 78% 18%,rgba(91,96,168,.14),transparent 62%),
+    radial-gradient(700px 460px at 12% 88%,rgba(217,43,32,.07),transparent 60%);
+}
+.hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:1.04fr .96fr;gap:56px;align-items:center;min-height:calc(100dvh - 232px)}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;
+  font-family:var(--font-mono);font-size:11.5px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--accent-hi);margin-bottom:22px;
+}
+.hero h1{
+  font-size:clamp(2.35rem,4.4vw,3.7rem);
+  line-height:1.16;letter-spacing:-.02em;font-weight:750;
+  margin-bottom:20px;
+}
+.hero h1 .accent{color:var(--accent-hi)}
+.hero .sub{color:var(--text-2);font-size:16.5px;max-width:30em;margin-bottom:32px}
+.hero-ctas{display:flex;gap:14px;flex-wrap:wrap}
+
+/* terminal demo (real interactive component, simulated output labeled) */
+.term{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.45);
+}
+.term-head{
+  display:flex;align-items:center;gap:8px;
+  padding:12px 16px;border-bottom:1px solid var(--line-soft);
+  background:var(--bg-soft);
+}
+.term-dot{width:11px;height:11px;border-radius:50%;background:#2A303C}
+.term-title{margin-left:8px;font-family:var(--font-mono);font-size:12px;color:var(--text-3)}
+.term-replay{
+  margin-left:auto;display:inline-flex;align-items:center;gap:6px;
+  font-family:var(--font-mono);font-size:12px;color:var(--text-2);
+  background:none;border:1px solid var(--line);border-radius:999px;padding:5px 12px;cursor:pointer;
+  transition:color .2s,border-color .2s;
+}
+.term-replay:hover{color:var(--text);border-color:#343B49}
+.term-body{padding:20px 20px 22px;font-family:var(--font-mono);font-size:13px;line-height:2.05;min-height:252px}
+.term-line{white-space:pre-wrap;word-break:break-all;opacity:0;transform:translateY(4px);transition:opacity .35s,transform .35s}
+.term-line.show{opacity:1;transform:none}
+.t-cmd{color:var(--text)}
+.t-cmd .prompt{color:var(--accent-hi)}
+.t-dim{color:var(--text-3)}
+.t-tool{color:var(--text-2)}
+.t-tool b{color:var(--indigo);font-weight:600}
+.t-ok{color:#3FB96B}
+.t-caret{display:inline-block;width:8px;height:15px;background:var(--accent-hi);vertical-align:-2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- install strip ---------- */
+.install{border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);background:var(--bg-soft)}
+.install-inner{display:flex;align-items:center;gap:28px;padding:26px 0;flex-wrap:wrap}
+.cmd-pill{
+  display:inline-flex;align-items:center;gap:14px;
+  font-family:var(--font-mono);font-size:14px;
+  background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:10px 10px 10px 20px;
+}
+.cmd-pill .prompt{color:var(--accent-hi)}
+.copy-btn{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:12.5px;font-weight:600;color:var(--text-2);
+  background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:7px 14px;cursor:pointer;
+  transition:color .2s,border-color .2s;
+}
+.copy-btn:hover{color:var(--text);border-color:#343B49}
+.copy-btn.copied{color:#3FB96B;border-color:rgba(63,185,107,.4)}
+.install-note{font-size:14px;color:var(--text-2)}
+.install-note a{color:var(--accent-hi);border-bottom:1px solid rgba(255,90,77,.35);transition:border-color .2s}
+.install-note a:hover{border-color:var(--accent-hi)}
+
+/* ---------- sections ---------- */
+section{padding:104px 0}
+.sec-head{max-width:660px;margin-bottom:56px}
+.sec-head h2{font-size:clamp(1.7rem,2.8vw,2.35rem);letter-spacing:-.015em;line-height:1.25;font-weight:720;margin-bottom:14px}
+.sec-head p{color:var(--text-2);font-size:16px}
+
+/* ---------- models: split code ---------- */
+.models-grid{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:start}
+.route{display:flex;gap:20px;padding:26px 0;border-top:1px solid var(--line-soft)}
+.route:last-of-type{border-bottom:1px solid var(--line-soft)}
+.route-icon{
+  flex:none;width:44px;height:44px;border-radius:12px;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--accent-soft);color:var(--accent-hi);font-size:20px;
+}
+.route h3{font-size:17px;font-weight:680;margin-bottom:6px}
+.route p{font-size:14.5px;color:var(--text-2)}
+.route p code{font-size:12.5px;color:var(--text);background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.code-card{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;
+}
+.code-card.sticky{position:sticky;top:96px}
+.code-head{padding:12px 18px;border-bottom:1px solid var(--line-soft);font-family:var(--font-mono);font-size:12px;color:var(--text-3);background:var(--bg-soft)}
+.code-card pre{padding:20px;font-size:13px;line-height:1.9;overflow-x:auto;color:var(--text-2)}
+.code-card .cm{color:var(--text-3)}
+.code-card .hl{color:var(--accent-hi)}
+.code-card .str{color:#8FA6E8}
+
+/* ---------- bento ---------- */
+.bento{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.cell{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:26px;position:relative;overflow:hidden;
+  transition:border-color .3s,transform .3s;
+}
+.cell:hover{border-color:#303747;transform:translateY(-3px)}
+.cell-big{grid-column:span 2;grid-row:span 2}
+.cell-wide{grid-column:span 2}
+.cell .ph{font-size:22px;color:var(--accent-hi)}
+.cell h3{font-size:16px;font-weight:680;margin:14px 0 8px}
+.cell p{font-size:13.5px;color:var(--text-2);line-height:1.75}
+.cell-big h3{font-size:19px}
+.cell-big p{font-size:14.5px;max-width:26em}
+.cell-tint{background:linear-gradient(150deg,var(--panel) 0%,#1A1430 130%)}
+.cell-tint-2{background:linear-gradient(150deg,var(--panel) 0%,#2A1210 135%)}
+.loop-viz{margin-top:26px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.loop-chip{
+  font-family:var(--font-mono);font-size:12px;color:var(--text-2);
+  border:1px solid var(--line);border-radius:999px;padding:7px 14px;background:var(--bg-soft);
+}
+.loop-arrow{color:var(--text-3);font-size:13px}
+.loop-back{font-family:var(--font-mono);font-size:11.5px;color:var(--accent-hi);margin-top:14px}
+
+/* ---------- orchestration ---------- */
+.orch{display:grid;gap:20px}
+.orch-panel{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:36px;overflow:hidden;
+}
+.orch-panel h3{font-size:19px;font-weight:700;margin-bottom:6px}
+.orch-panel>p{font-size:14.5px;color:var(--text-2);max-width:56em;margin-bottom:30px}
+.pipeline{position:relative;display:flex;align-items:stretch;gap:0;padding-bottom:52px}
+.pnode{
+  flex:1;text-align:center;padding:16px 8px;
+  background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;
+  position:relative;z-index:1;
+}
+.pnode b{display:block;font-size:15px;font-weight:680}
+.pnode span{font-size:12px;color:var(--text-3)}
+.pnode.hot{border-color:rgba(255,90,77,.45)}
+.pnode.hot b{color:var(--accent-hi)}
+.parrow{flex:none;width:38px;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-size:15px}
+.loopline{
+  position:absolute;left:12%;width:22%;bottom:14px;height:22px;
+  border:1px dashed rgba(255,90,77,.5);border-top:none;border-radius:0 0 10px 10px;
+}
+.loopline-label{
+  position:absolute;left:9%;bottom:-4px;
+  font-family:var(--font-mono);font-size:11.5px;color:var(--accent-hi);
+}
+.chips{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+.chip{
+  font-size:12.5px;color:var(--text-2);
+  border:1px solid var(--line);border-radius:999px;padding:6px 14px;background:var(--bg-soft);
+}
+.dag-wrap{overflow-x:auto}
+.dag{min-width:620px;width:100%;height:auto;display:block}
+
+/* ---------- lead ---------- */
+.lead-grid{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center}
+.lead-points{display:grid;gap:0}
+.lead-point{display:flex;gap:16px;padding:18px 0;border-top:1px solid var(--line-soft)}
+.lead-point:last-child{border-bottom:1px solid var(--line-soft)}
+.lead-point .ph{flex:none;color:var(--accent-hi);font-size:19px;margin-top:3px}
+.lead-point b{display:block;font-size:15.5px;font-weight:680;margin-bottom:3px}
+.lead-point p{font-size:14px;color:var(--text-2)}
+.lead-point p code{font-size:12px;color:var(--text);background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.lead-code{display:grid;gap:16px}
+
+/* ---------- privacy ---------- */
+.priv-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:32px}
+.priv-item{border-top:1px solid var(--line);padding-top:20px}
+.priv-item .ph{font-size:21px;color:var(--accent-hi)}
+.priv-item h3{font-size:15.5px;font-weight:680;margin:12px 0 6px}
+.priv-item p{font-size:13.5px;color:var(--text-2)}
+.priv-item code{font-size:12px;color:var(--text);background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.priv-more{margin-top:40px}
+
+/* ---------- download ---------- */
+.dl-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.dl-card{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:28px;display:flex;flex-direction:column;gap:0;
+  transition:border-color .3s,transform .3s;
+}
+.dl-card:hover{border-color:#303747;transform:translateY(-3px)}
+.dl-card .ph{font-size:24px;color:var(--accent-hi)}
+.dl-card h3{font-size:16.5px;font-weight:680;margin:14px 0 6px}
+.dl-card p{font-size:13.5px;color:var(--text-2);flex:1;margin-bottom:20px}
+.dl-meta{font-family:var(--font-mono);font-size:11.5px;color:var(--text-3);margin-top:14px;text-align:center}
+.dl-includes{
+  margin-top:20px;background:var(--bg-soft);border:1px solid var(--line-soft);border-radius:var(--radius);
+  padding:22px 26px;font-size:14px;color:var(--text-2);
+  display:flex;gap:12px;align-items:flex-start;
+}
+.dl-includes .ph{color:var(--accent-hi);margin-top:3px;flex:none}
+.dl-includes code{font-size:12.5px;color:var(--text);background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+
+/* ---------- footer ---------- */
+footer{border-top:1px solid var(--line-soft);padding:56px 0 40px;background:var(--bg-soft)}
+.foot-grid{display:flex;gap:48px;align-items:flex-start;flex-wrap:wrap}
+.foot-brand{max-width:300px}
+.foot-brand img{height:28px;margin-bottom:14px}
+.foot-brand p{font-size:13.5px;color:var(--text-3)}
+.foot-col{margin-left:auto}
+.foot-col h4{font-size:12px;font-weight:680;letter-spacing:.12em;text-transform:uppercase;color:var(--text-3);margin-bottom:14px}
+.foot-col a{display:block;font-size:14px;color:var(--text-2);padding:4px 0;transition:color .2s}
+.foot-col a:hover{color:var(--text)}
+.foot-base{
+  margin-top:44px;padding-top:22px;border-top:1px solid var(--line-soft);
+  display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  font-size:12.5px;color:var(--text-3);
+}
+
+/* ---------- responsive ---------- */
+@media (max-width:1020px){
+  .hero-grid{grid-template-columns:1fr;gap:44px;min-height:0}
+  .models-grid,.lead-grid{grid-template-columns:1fr;gap:40px}
+  .code-card.sticky{position:static}
+  .bento{grid-template-columns:repeat(2,1fr)}
+  .priv-grid{grid-template-columns:repeat(2,1fr)}
+  .dl-grid{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .wrap{padding:0 20px}
+  .nav-links{display:none}
+  section{padding:72px 0}
+  .hero{padding-top:118px}
+  .bento{grid-template-columns:1fr}
+  .cell-big,.cell-wide{grid-column:span 1;grid-row:span 1}
+  .pipeline{flex-direction:column;gap:10px;padding-bottom:0}
+  .parrow{transform:rotate(90deg);width:auto;padding:2px 0}
+  .loopline,.loopline-label{display:none}
+  .install-inner{flex-direction:column;align-items:flex-start;gap:16px}
+  .priv-grid{grid-template-columns:1fr;gap:24px}
+  .foot-col{margin-left:0}
+}
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  [data-reveal]{opacity:1;transform:none;transition:none}
+  .term-line{opacity:1;transform:none;transition:none}
+  .t-caret{animation:none}
+  *{transition-duration:.01ms !important}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ NAV ============ -->
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top">
+      <img src="assets/logo-dark.png" alt="CodeCoreAgent 标志">
+      <span>CodeCoreAgent</span>
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a href="#models">模型接入</a>
+      <a href="#features">核心能力</a>
+      <a href="#orchestration">多 Agent 编排</a>
+      <a href="#lead">领导模式</a>
+      <a href="#privacy">隐私安全</a>
+      <a href="https://github.com/LunarCoreAgent/codeagent" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+    <a class="btn btn-primary btn-sm" href="#download" style="margin-left:28px">下载桌面版</a>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ============ HERO ============ -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow" data-reveal>开源 · MIT 许可</span>
+      <h1 data-reveal style="--d:1">开源的代码开发 Agent<br><span class="accent">本机优先，多模型驱动</span></h1>
+      <p class="sub" data-reveal style="--d:2">统一接口驱动大模型读写代码、执行命令、搜索仓库，还能指挥一支多模型 Agent 团队。配置与数据全部留在本机。</p>
+      <div class="hero-ctas" data-reveal style="--d:3">
+        <a class="btn btn-primary" href="#download"><i class="ph ph-download-simple"></i>下载桌面版</a>
+        <a class="btn btn-ghost" href="https://github.com/LunarCoreAgent/codeagent" target="_blank" rel="noopener"><i class="ph ph-github-logo"></i>GitHub 仓库</a>
+      </div>
+    </div>
+
+    <div class="term" data-reveal style="--d:2" id="termDemo">
+      <div class="term-head">
+        <span class="term-dot"></span><span class="term-dot"></span><span class="term-dot"></span>
+        <span class="term-title">终端 · codeagent run（交互演示）</span>
+        <button class="term-replay" id="termReplay" type="button"><i class="ph ph-arrow-counter-clockwise"></i>重播</button>
+      </div>
+      <div class="term-body" id="termBody" aria-live="polite"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ INSTALL STRIP ============ -->
+<div class="install">
+  <div class="wrap install-inner" data-reveal>
+    <div class="cmd-pill">
+      <span><span class="prompt">$</span> pip install "codeagent[all]"</span>
+      <button class="copy-btn" type="button" data-copy='pip install "codeagent[all]"'><i class="ph ph-copy"></i><span>复制</span></button>
+    </div>
+    <p class="install-note">Python 3.10+，支持 macOS 与 Windows。不想装环境？直接<a href="#download">下载桌面版</a>安装包。</p>
+  </div>
+</div>
+
+<!-- ============ MODELS ============ -->
+<section id="models">
+  <div class="wrap">
+    <div class="sec-head" data-reveal>
+      <h2>三路模型接入，一行切换</h2>
+      <p>云端 API、本地部署、聚合网关任意组合。逗号串联多个后端，本地优先、云端兜底，故障自动跳过。</p>
+    </div>
+    <div class="models-grid">
+      <div>
+        <div class="route" data-reveal>
+          <div class="route-icon"><i class="ph ph-cloud"></i></div>
+          <div>
+            <h3>云端 API</h3>
+            <p>Anthropic Claude、OpenAI 官方直连，<code>--base-url</code> 可指向任何 OpenAI 兼容端点。</p>
+          </div>
+        </div>
+        <div class="route" data-reveal style="--d:1">
+          <div class="route-icon"><i class="ph ph-hard-drives"></i></div>
+          <div>
+            <h3>本地部署</h3>
+            <p>Ollama、LM Studio、vLLM、llama.cpp。免 key，模型跑在本机，离线也能用。</p>
+          </div>
+        </div>
+        <div class="route" data-reveal style="--d:2">
+          <div class="route-icon"><i class="ph ph-plugs-connected"></i></div>
+          <div>
+            <h3>聚合网关</h3>
+            <p>OpenRouter、硅基流动、AiHubMix、One-API 自建中转。一把 key 调遍上游所有模型。</p>
+          </div>
+        </div>
+      </div>
+      <div class="code-card sticky" data-reveal style="--d:1">
+        <div class="code-head">聚合模式 · fallback 与轮询</div>
+<pre><span class="cm"># 本地优先，本地挂了自动切云端（fallback 故障转移）</span>
+codeagent chat <span class="hl">--provider ollama,openrouter</span>
+
+<span class="cm"># 多把 key、多个中转轮询分流</span>
+codeagent run <span class="str">"重构这个模块"</span> \
+  --provider openrouter,siliconflow,oneapi \
+  --strategy round-robin
+
+<span class="cm"># 每个后端的累计失败次数，可观测</span>
+print(provider.failures)</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FEATURES BENTO ============ -->
+<section id="features" style="background:var(--bg-soft);border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)">
+  <div class="wrap">
+    <div class="sec-head" data-reveal>
+      <h2>一个框架，装下整套开发装备</h2>
+      <p>从 Agent 循环到权限安全，从记忆到技能自进化，全部为真实项目打磨。</p>
+    </div>
+    <div class="bento">
+      <div class="cell cell-big cell-tint" data-reveal>
+        <i class="ph ph-arrows-clockwise"></i>
+        <h3>完整的 Agent 循环</h3>
+        <p>消息历史管理、工具调用调度、结果回传、迭代上限保护与 token 用量统计。内置文件读写、正则搜索、Shell 执行等编码工具集。</p>
+        <div class="loop-viz">
+          <span class="loop-chip">理解任务</span><span class="loop-arrow">→</span>
+          <span class="loop-chip">调用工具</span><span class="loop-arrow">→</span>
+          <span class="loop-chip">读取反馈</span><span class="loop-arrow">→</span>
+          <span class="loop-chip">收敛作答</span>
+        </div>
+        <p class="loop-back">↩ 未达目标则继续迭代，触顶软收束</p>
+      </div>
+      <div class="cell" data-reveal style="--d:1">
+        <i class="ph ph-shield-check"></i>
+        <h3>权限与安全</h3>
+        <p>工具按只读、写入、执行、危险四级分级，Shell 命令自动分类，默认 fail-closed，路径逃逸防护。</p>
+      </div>
+      <div class="cell" data-reveal style="--d:2">
+        <i class="ph ph-plugs"></i>
+        <h3>MCP 生态</h3>
+        <p>stdio 与 streamable-HTTP 双传输，Claude 风格配置，瞬间接入数据库、浏览器与第三方服务。</p>
+      </div>
+      <div class="cell" data-reveal style="--d:1">
+        <i class="ph ph-gauge"></i>
+        <h3>预算控制</h3>
+        <p>token 预算上限，子 Agent 用量归入根预算，预算状态实时注入上下文，模型自适应调整探索深度。</p>
+      </div>
+      <div class="cell" data-reveal style="--d:2">
+        <i class="ph ph-bug"></i>
+        <h3>自我调试</h3>
+        <p>生成、执行反馈、橡皮鸭解释、最小修复的闭环，源自 Google Research 的 ICLR 2024 论文。</p>
+      </div>
+      <div class="cell cell-wide cell-tint-2" data-reveal>
+        <i class="ph ph-brain"></i>
+        <h3>记忆系统与技能自进化</h3>
+        <p>对话压缩撑住长会话，跨会话长期记忆带 mem0 式事实对账。兼容社区 SKILL.md 技能包，任务完成后自动反思蒸馏新技能，经验跨会话复利增长。</p>
+      </div>
+      <div class="cell" data-reveal style="--d:1">
+        <i class="ph ph-microphone"></i>
+        <h3>语音与情感</h3>
+        <p>8 种情绪映射神经音色，edge-tts 免费朗读，Whisper 离线识别，全链路不依赖云服务。</p>
+      </div>
+      <div class="cell" data-reveal style="--d:2">
+        <i class="ph ph-globe"></i>
+        <h3>网页与 OCR</h3>
+        <p>Scrapling 自适应抓取，stealth 模式可绕反爬；tesseract 与 EasyOCR 双引擎图像文字识别。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ORCHESTRATION ============ -->
+<section id="orchestration">
+  <div class="wrap">
+    <div class="sec-head" data-reveal>
+      <span class="eyebrow">多 Agent 编排</span>
+      <h2>一套制度，一张蓝图</h2>
+      <p>固定流水线保证质量关卡，自由 DAG 应对复杂流程。两种引擎，按任务选型。</p>
+    </div>
+    <div class="orch">
+      <div class="orch-panel" data-reveal>
+        <h3>三省六部：制度性审核的固定流水线</h3>
+        <p>任何方案必须通过门下省质量关卡才能进入执行层。封驳打回、状态机保护、审计留痕，一部失败不拖累全局。</p>
+        <div class="pipeline">
+          <div class="pnode"><b>中书省</b><span>规划拆解</span></div>
+          <div class="parrow"><i class="ph ph-arrow-right"></i></div>
+          <div class="pnode hot"><b>门下省</b><span>审议把关</span></div>
+          <div class="parrow"><i class="ph ph-arrow-right"></i></div>
+          <div class="pnode"><b>尚书省</b><span>派发调度</span></div>
+          <div class="parrow"><i class="ph ph-arrow-right"></i></div>
+          <div class="pnode"><b>六部</b><span>并行执行</span></div>
+          <div class="parrow"><i class="ph ph-arrow-right"></i></div>
+          <div class="pnode"><b>回奏</b><span>汇总报告</span></div>
+          <div class="loopline"></div>
+          <span class="loopline-label">封驳打回，最多 3 轮</span>
+        </div>
+        <div class="chips">
+          <span class="chip">角色人格可替换</span>
+          <span class="chip">状态机保护</span>
+          <span class="chip">JSONL 审计留痕</span>
+          <span class="chip">故障隔离</span>
+        </div>
+      </div>
+      <div class="orch-panel" data-reveal>
+        <h3>蓝图：自由 DAG 工作流</h3>
+        <p>十种节点自由连线：条件路由、人工审批门、join 仲裁、loop 循环、command 原语。YAML 严格加载，运行结束输出评分卡。</p>
+        <div class="dag-wrap">
+          <svg class="dag" viewBox="0 0 640 176" role="img" aria-label="蓝图 DAG 示例：分析后按条件路由到快修或重构，经审批门后发布">
+            <defs>
+              <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0 0L10 5L0 10z" fill="#3A4150"/>
+              </marker>
+            </defs>
+            <g font-family="ui-monospace,Menlo,monospace" font-size="12">
+              <!-- edges -->
+              <path d="M118 88 L164 88" stroke="#3A4150" stroke-width="1.5" marker-end="url(#arr)"/>
+              <path d="M284 74 C 316 56 326 50 358 44" stroke="#3A4150" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+              <path d="M284 102 C 316 120 326 126 358 132" stroke="#3A4150" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+              <path d="M470 44 C 496 52 502 66 514 78" stroke="#3A4150" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+              <path d="M470 132 C 496 124 502 110 514 98" stroke="#3A4150" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+              <!-- edge labels -->
+              <text x="308" y="38" fill="#646C78" font-size="11">简单</text>
+              <text x="308" y="146" fill="#646C78" font-size="11">复杂</text>
+              <!-- nodes -->
+              <g>
+                <rect x="28" y="64" width="90" height="48" rx="12" fill="#151923" stroke="#262B36"/>
+                <text x="73" y="92" fill="#EDEFF3" text-anchor="middle">分析需求</text>
+              </g>
+              <g>
+                <rect x="168" y="64" width="112" height="48" rx="12" fill="#151923" stroke="#262B36"/>
+                <text x="224" y="85" fill="#EDEFF3" text-anchor="middle">条件路由</text>
+                <text x="224" y="101" fill="#646C78" text-anchor="middle" font-size="10">LLM 单选分支</text>
+              </g>
+              <g>
+                <rect x="362" y="22" width="104" height="44" rx="12" fill="#151923" stroke="#262B36"/>
+                <text x="414" y="49" fill="#EDEFF3" text-anchor="middle">快速修复</text>
+              </g>
+              <g>
+                <rect x="362" y="110" width="104" height="44" rx="12" fill="#151923" stroke="#262B36"/>
+                <text x="414" y="137" fill="#EDEFF3" text-anchor="middle">深度重构</text>
+              </g>
+              <g>
+                <rect x="510" y="64" width="106" height="48" rx="12" fill="#1A1418" stroke="rgba(255,90,77,.45)"/>
+                <text x="563" y="85" fill="#FF5A4D" text-anchor="middle">人工审批门</text>
+                <text x="563" y="101" fill="#646C78" text-anchor="middle" font-size="10">批准 / 拒绝 / 改稿</text>
+              </g>
+            </g>
+          </svg>
+        </div>
+        <div class="chips">
+          <span class="chip">拓扑分层并行调度</span>
+          <span class="chip">每节点独立模型</span>
+          <span class="chip">拒绝自动跳过下游</span>
+          <span class="chip">运行评分卡可复盘</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ LEAD ============ -->
+<section id="lead" style="background:var(--bg-soft);border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)">
+  <div class="wrap">
+    <div class="sec-head" data-reveal>
+      <h2>领导模式：一个席位，指挥多模型团队</h2>
+      <p>语音或文字下达命令，领导席位自动拆解分派给不同模型的工人，进度随时可查可播报。</p>
+    </div>
+    <div class="lead-grid">
+      <div class="lead-code" data-reveal>
+        <div class="code-card">
+          <div class="code-head">workers.yaml · 工人花名册</div>
+<pre><span class="cm"># 每个工人一个模型，聪明大脑规划、便宜模型干活</span>
+workers:
+  - name: <span class="hl">claude</span>
+    provider: anthropic
+    description: <span class="str">擅长代码架构与审查</span>
+  - name: <span class="hl">qwen</span>
+    provider: ollama
+    model: qwen2.5-coder:7b
+    description: <span class="str">本地快速执行批量任务</span></pre>
+        </div>
+        <div class="code-card">
+          <div class="code-head">语音指挥 + 语音汇报</div>
+<pre>codeagent lead --workers workers.yaml <span class="hl">--mic --voice</span></pre>
+        </div>
+      </div>
+      <div class="lead-points">
+        <div class="lead-point" data-reveal>
+          <i class="ph ph-git-branch"></i>
+          <div><b>自动拆解，依赖分批</b><p>LLM 把命令拆成分派计划，无依赖的任务并行，有依赖的按批串行并传递上游成果。</p></div>
+        </div>
+        <div class="lead-point" data-reveal style="--d:1">
+          <i class="ph ph-call-bell"></i>
+          <div><b>外部增援</b><p>工人卡住可呼叫本机其他 agent 平台：Claude Code、Codex、Gemini CLI、cursor-agent、opencode 自动发现。</p></div>
+        </div>
+        <div class="lead-point" data-reveal style="--d:2">
+          <i class="ph ph-archive-box"></i>
+          <div><b>本地存档，可复盘</b><p>每次指挥运行持久化到 <code>~/.codeagent/runs/</code>，命令、计划、进度快照全部留在本机。</p></div>
+        </div>
+        <div class="lead-point" data-reveal style="--d:3">
+          <i class="ph ph-sliders-horizontal"></i>
+          <div><b>个性化设置全局生效</b><p>称呼、语言、机器上下文一次设置，chat、run、lead 与每个工人全部生效。</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PRIVACY ============ -->
+<section id="privacy">
+  <div class="wrap">
+    <div class="sec-head" data-reveal>
+      <h2>隐私与安全：数据不出本机</h2>
+      <p>本机优先是默认设计，不是可选项。无遥测、无广告，密钥只存在你的设备上。</p>
+    </div>
+    <div class="priv-grid">
+      <div class="priv-item" data-reveal>
+        <i class="ph ph-lock-key"></i>
+        <h3>本机存储</h3>
+        <p>对话、项目与配置写入 <code>~/.codeagent/</code>，密钥单独存放且权限受限，不会自动上传。</p>
+      </div>
+      <div class="priv-item" data-reveal style="--d:1">
+        <i class="ph ph-eye-slash"></i>
+        <h3>零遥测零广告</h3>
+        <p>不含遥测与广告 SDK，也不向 LunarCoreAgent 回传任何使用统计。</p>
+      </div>
+      <div class="priv-item" data-reveal style="--d:2">
+        <i class="ph ph-network"></i>
+        <h3>只去你指定的端点</h3>
+        <p>对话与代码片段仅发送给你自己配置的模型服务，受对应服务商条款约束。</p>
+      </div>
+      <div class="priv-item" data-reveal style="--d:3">
+        <i class="ph ph-hand-palm"></i>
+        <h3>高风险操作先确认</h3>
+        <p>写文件、执行命令默认需你批准，工具按风险四级分级，默认 fail-closed。</p>
+      </div>
+    </div>
+    <div class="priv-more" data-reveal>
+      <a class="btn btn-ghost" href="privacy.html"><i class="ph ph-file-text"></i>阅读完整隐私条款</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============ DOWNLOAD ============ -->
+<section id="download">
+  <div class="wrap">
+    <div class="sec-head" data-reveal>
+      <span class="eyebrow">开始使用</span>
+      <h2>下载桌面版，或一行装好 CLI</h2>
+      <p>桌面版自带图形窗口，无需 Python 环境。当前版本 0.77.0，三平台安装包由 GitHub Actions 自动构建。</p>
+    </div>
+    <div class="dl-grid">
+      <div class="dl-card" data-reveal>
+        <i class="ph ph-apple-logo"></i>
+        <h3>macOS · Apple Silicon</h3>
+        <p>挂载 DMG 后把 CodeCoreAgent.app 拖进「应用程序」即可。</p>
+        <a class="btn btn-primary" href="https://github.com/LunarCoreAgent/codeagent/releases" target="_blank" rel="noopener"><i class="ph ph-download-simple"></i>下载桌面版</a>
+        <div class="dl-meta">codeagent-desktop-macos-arm64.dmg</div>
+      </div>
+      <div class="dl-card" data-reveal style="--d:1">
+        <i class="ph ph-apple-logo"></i>
+        <h3>macOS · Intel</h3>
+        <p>同样的安装方式，面向 Intel 机型的独立构建。</p>
+        <a class="btn btn-primary" href="https://github.com/LunarCoreAgent/codeagent/releases" target="_blank" rel="noopener"><i class="ph ph-download-simple"></i>下载桌面版</a>
+        <div class="dl-meta">codeagent-desktop-macos-amd64.dmg</div>
+      </div>
+      <div class="dl-card" data-reveal style="--d:2">
+        <i class="ph ph-windows-logo"></i>
+        <h3>Windows · x64</h3>
+        <p>运行 setup.exe 安装程序，或解压 zip 直接使用。</p>
+        <a class="btn btn-primary" href="https://github.com/LunarCoreAgent/codeagent/releases" target="_blank" rel="noopener"><i class="ph ph-download-simple"></i>下载桌面版</a>
+        <div class="dl-meta">codeagent-desktop-windows-amd64-setup.exe</div>
+      </div>
+    </div>
+    <div class="dl-includes" data-reveal>
+      <i class="ph ph-package"></i>
+      <p>桌面版内含：聊天窗口（可随时停止生成）、项目归档、图形设置面板（模型连接、聚合策略、个性化）、版本与更新日志页。命令行用户执行 <code>pip install "codeagent[all]"</code> 即可，Ollama 本地模型免 key。</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <img src="assets/logo-dark.png" alt="CodeCoreAgent 标志">
+        <p>开源的代码开发 Agent。本机优先，多模型驱动，MIT 许可。</p>
+      </div>
+      <div class="foot-col">
+        <h4>项目</h4>
+        <a href="https://github.com/LunarCoreAgent/codeagent" target="_blank" rel="noopener">GitHub 仓库</a>
+        <a href="https://github.com/LunarCoreAgent/codeagent/releases" target="_blank" rel="noopener">版本发布</a>
+        <a href="mailto:alan_dan@live.com?subject=CodeCoreAgent%20问题反馈">问题反馈</a>
+      </div>
+      <div class="foot-col" style="margin-left:0">
+        <h4>文档</h4>
+        <a href="https://github.com/LunarCoreAgent/codeagent#readme" target="_blank" rel="noopener">使用手册</a>
+        <a href="privacy.html">隐私条款</a>
+        <a href="https://github.com/LunarCoreAgent/codeagent/blob/main/LICENSE" target="_blank" rel="noopener">MIT 许可证</a>
+      </div>
+    </div>
+    <div class="foot-base">
+      <span>© 2026 LunarCoreAgent</span>
+      <span>CodeCoreAgent，简称 CCA，包名 codeagent</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- scroll reveal ---------- */
+  var revealEls = document.querySelectorAll("[data-reveal]");
+  if (reduced || !("IntersectionObserver" in window)) {
+    revealEls.forEach(function(el){ el.classList.add("in"); });
+  } else {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+      });
+    }, { threshold: .12, rootMargin: "0px 0px -8% 0px" });
+    revealEls.forEach(function(el){ io.observe(el); });
+  }
+
+  /* ---------- copy buttons ---------- */
+  document.querySelectorAll("[data-copy]").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var label = btn.querySelector("span");
+      var done = function(){
+        btn.classList.add("copied");
+        if (label) { label.textContent = "已复制"; }
+        setTimeout(function(){
+          btn.classList.remove("copied");
+          if (label) { label.textContent = "复制"; }
+        }, 1600);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(btn.getAttribute("data-copy")).then(done, done);
+      } else { done(); }
+    });
+  });
+
+  /* ---------- terminal demo ---------- */
+  var body = document.getElementById("termBody");
+  var replay = document.getElementById("termReplay");
+  if (!body) return;
+
+  var CMD = 'codeagent run "给这个项目添加单元测试"';
+  var LINES = [
+    { html: '<span class="t-dim">分析项目结构，规划测试范围 …</span>', pause: 650 },
+    { html: '<span class="t-tool">▸ 读取  <b>read_file</b>   src/codeagent/core/agent.py</span>', pause: 520 },
+    { html: '<span class="t-tool">▸ 写入  <b>write_file</b>  tests/test_agent.py（已批准）</span>', pause: 620 },
+    { html: '<span class="t-tool">▸ 执行  <b>bash</b>        pytest -q</span>', pause: 720 },
+    { html: '<span class="t-ok">✓ 12 passed</span>', pause: 480 },
+    { html: '<span class="t-ok">✓ 完成</span><span class="t-dim">，用时 38s，21,404 tokens</span>', pause: 400 }
+  ];
+  var timers = [];
+
+  function clearTimers(){ timers.forEach(clearTimeout); timers = []; }
+  function later(fn, ms){ timers.push(setTimeout(fn, ms)); }
+
+  function renderInstant(){
+    clearTimers();
+    body.innerHTML = "";
+    var cmd = document.createElement("div");
+    cmd.className = "term-line show t-cmd";
+    cmd.innerHTML = '<span class="prompt">$</span> ' + CMD;
+    body.appendChild(cmd);
+    LINES.forEach(function(l){
+      var div = document.createElement("div");
+      div.className = "term-line show";
+      div.innerHTML = l.html;
+      body.appendChild(div);
+    });
+  }
+
+  function play(){
+    clearTimers();
+    body.innerHTML = "";
+    var cmd = document.createElement("div");
+    cmd.className = "term-line show t-cmd";
+    body.appendChild(cmd);
+
+    var i = 0;
+    function typeNext(){
+      if (i <= CMD.length) {
+        cmd.innerHTML = '<span class="prompt">$</span> ' + CMD.slice(0, i) + '<span class="t-caret"></span>';
+        i++;
+        later(typeNext, 34 + Math.random() * 40);
+      } else {
+        cmd.innerHTML = '<span class="prompt">$</span> ' + CMD;
+        showLine(0);
+      }
+    }
+    function showLine(n){
+      if (n >= LINES.length) return;
+      later(function(){
+        var div = document.createElement("div");
+        div.className = "term-line";
+        div.innerHTML = LINES[n].html;
+        body.appendChild(div);
+        requestAnimationFrame(function(){ div.classList.add("show"); });
+        showLine(n + 1);
+      }, LINES[n].pause);
+    }
+    later(typeNext, 420);
+  }
+
+  if (reduced) { renderInstant(); }
+  else {
+    var started = false;
+    var tio = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting && !started) { started = true; play(); tio.disconnect(); }
+      });
+    }, { threshold: .3 });
+    tio.observe(body);
+  }
+  if (replay) replay.addEventListener("click", function(){ if (reduced) { renderInstant(); } else { play(); } });
+})();
+</script>
+</body>
+</html>

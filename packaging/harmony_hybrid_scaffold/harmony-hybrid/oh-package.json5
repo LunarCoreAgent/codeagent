@@ -1,0 +1,9 @@
+{
+  "name": "harmony-hybrid",
+  "version": "0.77.0",
+  "description": "CodeCoreAgent HarmonyOS PC+Tablet hybrid shell",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.21"
+  }
+}

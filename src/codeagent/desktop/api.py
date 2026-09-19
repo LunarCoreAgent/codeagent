@@ -2152,9 +2152,10 @@ class DesktopAPI:
                 )
                 return
             from codeagent.desktop.ui import CHAT_HTML
-            from codeagent.desktop.brand_mark import MARK_URI
+            from codeagent.desktop.brand_logo import LOGO_URI_DARK, LOGO_URI_LIGHT
 
-            html = CHAT_HTML.replace("__BRAND_MARK_SRC__", MARK_URI)
+            html = CHAT_HTML.replace("__BRAND_LOGO_LIGHT__", LOGO_URI_LIGHT)
+            html = html.replace("__BRAND_LOGO_DARK__", LOGO_URI_DARK)
             theme = self.config.theme
             light = theme == "light" or (theme == "auto" and self._system_light())
             if light:
@@ -2765,6 +2766,29 @@ class DesktopAPI:
         from codeagent.desktop.mic import request_mic_access
 
         return request_mic_access()
+
+    def open_feedback_mail(self) -> dict[str, Any]:
+        """Open the system mail client to send product feedback."""
+        import webbrowser
+        from urllib.parse import quote
+
+        url = "mailto:alan_dan@live.com?subject=" + quote("CodeCoreAgent 问题反馈")
+        try:
+            webbrowser.open(url, new=1)
+            return {"ok": True, "mailto": url}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc), "mailto": url}
+
+    def open_official_site(self) -> dict[str, Any]:
+        """Open the product website in the system browser."""
+        import webbrowser
+
+        url = "https://lunarcoreagent.com/CodeCoreAgent/index.html"
+        try:
+            webbrowser.open(url, new=2)
+            return {"ok": True, "url": url}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc), "url": url}
 
     def open_mic_settings(self) -> dict[str, Any]:
         """Open system Privacy → Microphone settings."""

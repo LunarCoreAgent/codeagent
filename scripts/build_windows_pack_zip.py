@@ -28,7 +28,7 @@ README = f"""# 请先读：Windows 安装包怎么打
 这不是已经编好的 `.exe`。macOS 打不出 Windows 安装程序。
 把本 zip 拷到 **Windows 10/11 x64**，解压后按下面做。
 
-版本：**{VERSION}**（知识库自动部署/局域网盘、项目导出导入、DBX/Limbas/OpenViking 融合、思考折叠）
+版本：**{VERSION}**（鸿蒙原生版、系统深色与七种语言、新 CCA 图标）
 
 ## 解压后目录
 

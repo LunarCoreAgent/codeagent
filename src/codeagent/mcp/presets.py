@@ -98,3 +98,26 @@ def dbx_mcp(
         args=["-y", "@dbx-app/mcp-server"],
         env=env or None,
     )
+
+
+def deveco_mcp(
+    project_path: str | None = None,
+    deveco_path: str | None = None,
+) -> MCPServerConfig:
+    """DevEco Toolbox MCP: build / install / UI / hilog for HarmonyOS projects.
+
+    Requires Node.js and a local DevEco Studio (or CLI toolchain) install.
+    Pair with the ``deveco-mcp`` / ``harmony-next`` / ``arkts-syntax-assistant``
+    fusion skills. See https://github.com/open-deveco/deveco-toolbox
+    """
+    env: dict[str, str] = {}
+    if project_path:
+        env["PROJECT_PATH"] = project_path
+    if deveco_path:
+        env["DEVECO_PATH"] = deveco_path
+    return MCPServerConfig(
+        name="deveco-mcp",
+        command="npx",
+        args=["-y", "deveco-mcp-server"],
+        env=env or None,
+    )

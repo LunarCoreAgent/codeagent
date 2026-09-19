@@ -54,17 +54,18 @@ body {
   min-height: 0; overflow-y: auto;
 }
 #sidebar .brand {
-  display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  padding: 4px 8px 14px;
   border-bottom: 1px solid var(--border); margin-bottom: 12px;
 }
-#sidebar .brand .mark {
-  width: 36px; height: 36px; flex-shrink: 0;
-  /* 内部 logo 四角透明：不垫不透明底块，让透明角直接透出侧栏背景 */
-  background: transparent;
+/* 品牌标：CCA 横版字标。按宽度缩放，保持字标比例。 */
+#sidebar .brand .brandlogo img {
+  width: 148px; height: auto; max-width: 100%; object-fit: contain; display: block;
 }
-#sidebar .brand .mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
-#sidebar .brand .name { font-weight: 650; font-size: 14px; letter-spacing: .2px; }
-#sidebar .brand .ver { font-size: 10.5px; color: var(--faint); }
+#sidebar .brand .brandlogo .logo-dark { display: none; }
+body:not(.light) #sidebar .brand .brandlogo .logo-light { display: none; }
+body:not(.light) #sidebar .brand .brandlogo .logo-dark { display: block; }
+#sidebar .brand .ver { font-size: 10.5px; color: var(--faint); padding-left: 2px; }
 .nav-group { margin-bottom: 14px; }
 .navbtn.proj { font-size: 12.5px; }
 .navbtn.proj .p-name { flex: 1; overflow: hidden; text-overflow: ellipsis;
@@ -279,6 +280,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .chip-wrap { display: flex; align-items: center; gap: 6px; align-self: flex-start; }
 .chip-wrap .chip { align-self: auto; }
 .msg-actions { display: flex; gap: 4px; margin-top: 3px; opacity: 1; }
+.msg-disclaimer { font-size: 11px; color: var(--faint); margin-top: 2px;
+                  padding: 0 2px; line-height: 1.4; }
 .ma-btn { border: none; background: transparent; color: var(--faint);
           font-size: 11px; cursor: pointer; padding: 2px 7px;
           border-radius: 6px; }
@@ -582,13 +585,11 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 
 <nav id="sidebar">
   <div class="brand">
-    <div class="mark" title="CodeCoreAgent">
-      <img alt="CCA" src="__BRAND_MARK_SRC__">
+    <div class="brandlogo" title="CodeCoreAgent">
+      <img class="logo-light" alt="CodeCoreAgent" src="__BRAND_LOGO_LIGHT__">
+      <img class="logo-dark" alt="CodeCoreAgent" src="__BRAND_LOGO_DARK__">
     </div>
-    <div>
-      <div class="name">CodeCoreAgent</div>
-      <div class="ver" id="brandVer"></div>
-    </div>
+    <div class="ver" id="brandVer"></div>
   </div>
 
   <div class="nav-group">
@@ -1580,6 +1581,15 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       <div id="harnessList"><div class="empty">检测中…</div></div>
     </div>
 
+    <div class="card sect" id="sectFeedback">
+      <h3>官网与反馈</h3>
+      <p class="hint">官网在系统浏览器中打开。问题反馈会打开本机邮件应用，收件人已填好。</p>
+      <div class="savebar" style="margin-top:12px">
+        <button class="btn" type="button" onclick="openOfficialSite()">官网</button>
+        <button class="btn primary" type="button" onclick="openFeedbackMail()">问题反馈</button>
+      </div>
+    </div>
+
     <div class="savebar">
       <button class="btn" onclick="loadSettings()">还原</button>
       <button class="btn primary" onclick="saveAll()">保存全部</button>
@@ -2217,6 +2227,12 @@ function addMsg(cls,text,chan){
     });
   };
   wrap.appendChild(div); wrap.appendChild(bar);
+  if(cls==='bot'){
+    const disc=document.createElement('div');
+    disc.className='msg-disclaimer';
+    disc.textContent='此内容由智能体模型提供。';
+    wrap.appendChild(disc);
+  }
   C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
   return div;
 }
@@ -4493,6 +4509,28 @@ function openSpeechFromSettings(){
     setTimeout(refreshMicPermStatus, 1200);
   });
 }
+function openOfficialSite(){
+  const URL='https://lunarcoreagent.com/CodeCoreAgent/index.html';
+  if(window.pywebview&&pywebview.api&&pywebview.api.open_official_site){
+    pywebview.api.open_official_site().then(r=>{
+      if(r&&r.ok){toast('已打开官网');return;}
+      window.open(URL,'_blank');
+    }).catch(()=>{window.open(URL,'_blank');});
+    return;
+  }
+  window.open(URL,'_blank');
+}
+function openFeedbackMail(){
+  const MAIL='mailto:alan_dan@live.com?subject='+encodeURIComponent('CodeCoreAgent 问题反馈');
+  if(window.pywebview&&pywebview.api&&pywebview.api.open_feedback_mail){
+    pywebview.api.open_feedback_mail().then(r=>{
+      if(r&&r.ok){toast('已打开邮件应用');return;}
+      location.href=MAIL;
+    }).catch(()=>{location.href=MAIL;});
+    return;
+  }
+  location.href=MAIL;
+}
 function saveAll(){
   Promise.all([
     pywebview.api.save_config({
@@ -4789,6 +4827,12 @@ function addMsg(cls,text,chan){
     });
   };
   wrap.appendChild(div); wrap.appendChild(bar);
+  if(cls==='bot'){
+    const disc=document.createElement('div');
+    disc.className='msg-disclaimer';
+    disc.textContent='此内容由智能体模型提供。';
+    wrap.appendChild(disc);
+  }
   C.col.appendChild(wrap); C.chat.scrollTop=C.chat.scrollHeight;
   return div;
 }

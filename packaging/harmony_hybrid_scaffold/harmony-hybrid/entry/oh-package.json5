@@ -1,0 +1,6 @@
+{
+  "name": "entry",
+  "version": "0.77.0",
+  "description": "CodeCoreAgent hybrid entry module",
+  "dependencies": {}
+}
