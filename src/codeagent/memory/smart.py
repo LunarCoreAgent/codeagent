@@ -93,8 +93,8 @@ class SmartMemoryStore(MemoryStore):
     async def search(self, query: str, limit: int = 5) -> list[Memory]:
         return await self._store.search(query, limit=limit)
 
-    async def list(self, limit: int = 50) -> list[Memory]:
-        return await self._store.list(limit=limit)
+    async def list(self, limit: int = 50, kinds: tuple[str, ...] | None = None) -> list[Memory]:
+        return await self._store.list(limit=limit, kinds=kinds)
 
     async def delete(self, memory_id: str) -> bool:
         return await self._store.delete(memory_id)

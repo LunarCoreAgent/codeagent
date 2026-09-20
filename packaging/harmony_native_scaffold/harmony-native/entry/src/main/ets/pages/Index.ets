@@ -1,14 +1,14 @@
 import { common, ConfigurationConstant, Want } from '@kit.AbilityKit';
-import { display, window } from '@kit.ArkUI';
+import { display, promptAction, window } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { deviceInfo, BusinessError } from '@kit.BasicServicesKit';
 import { LLMConfig, loadConfig, saveConfig, markThemeChosen, ApiModelItem, loadApiModels, saveApiModels, isDarkTheme } from '../model/Config';
 import { ChatMessage, chatStream } from '../model/LLMClient';
 import { Conversation, newId, loadAllIds, loadConvo, saveConvo, deleteConvo } from '../model/ChatStore';
-import { MemoryItem, loadMemories, addMemory, deleteMemory, searchMemories } from '../model/MemoryStore';
+import { MemoryItem, loadMemories, addMemory, updateMemory, deleteMemory, searchMemories, memoryPromptBlock, rememberTurn, beginZone } from '../model/MemoryStore';
 import { KnowledgeDoc, WikiPage, KnowledgeConfig, loadDocs, upsertDoc, deleteDoc, searchDocs,
   loadKnowledgeConfig, saveKnowledgeConfig, loadPages, searchPages, bootstrapVault,
-  ingestText, vaultStatus, buildKnowledgeContext, deletePage } from '../model/KnowledgeStore';
+  ingestText, vaultStatus, buildKnowledgeContext, deletePage, appendMemoryBackup } from '../model/KnowledgeStore';
 import { ActivityItem, loadActivity, pushActivity, clearActivity } from '../model/ActivityStore';
 import { detectModels, pullOllamaModel } from '../model/ModelDetect';
 import { API_BASE_PRESETS, ApiPreset, guessProvider, presetProviderLabel } from '../model/ApiPresets';
@@ -25,7 +25,7 @@ import { i18n } from '@kit.LocalizationKit';
 import { translate, resolveLanguage, replyLanguageName } from '../model/I18n';
 
 const PC_BREAKPOINT = 1024;
-const APP_VERSION = '0.77.0';
+const APP_VERSION = '0.81.0';
 
 interface NavItem {
   id: string;
@@ -164,6 +164,8 @@ struct Index {
   @State memList: MemoryItem[] = [];
   @State memInput: string = '';
   @State memQuery: string = '';
+  @State memEditId: string = '';
+  @State memEditText: string = '';
 
   @State docs: KnowledgeDoc[] = [];
   @State wikiPages: WikiPage[] = [];
@@ -557,6 +559,7 @@ struct Index {
     this.messages = [];
     this.saveCurrent();
     this.refreshList();
+    beginZone(this.ctx, this.convId, this.tx("新对话"));
     this.go('chat');
   }
 
@@ -653,13 +656,14 @@ struct Index {
 
     // 启用知识库时注入相关 wiki 上下文（对齐桌面 knowledge_search）
     const kbExtra = buildKnowledgeContext(this.ctx, text);
+    const memExtra = memoryPromptBlock(this.ctx, text, 5, this.convId);
     const streamCfg: LLMConfig = {
       baseUrl: this.cfg.baseUrl,
       apiKey: this.cfg.apiKey,
       model: this.cfg.model,
       temperature: this.cfg.temperature,
       theme: this.cfg.theme,
-      systemPrompt: this.cfg.systemPrompt + '\nReply to the user in ' + replyLanguageName(this.uiLang) + '.' + kbExtra,
+      systemPrompt: this.cfg.systemPrompt + '\nReply to the user in ' + replyLanguageName(this.uiLang) + '.' + kbExtra + memExtra,
       nickname: this.cfg.nickname,
       companionOn: this.cfg.companionOn,
       companionName: this.cfg.companionName,
@@ -683,6 +687,15 @@ struct Index {
         this.sending = false;
         this.stopFn = null;
         this.saveCurrent();
+        let reply = '';
+        if (assistantIdx < this.messages.length) {
+          reply = this.messages[assistantIdx].content;
+        }
+        rememberTurn(this.ctx, this.convId, text, reply);
+        if (this.kbCfg.enabled) {
+          appendMemoryBackup(this.ctx, this.convId, `用户：${text}\n助手：${reply.slice(0, 500)}`);
+        }
+        this.memList = searchMemories(this.ctx, this.memQuery);
         pushActivity(this.ctx, 'chat', this.tx("助手回复完成"));
         this.activity = loadActivity(this.ctx);
       },
@@ -1060,6 +1073,46 @@ struct Index {
     this.memInput = '';
     this.memList = searchMemories(this.ctx, this.memQuery);
     pushActivity(this.ctx, 'memory', this.tx("新增记忆"));
+  }
+
+  memSourceLabel(source: string): string {
+    if (source === 'agent') {
+      return this.tx("对话");
+    }
+    if (source === 'merge') {
+      return this.tx("合并");
+    }
+    return this.tx("手动");
+  }
+
+  saveMemEdit(id: string) {
+    const text = this.memEditText.trim();
+    if (text.length === 0) {
+      return;
+    }
+    updateMemory(this.ctx, id, text);
+    this.memEditId = '';
+    this.memEditText = '';
+    this.memList = searchMemories(this.ctx, this.memQuery);
+  }
+
+  confirmDeleteMem(id: string) {
+    promptAction.showDialog({
+      title: this.tx("删除"),
+      message: this.tx("删除这条记忆？"),
+      buttons: [
+        { text: this.tx("取消"), color: '#666666' },
+        { text: this.tx("删除"), color: '#E11D48' },
+      ],
+    }).then((res) => {
+      if (res.index === 1) {
+        deleteMemory(this.ctx, id);
+        if (this.memEditId === id) {
+          this.memEditId = '';
+        }
+        this.memList = searchMemories(this.ctx, this.memQuery);
+      }
+    });
   }
 
   refreshKbStatus() {
@@ -1711,19 +1764,48 @@ struct Index {
       List({ space: 8 }) {
         ForEach(this.memList, (m: MemoryItem) => {
           ListItem() {
-            Row() {
-              Text(m.content).fontSize(14).fontColor(this.ink()).layoutWeight(1)
-              Text(this.tx("删除")).fontSize(12).fontColor(Color.Red)
-                .onClick(() => {
-                  deleteMemory(this.ctx, m.id);
-                  this.memList = searchMemories(this.ctx, this.memQuery);
-                })
+            if (this.memEditId === m.id) {
+              Column({ space: 8 }) {
+                TextInput({ text: this.memEditText })
+                  .fontColor(this.ink()).caretColor(this.accent())
+                  .backgroundColor(this.fieldBg()).width('100%').height(40)
+                  .onChange((v) => { this.memEditText = v; })
+                Row({ space: 12 }) {
+                  Text(this.tx("保存")).fontSize(12).fontColor(this.accent())
+                    .onClick(() => this.saveMemEdit(m.id))
+                  Text(this.tx("取消")).fontSize(12).fontColor(this.muted())
+                    .onClick(() => { this.memEditId = ''; this.memEditText = ''; })
+                }.width('100%')
+              }
+              .width('100%').padding(14).backgroundColor(this.card()).borderRadius(10)
+            } else {
+              Row() {
+                Column({ space: 4 }) {
+                  Text(m.content).fontSize(14).fontColor(this.ink()).width('100%')
+                  Text(`${this.memSourceLabel(m.source || '')}  ${new Date(m.updated || m.created).toLocaleString()}`)
+                    .fontSize(11).fontColor(this.muted())
+                }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+                Column({ space: 8 }) {
+                  Text(this.tx("编辑")).fontSize(12).fontColor(this.muted())
+                    .onClick(() => {
+                      this.memEditId = m.id;
+                      this.memEditText = m.content;
+                    })
+                  Text(this.tx("删除")).fontSize(12).fontColor(Color.Red)
+                    .onClick(() => this.confirmDeleteMem(m.id))
+                }
+              }
+              .width('100%').padding(14).backgroundColor(this.card()).borderRadius(10)
             }
-            .width('100%').padding(14).backgroundColor(this.card()).borderRadius(10)
           }
         }, (m: MemoryItem) => m.id)
       }
       .layoutWeight(1).width('100%').padding({ left: 20, right: 20, bottom: 16 })
+      if (this.memList.length === 0) {
+        Text(this.tx("暂无记忆。添加一条，对话时会自动检索。"))
+          .fontSize(13).fontColor(this.muted())
+          .padding({ left: 20, right: 20, bottom: 16 }).width('100%')
+      }
     }
     .layoutWeight(1).width('100%')
   }
@@ -2321,6 +2403,9 @@ struct Index {
         Text(this.tx("· 平板：对话/模型/记忆/知识库/浏览器可直接用；导演台等标「桌面」功能提示改用桌面版")).fontSize(13).fontColor(this.ink())
         Text(this.tx("· 鸿蒙电脑：同一功能面完整展示，宿主级工具仍建议配合桌面版")).fontSize(13).fontColor(this.ink())
         Text(this.tx("· 流式对话、多会话、深浅主题、智能体免责声明")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 0.81.0：按会话记录长期记忆，对话自动写入，先检索最近 5 条")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 0.80.0：对话自动检索本机记忆，记忆页可编辑")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 0.79.0：与桌面版同步版本，供应用市场测试上架")).fontSize(13).fontColor(this.ink())
         Text(this.tx("· 0.77.0：系统颜色可自动跟随；语言支持简体、繁体、英文、日语、法语、西班牙语、韩语")).fontSize(13).fontColor(this.ink())
         Text(this.tx("· 0.77.0：深色模式下输入文字可读，适配挖孔安全区，并修复启动时立即退回桌面")).fontSize(13).fontColor(this.ink())
         Text(this.tx("· 合成生成内容前须华为账号实名核验（绑定手机号）")).fontSize(13).fontColor(this.ink())

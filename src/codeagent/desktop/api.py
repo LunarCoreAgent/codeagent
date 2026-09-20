@@ -294,6 +294,8 @@ class DesktopConfig:
     # Accepted privacy policy version (empty = never accepted)
     privacy_accepted_version: str = ""
     privacy_accepted_at: str = ""  # ISO timestamp when last accepted
+    # 对话是否自动检索并允许写入长期记忆（本机 memory.json）
+    memory_enabled: bool = True
 
     @classmethod
     def load(cls, path: Path | None = None) -> "DesktopConfig":
@@ -373,6 +375,9 @@ class DesktopAPI:
         self._chat_browser_urls: list[str] = []
         self._voice_session = False
         self._native_listen = None
+        self._memory_cache = None
+        self._turn_thinking: list[str] = []
+        self._turn_thinking2: list[str] = []
         setup_logging()
 
     # ------------------------------------------------------------------
@@ -449,6 +454,8 @@ class DesktopAPI:
             text = str(event.data or "").strip()
             if text:
                 self._push("thinking", chan=chan, text=text)
+                buf = self._turn_thinking if chan != "B" else self._turn_thinking2
+                buf.append(text)
                 if proj is not None and conv_id:
                     try:
                         append_event(proj, conv_id, "thinking", text=text)
@@ -476,6 +483,10 @@ class DesktopAPI:
             names = event.data if isinstance(event.data, list) else []
             if names:
                 self._push("status", chan=chan, text="自动启用技能：" + "、".join(str(n) for n in names))
+        elif event.type == "plugins_activated":
+            names = event.data if isinstance(event.data, list) else []
+            if names:
+                self._push("status", chan=chan, text="自动提取插件：" + "、".join(str(n) for n in names))
 
     def _maybe_showcase_website(
         self,
@@ -678,7 +689,7 @@ class DesktopAPI:
             )
         else:
             self.config.max_iterations = clamp_max_iterations(self.config.max_iterations)
-        for key in ("auto_yes", "voice_enabled", "voice_cute_tone", "companion_enabled"):
+        for key in ("auto_yes", "voice_enabled", "voice_cute_tone", "companion_enabled", "memory_enabled"):
             if key in data:
                 setattr(self.config, key, bool(data[key]))
         if "voice_pitch" in data:
@@ -693,6 +704,7 @@ class DesktopAPI:
                 pass
         self.config.save()
         self._agent = None
+        self._agent2 = None
         log.info("config saved: provider=%s model=%s companion=%s",
                  self.config.provider, self.config.model,
                  self.config.companion_enabled)
@@ -1489,13 +1501,20 @@ class DesktopAPI:
     def _evolution_stats(self) -> dict[str, Any]:
         entries = read_activity(500)
         samples = sum(1 for e in entries if e.get("kind") == "learn")
+        merged = 0
+        remaining = 0
         try:
-            memories = len(asyncio.run(self._memory_store().list(limit=1000)))
+            result = asyncio.run(self._memory_store().consolidate())
+            merged = int(result.get("merged") or 0)
+            remaining = int(result.get("remaining") or 0)
         except Exception:  # noqa: BLE001
-            memories = 0
+            try:
+                remaining = len(asyncio.run(self._memory_store().list(limit=1000)))
+            except Exception:  # noqa: BLE001
+                remaining = 0
         return {"messages": samples, "events": len(entries),
-                "samples": samples, "compressed": max(1, memories // 20),
-                "merged": max(0, memories // 50)}
+                "samples": samples, "compressed": 0,
+                "merged": merged, "remaining": remaining}
 
     def _run_evolution(self, manual: bool = True) -> dict[str, Any]:
         run = run_evolution(self.evolution, stats=self._evolution_stats(),
@@ -1674,7 +1693,7 @@ class DesktopAPI:
             f"陪伴模式已开启：你是「{name}」，不是冷冰冰的工具助手。"
             f"性格与说话方式：{nature}。"
             f"称呼用户为「{user}」。"
-            "保持人设稳定，主动想起对方提过的细节；不假装真人；"
+            "保持人设稳定，主动想起对方提过的细节（以长期记忆与本轮检索为准，不要编造）；不假装真人；"
             "危机话题要关心并建议联系现实援助，不给伤害方法。"
             "可叠用语音播报与嗲嗲声；闲聊优先，事务协助先说明再帮忙。"
         )
@@ -1693,6 +1712,7 @@ class DesktopAPI:
             else build_policy(self.perm_levels, confirmer)
         )
         provider = self._build_provider()
+        memory = self._memory_store() if self.config.memory_enabled else None
         return Agent(
             provider=provider,
             tools=self._agent_tools(),
@@ -1703,6 +1723,7 @@ class DesktopAPI:
             compactor=ConversationCompactor(
                 provider, CompactionConfig(max_messages=24, keep_recent=8),
             ),
+            memory=memory,
             skills=self._load_skills(),
             settings=self._settings_with_patches(),
             on_event=on_event,
@@ -2094,6 +2115,7 @@ class DesktopAPI:
                 self._conv_id = None
                 self._agent2 = None
                 self._conv_id2 = None
+                self._memory_cache = None
         return ok
 
     def _activate_project(self, pid: str) -> None:
@@ -2108,6 +2130,8 @@ class DesktopAPI:
         self._conv_id2 = None
         self._conv_seed2 = []
         self._ws_hints_cache = None
+        self._memory_cache = None
+        self._begin_project_memory(proj)
 
     def get_conversations(self) -> dict[str, Any]:
         proj = self.projects.get(self.projects.active)
@@ -2265,7 +2289,7 @@ class DesktopAPI:
                 daemon=True,
             ).start()
         else:
-            threading.Thread(target=self._run_chat2, args=(text,), daemon=True).start()
+            threading.Thread(target=self._run_chat2, args=(text, display), daemon=True).start()
         return True
 
     def stop2(self) -> bool:
@@ -2303,6 +2327,7 @@ class DesktopAPI:
         text = (text or "").strip()
         if not text and not self._attachments:
             return False
+        recall = text
         with self._lock:
             if self._busy:
                 return False
@@ -2335,7 +2360,7 @@ class DesktopAPI:
                 daemon=True,
             ).start()
         else:
-            threading.Thread(target=self._run_chat, args=(text,), daemon=True).start()
+            threading.Thread(target=self._run_chat, args=(text, recall), daemon=True).start()
         return True
 
     def stop(self) -> bool:
@@ -2362,13 +2387,13 @@ class DesktopAPI:
                 pass
         return True
 
-    def _run_chat(self, text: str) -> None:
-        self._run_chat_chan(text, "A")
+    def _run_chat(self, text: str, memory_query: str = "") -> None:
+        self._run_chat_chan(text, "A", memory_query)
 
-    def _run_chat2(self, text: str) -> None:
-        self._run_chat_chan(text, "B")
+    def _run_chat2(self, text: str, memory_query: str = "") -> None:
+        self._run_chat_chan(text, "B", memory_query)
 
-    def _run_chat_chan(self, text: str, chan: str) -> None:
+    def _run_chat_chan(self, text: str, chan: str, memory_query: str = "") -> None:
         is_a = chan == "A"
         lock = self._lock if is_a else self._lock2
         cancel = self._cancel if is_a else self._cancel2
@@ -2377,6 +2402,10 @@ class DesktopAPI:
         loop_attr = "_loop" if is_a else "_loop2"
         conv_id = self._conv_id if is_a else self._conv_id2
         stopped = False
+        if is_a:
+            self._turn_thinking = []
+        else:
+            self._turn_thinking2 = []
         try:
             if cancel.is_set():
                 stopped = True
@@ -2405,7 +2434,7 @@ class DesktopAPI:
             async def _go() -> str:
                 setattr(self, loop_attr, asyncio.get_running_loop())
                 try:
-                    return await agent.run(text)
+                    return await agent.run(text, memory_query=memory_query or None)
                 finally:
                     setattr(self, loop_attr, None)
 
@@ -2428,6 +2457,11 @@ class DesktopAPI:
                 pass
             if proj is not None and conv_id:
                 append_message(proj, conv_id, "assistant", display)
+            thoughts = self._turn_thinking if is_a else self._turn_thinking2
+            self._journal_turn(
+                memory_query or text, display or answer or "",
+                "\n".join(thoughts), conv_id or "",
+            )
             try:
                 self._maybe_showcase_website(text, display or answer or "", agent, chan)
             except Exception:  # noqa: BLE001
@@ -2629,6 +2663,12 @@ class DesktopAPI:
         registry.register(BrowserTool(engine=self._browser))
         for tool in knowledge_tools() + video_ops_tools():
             registry.register(tool)
+        if self.config.memory_enabled:
+            from codeagent.memory import memory_tools
+
+            for tool in memory_tools(self._memory_store()):
+                if registry.get(tool.name) is None:
+                    registry.register(tool)
         return registry
 
     def _build_agent_with(self, provider, chan: str = "A") -> Agent:
@@ -2652,6 +2692,7 @@ class DesktopAPI:
             compactor=ConversationCompactor(
                 provider, CompactionConfig(max_messages=24, keep_recent=8),
             ),
+            memory=self._memory_store() if self.config.memory_enabled else None,
             skills=self._load_skills(),
             settings=self._settings_with_patches(),
             on_event=on_event,
@@ -2975,6 +3016,7 @@ class DesktopAPI:
         try:
             from codeagent.harness import discover_harnesses
             from codeagent.leader import Leader, ProgressBoard, RunArchive
+            from codeagent.security.policy import PermissionPolicy
 
             board = ProgressBoard(
                 on_change=lambda r: self._push(
@@ -2993,6 +3035,11 @@ class DesktopAPI:
                 settings=self.settings,
                 max_parallel=2,
                 on_event=lambda kind, data: self._push("lead", event=kind, data=data),
+                worker_permissions=(
+                    PermissionPolicy.permissive()
+                    if self.config.auto_yes
+                    else None
+                ),
             )
 
             async def _go() -> str:
@@ -3012,6 +3059,7 @@ class DesktopAPI:
                 return
             self._push("lead_done", text=reply)
             self._speak(reply)
+            self._journal_turn(text, reply, "", "")
         except Exception as exc:  # noqa: BLE001
             if self._cancel.is_set():
                 stopped = True
@@ -3036,10 +3084,117 @@ class DesktopAPI:
     # memory
     # ------------------------------------------------------------------
 
+    def _memory_path(self) -> Path:
+        proj = self.projects.get(self.projects.active)
+        if proj is not None and str(proj.path).strip():
+            return Path(proj.path).expanduser() / "memory.json"
+        return MEMORY_PATH.expanduser()
+
     def _memory_store(self):
         from codeagent.memory import LocalMemoryStore
 
-        return LocalMemoryStore(MEMORY_PATH.expanduser())
+        path = self._memory_path()
+        cached = self._memory_cache
+        if cached is None or Path(cached.path) != path:
+            self._memory_cache = LocalMemoryStore(path)
+        return self._memory_cache
+
+    def _memory_row(self, memory) -> dict[str, Any]:
+        meta = memory.metadata if isinstance(memory.metadata, dict) else {}
+        tags = meta.get("tags") if isinstance(meta.get("tags"), list) else []
+        return {
+            "id": memory.id,
+            "content": memory.content,
+            "created_at": memory.created_at,
+            "updated_at": getattr(memory, "updated_at", memory.created_at),
+            "source": str(meta.get("source") or ""),
+            "kind": str(meta.get("kind") or ""),
+            "tags": [str(t) for t in tags],
+        }
+
+    def _begin_project_memory(self, proj) -> None:
+        if proj is None or not self.config.memory_enabled:
+            return
+        from codeagent.memory.journal import format_zone_start
+
+        try:
+            store = self._memory_store()
+            items = asyncio.run(store.list(limit=1))
+            if items:
+                return
+            asyncio.run(store.add(
+                format_zone_start(proj.name),
+                {"source": "auto", "kind": "progress", "project_id": proj.id},
+            ))
+        except Exception:  # noqa: BLE001
+            log.exception("begin project memory")
+
+    def _backup_memory_to_knowledge(self, content: str, kind: str) -> None:
+        try:
+            from codeagent.knowledge import (
+                KnowledgeConfig,
+                append_memory_backup,
+                is_vault_ready,
+            )
+
+            cfg = KnowledgeConfig.load()
+            if not cfg.enabled:
+                return
+            root = cfg.vault_path()
+            if not is_vault_ready(root):
+                return
+            proj = self.projects.get(self.projects.active)
+            zone = proj.name if proj is not None else "未分项目"
+            append_memory_backup(root, zone, f"[{kind}] {content}")
+        except Exception:  # noqa: BLE001
+            log.exception("memory knowledge backup")
+
+    def _add_memory_meta(self, content: str, metadata: dict[str, Any]) -> bool:
+        content = (content or "").strip()
+        if not content or not self.config.memory_enabled:
+            return False
+        try:
+            asyncio.run(self._memory_store().add(content, metadata))
+        except Exception:  # noqa: BLE001
+            log.exception("add memory")
+            return False
+        self._backup_memory_to_knowledge(content, str(metadata.get("kind") or "fact"))
+        return True
+
+    def _journal_turn(self, user: str, assistant: str, thinking: str, conv_id: str) -> None:
+        from codeagent.memory.journal import format_turn
+
+        proj = self.projects.get(self.projects.active)
+        body = format_turn(user, assistant, thinking)
+        self._add_memory_meta(body, {
+            "source": "auto",
+            "kind": "turn",
+            "project_id": proj.id if proj is not None else "",
+            "conv_id": conv_id or "",
+        })
+        self._record_progress(user)
+
+    def _record_progress(self, summary: str) -> None:
+        from codeagent.memory.journal import format_progress
+
+        if not self.config.memory_enabled:
+            return
+        proj = self.projects.get(self.projects.active)
+        content = format_progress(proj.name if proj is not None else "", summary)
+        try:
+            store = self._memory_store()
+            existing = asyncio.run(store.list(limit=20, kinds=("progress",)))
+            if existing:
+                asyncio.run(store.update(existing[0].id, content))
+                self._backup_memory_to_knowledge(content, "progress")
+                return
+        except Exception:  # noqa: BLE001
+            log.exception("update progress memory")
+        self._add_memory_meta(content, {
+            "source": "auto",
+            "kind": "progress",
+            "project_id": proj.id if proj is not None else "",
+        })
 
     def get_memories(self, query: str = "") -> list[dict[str, Any]]:
         store = self._memory_store()
@@ -3050,17 +3205,28 @@ class DesktopAPI:
                 items = asyncio.run(store.list(limit=100))
         except Exception:  # noqa: BLE001
             return []
-        return [
-            {"id": m.id, "content": m.content, "created_at": m.created_at}
-            for m in items
-        ]
+        return [self._memory_row(m) for m in items]
 
     def add_memory(self, content: str) -> bool:
         content = (content or "").strip()
         if not content:
             return False
         try:
-            asyncio.run(self._memory_store().add(content))
+            asyncio.run(self._memory_store().add(content, {"source": "manual", "kind": "fact"}))
+            self._backup_memory_to_knowledge(content, "fact")
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def update_memory(self, memory_id: str, content: str) -> bool:
+        content = (content or "").strip()
+        if not memory_id or not content:
+            return False
+        try:
+            updated = asyncio.run(self._memory_store().update(memory_id, content))
+            if updated is None:
+                return False
+            self._backup_memory_to_knowledge(content, "fact")
             return True
         except Exception:  # noqa: BLE001
             return False

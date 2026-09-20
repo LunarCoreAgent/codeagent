@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from codeagent.core.agent import Agent
 from codeagent.core.budget import Budget
 from codeagent.llm.aggregate import parse_provider_spec
+from codeagent.security.policy import PermissionPolicy, RiskLevel
 from codeagent.skills.skill import SkillLibrary
 from codeagent.tools import ToolRegistry, default_tools
 
@@ -68,6 +69,7 @@ def build_worker_agent(
     max_iterations: int = 30,
     budget: Budget | None = None,
     on_event=None,
+    permissions: PermissionPolicy | None = None,
 ) -> Agent:
     """Build a worker agent with full tools, skills, and project understanding."""
     provider_kwargs: dict[str, Any] = {}
@@ -100,4 +102,5 @@ def build_worker_agent(
         settings=settings,
         on_event=on_event,
         workspace_hints=workspace_skill_hints(root, extra=project_context),
+        permissions=permissions or PermissionPolicy(auto_approve_up_to=RiskLevel.EXECUTE),
     )

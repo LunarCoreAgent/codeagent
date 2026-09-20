@@ -319,8 +319,11 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .mem { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 9px; }
 .mem .m-body { flex: 1; line-height: 1.65; font-size: 13px; }
 .mem .m-time { font-size: 10.5px; color: var(--faint); margin-top: 4px; }
-.mem .m-del { flex-shrink: 0; background: none; border: none; color: var(--faint);
-              cursor: pointer; font-size: 15px; padding: 2px 6px; }
+.mem .m-src { display: inline-block; margin-right: 8px; font-size: 10.5px; color: var(--muted); }
+.mem .m-actions { display: flex; flex-direction: column; gap: 4px; }
+.mem .m-edit, .mem .m-del { flex-shrink: 0; background: none; border: none; color: var(--faint);
+  cursor: pointer; font-size: 12px; padding: 2px 4px; }
+.mem .m-edit:hover { color: var(--accent); }
 .mem .m-del:hover { color: var(--bad); }
 .skill-pack { max-width: 1040px; margin: 0 auto 18px; width: 100%; }
 .skill-pack h2 { font-size: 12px; color: var(--muted); font-weight: 600;
@@ -989,12 +992,12 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 <!-- ============ 记忆 ============ -->
 <section class="page" id="page-memory">
   <div class="page-head"><h1>长期记忆</h1>
-    <span class="sub">跨会话记住的事实，Agent 会自动检索利用</span></div>
+    <span class="sub">每个项目单独一本；对话与思考自动写入，可增删改；配置知识库后自动备份</span></div>
   <div class="page-body">
     <div class="toolbar">
-      <input id="memQuery" placeholder="搜索记忆…（回车）">
-      <button class="btn" onclick="loadMemories()">搜索</button>
-      <button class="btn primary" onclick="addMemory()">+ 添加</button>
+      <input id="memQuery" placeholder="搜索记忆…">
+      <input id="memAdd" placeholder="添加一条记忆，回车保存" style="flex:1;min-width:160px">
+      <button class="btn primary" onclick="addMemory()">添加</button>
     </div>
     <div class="list" id="memList"></div>
   </div>
@@ -1476,6 +1479,12 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
         <button class="btn" type="button" onclick="go('knowledge')">打开知识库页</button>
         <button class="btn primary" type="button" onclick="saveKnowledgePathFromSettings()">保存知识库路径</button>
       </div>
+    </div>
+
+    <div class="card sect"><h3>长期记忆</h3>
+      <p class="hint">每个项目在自己的 memory.json 里自动记录对话、思考与进度。对话时先注入最近 5 条对话记忆。已配置知识库时写入同时备份到 raw/conversations/。关闭后仍可手工增删。</p>
+      <div class="checkline"><input type="checkbox" id="cfg_memory" checked>
+        <span>对话时自动注入并允许写入长期记忆</span></div>
     </div>
 
     <div class="card sect" id="sectCompanion"><h3>陪伴型 AI</h3>
@@ -2900,30 +2909,59 @@ function loadRuns(){
 }
 
 /* ---------- memory ---------- */
+function memSourceLabel(src, kind){
+  if(kind==='progress')return '进度';
+  if(kind==='turn')return '对话';
+  if(kind==='thinking')return '思考';
+  return ({manual:'手动', agent:'对话', merge:'合并', auto:'自动'}[src]||src||'');
+}
 function loadMemories(){
-  pywebview.api.get_memories($('memQuery').value).then(items=>{
+  const q=$('memQuery')?$('memQuery').value:'';
+  pywebview.api.get_memories(q).then(items=>{
     const el=$('memList');
-    if(!items.length){el.innerHTML='<div class="empty">暂无记忆</div>';return;}
+    if(!items.length){el.innerHTML='<div class="empty">暂无记忆。对话会自动写入；也可在此添加或删除。</div>';return;}
     el.innerHTML='';
     items.forEach(m=>{
       const div=document.createElement('div');
       div.className='card mem';
-      const time=m.created_at?new Date(m.created_at*1000).toLocaleString():'';
+      const time=m.updated_at||m.created_at?new Date((m.updated_at||m.created_at)*1000).toLocaleString():'';
+      const src=memSourceLabel(m.source, m.kind);
       div.innerHTML='<div class="m-body">'+esc(m.content)+
-        '<div class="m-time">'+time+'</div></div>'+
-        '<button class="m-del" title="删除">×</button>';
+        '<div class="m-time">'+(src?'<span class="m-src">'+esc(src)+'</span>':'')+time+'</div></div>'+
+        '<div class="m-actions"><button class="m-edit" type="button">编辑</button>'+
+        '<button class="m-del" type="button" title="删除">删除</button></div>';
+      div.querySelector('.m-edit').onclick=()=>{
+        const next=prompt('修改记忆', m.content);
+        if(next===null)return;
+        pywebview.api.update_memory(m.id, next).then(ok=>{if(ok)loadMemories();});
+      };
       div.querySelector('.m-del').onclick=()=>{
-        pywebview.api.delete_memory(m.id).then(()=>div.remove());
+        if(!confirm('删除这条记忆？'))return;
+        pywebview.api.delete_memory(m.id).then(()=>loadMemories());
       };
       el.appendChild(div);
     });
   });
 }
 function addMemory(){
-  const text=prompt('要记住的内容：'); if(!text)return;
-  pywebview.api.add_memory(text).then(ok=>{if(ok)loadMemories();});
+  const box=$('memAdd');
+  const text=(box&&box.value||'').trim();
+  if(!text)return;
+  pywebview.api.add_memory(text).then(ok=>{
+    if(ok){ if(box)box.value=''; loadMemories(); }
+  });
 }
-$('memQuery').addEventListener('keydown',e=>{if(e.key==='Enter')loadMemories();});
+if($('memQuery')){
+  let memTimer=null;
+  $('memQuery').addEventListener('input',()=>{
+    clearTimeout(memTimer);
+    memTimer=setTimeout(loadMemories, 180);
+  });
+  $('memQuery').addEventListener('keydown',e=>{if(e.key==='Enter')loadMemories();});
+}
+if($('memAdd')){
+  $('memAdd').addEventListener('keydown',e=>{if(e.key==='Enter')addMemory();});
+}
 
 /* ---------- knowledge (Obsidian / LLM Wiki) ---------- */
 function fillKbDiskChips(boxId, inputId, roots){
@@ -4329,6 +4367,7 @@ function loadSettings(){
     syncMaxIterationsSlider();
     fillCompanionPresets(st.config.companion_preset||'');
     if($('cfg_companion'))$('cfg_companion').checked=!!st.config.companion_enabled;
+    if($('cfg_memory'))$('cfg_memory').checked=st.config.memory_enabled!==false;
     if($('cfg_companion_name'))$('cfg_companion_name').value=st.config.companion_name||'';
     if($('cfg_companion_nature'))$('cfg_companion_nature').value=st.config.companion_nature||'';
     $('cfg_workers').value=st.config.workers_json;
@@ -4417,6 +4456,7 @@ function companionConfigFromForm(){
     companion_preset:$('cfg_companion_preset')?$('cfg_companion_preset').value:'',
     companion_name:$('cfg_companion_name')?$('cfg_companion_name').value:'',
     companion_nature:$('cfg_companion_nature')?$('cfg_companion_nature').value:'',
+    memory_enabled:$('cfg_memory')?$('cfg_memory').checked:true,
   };
 }
 function voiceConfigFromForm(){

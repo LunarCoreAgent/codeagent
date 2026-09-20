@@ -26,6 +26,7 @@ from codeagent.leader.progress import ProgressBoard
 from codeagent.leader.worker import WorkerConfig, build_worker_agent
 from codeagent.llm.base import LLMProvider
 from codeagent.memory.facts import parse_json_object
+from codeagent.security.policy import PermissionPolicy, RiskLevel
 from codeagent.skills.skill import SkillLibrary
 from codeagent.tools import ToolRegistry, default_tools
 
@@ -100,6 +101,7 @@ class Leader:
         on_event: Callable[[str, Any], None] | None = None,
         worker_retries: int = 2,
         max_parallel: int | None = None,
+        worker_permissions: PermissionPolicy | None = None,
     ) -> None:
         if not workers:
             raise ValueError("Leader needs at least one worker")
@@ -119,6 +121,9 @@ class Leader:
         self.worker_retries = max(0, worker_retries)
         # Cap in-flight workers; local multi-model on one server 503s otherwise
         self.max_parallel = max(1, max_parallel) if max_parallel else None
+        self.worker_permissions = worker_permissions or PermissionPolicy(
+            auto_approve_up_to=RiskLevel.EXECUTE,
+        )
         self._project = project_context(self.root)
         self._task_counter = 0
 
@@ -267,6 +272,7 @@ class Leader:
             project_context=self._project,
             max_iterations=self.max_iterations,
             budget=self.budget,
+            permissions=self.worker_permissions,
         )
         task_text = assignment["task"]
         dep_context = [

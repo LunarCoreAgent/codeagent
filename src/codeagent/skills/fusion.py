@@ -47,6 +47,10 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
 - 鸿蒙 / HarmonyOS NEXT / ArkTS API 查询 → harmony-next（离线路由，勿把 4000+ 文档整包塞进上下文）
 - ArkTS 语法 / .ets / TS 迁移 / 编译错误 → arkts-syntax-assistant
 - 鸿蒙编译安装 / 真机调试 / UI 树 / hilog → deveco-mcp（需本机 DevEco + MCP `deveco-mcp-server`）
+- CLI agent 启动自检 / --json 信封 / 工具执行前权限闸门 → claw-code
+- 可视化无代码建站 / Silex / GrapesJS 画布 → silex（MCP `http://127.0.0.1:6807/mcp`，先开 Desktop；AGPL 勿拷进安装包）
+- MotionSites 付费设计提示词 / 按条取参考 → motionsites-mcp（需账号 OAuth；禁止刮库、禁止把 500 条塞进上下文）
+- 用哪个 MCP / 插件 → 任务自动提取，自己调用 use_plugin；不要问用户点选
 - CPython 内核 / C API / GIL / 从源码编 Python / 给解释器加模块 → cpython（写普通 .py 应用不要套）
 - 打开网页 / 登录站 / 点按钮 / 填表 → 直接调用 browser 工具（软件内置浏览器，无需安装；已登录 Chrome 可另用 browser-skill / ego-browser）
 - 语音面 / 麦克风 / 播报 / 嗲音 / barge-in → voice-surface
@@ -992,6 +996,79 @@ Windows 将 `DEVECO_PATH` 改为本机 Studio 安装目录。也可用上游 `de
 - 先确认本机能 `hvigor`/`hdc` 通，再让 AI 跑闭环
 - 缺 Node / DevEco / 设备时说明怎么装，不要假装已装上 HAP
 - ArkTS 语法问题叠 `arkts-syntax-assistant`；API 细节叠 `harmony-next`
+""",
+    ),
+    "claw-code": (
+        "CLI agent 契约：启动自检、机器可读 JSON、工具执行前权限闸门；不抄 Discord/斜杠指令堆",
+        "claw-code,doctor,自检,--json,权限闸门,fail-closed,Claude Code CLI",
+        "https://github.com/ultraworkers/claw-code",
+        """# claw-code
+来源：[ultraworkers/claw-code](https://github.com/ultraworkers/claw-code)（MIT；Claude Code 风格 CLI 的博物馆展品）。
+改 CodeCoreAgent 的 CLI、启动自检、JSON 输出、工具权限时启用。自己调用 use_skill("claw-code")。
+不要把 Discord 多代理展厅、斜杠指令堆、或整仓 Rust 重写抄进来。
+
+## 只借这三件
+- 启动自检：`codeagent doctor`（默认不联网；`--probe` 才探本机模型端点）。失败退出码 1，警告不阻止。
+- 机器可读信封：`--json` 输出 `{ok, version, data, error?}`，脚本不要去刮 Rich 文本。
+- 权限闸门：工具执行前 `PermissionPolicy.authorize`；无审批句柄则拒绝高风险（fail-closed）。领导工人默认可读写与普通 Shell，破坏性命令要 `--yes`。
+
+## 本仓库落点
+- `codeagent doctor` / `codeagent version --json` / `codeagent settings show --json`
+- `src/codeagent/security/policy.py` + `Agent._authorize`
+- 工人：`build_worker_agent(..., permissions=...)`；Grep/Glob 不得逃出工作区
+
+## 铁律
+- 密钥只报「已设置/未设置」，永远不要打印值
+- 测试与真实路径同一套契约（mock parity）：JSON 字段名稳定
+- 新 CLI 子命令默认给人看；机器要用再加 `--json`，不要另做一套输出
+""",
+    ),
+    "silex": (
+        "Silex 可视化静态建站：本机 MCP 操作 GrapesJS 画布，导出 HTML/CSS；不拷 AGPL 源码",
+        "Silex,GrapesJS,可视化建站,无代码建站,拖拽建站,开源Webflow,silex.me",
+        "https://github.com/silexlabs/Silex",
+        """# Silex
+来源：[silexlabs/Silex](https://github.com/silexlabs/Silex)（AGPL-3.0）。用户要可视化无代码建站、拖拽画布、开源 Webflow 替代时启用。
+自己调用 use_skill("silex") 和 use_plugin("silex")。不要把编辑器源码打进 CodeCoreAgent 安装包。
+
+## 怎么接
+- 先开 **Silex Desktop**（或本机 `npx @silexlabs/silex` 只有编辑器 :6805，MCP 在桌面 :6807）
+- MCP：`http://127.0.0.1:6807/mcp`（预设 `codeagent.mcp.presets.silex_mcp()`）
+- 流程：`website` list/create/open → `list_tools` 看动态画布工具 → 改完 `take_screenshot` 验收
+- 层级：站点 → 断点 → 页 → 组件。首页必须叫 `index`，站内链接 `./`。BEM，Flexbox，不要 CSS Grid，不要改 DOM。
+
+## 和写代码建站怎么选
+- 用户要源码落地页 / React / 可维护工程 → impeccable-craft + 内置 browser，不要硬上 Silex
+- 用户点名 Silex / 可视化 / 无代码画布 → 本技能
+- 桌面没开就说明怎么下、怎么启动，不要假装已连上 MCP
+
+## 铁律
+- AGPL：只连接，不 vendoring
+- 未登录/未启动时 连不上就说依赖，不要编工具结果
+""",
+    ),
+    "motionsites-mcp": (
+        "MotionSites 设计提示词 MCP：按需取一条参考，账号 OAuth；不刮库、不整包进上下文",
+        "MotionSites,motionsites,付费设计提示词,Premium Website Design,motionsites.ai",
+        "https://motionsites.ai/mcp",
+        """# motionsites-mcp
+来源：[motionsites.ai/mcp](https://motionsites.ai/mcp)（商业提示词库，不是开源技能包）。
+用户要 MotionSites 提示词、付费设计参考时启用。自己调用 use_skill("motionsites-mcp") 和 use_plugin("motionsites")。
+
+## 怎么接
+- URL：`https://xgdzyqfalbibzelpdpvr.supabase.co/functions/v1/mcp`
+- Cursor：mcp.json 只写 `url`；Claude Code：`claude mcp add motionsites --scope user --transport http <url>`
+- 预设：`codeagent.mcp.presets.motionsites_mcp()`。无 API Key，浏览器登录授权。未带令牌 initialize 为 401。
+- 免费账号只能打开少量提示词；付费套餐含 MCP。一次只取一条，写完再用 impeccable-craft + 内置 browser 做页。
+
+## 不要做
+- 不要用 Parse.bot / 非官方刮库当官方 API
+- 不要把 500+ 提示词正文拷进 fusion 或仓库
+- 没账号就说明去 motionsites.ai 登录，不要假装已经拉到提示词
+
+## 和写代码怎么选
+- 普通落地页 → impeccable-craft
+- 用户点名 MotionSites / 要他们的提示词 → 本技能
 """,
     ),
 }

@@ -75,11 +75,28 @@ async def test_list_dir(workspace):
     assert "docs/" in out
 
 
-async def test_grep(workspace):
-    tool = GrepTool(workspace)
-    out = await tool.execute("hello")
-    assert "hello.py:1:" in out
-    assert "docs/notes.txt:1:" in out
+async def test_grep_path_escape_blocked(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "hello.py").write_text("hello\n")
+    secret = tmp_path / "outside.txt"
+    secret.write_text("secret token\n")
+    tool = GrepTool(root)
+    with pytest.raises(PermissionError, match="escapes"):
+        await tool.execute("secret", path=str(secret))
+    with pytest.raises(PermissionError, match="escapes"):
+        await tool.execute("secret", path="../outside.txt")
+
+
+async def test_glob_does_not_return_escaped_paths(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "hello.py").write_text("hello\n")
+    (tmp_path / "outside.py").write_text("x = 1\n")
+    tool = GlobTool(root)
+    out = await tool.execute("../outside.py")
+    assert "outside.py" not in out
+    assert "(no matches)" in out
 
 
 async def test_grep_with_include_filter(workspace):

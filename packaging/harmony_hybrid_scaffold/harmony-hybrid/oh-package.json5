@@ -1,6 +1,6 @@
 {
   "name": "harmony-hybrid",
-  "version": "0.77.0",
+  "version": "0.81.0",
   "description": "CodeCoreAgent HarmonyOS PC+Tablet hybrid shell",
   "dependencies": {},
   "devDependencies": {

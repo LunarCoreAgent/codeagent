@@ -138,6 +138,7 @@ def test_desktop_config_roundtrip(tmp_path):
     assert loaded.voice_enabled is True
     assert loaded.voice_name == "xiaochen"
     assert loaded.voice_cute_tone is True
+    assert loaded.memory_enabled is True
     assert "ollama" in loaded.workers_json
 
 
@@ -190,6 +191,7 @@ def test_save_config_persists_and_resets_agent(api, tmp_path):
     api.save_config({"provider": "openai", "model": "gpt-4o-mini", "api_key": "k"})
     assert api.config.provider == "openai"
     assert api._agent is None
+    assert api._agent2 is None
     reloaded = DesktopConfig.load(tmp_path / "desktop.json")
     assert reloaded.model == "gpt-4o-mini"
 
@@ -581,10 +583,93 @@ def test_memory_add_list_search_delete(api):
     assert api.add_memory("用户喜欢 pytest") is True
     items = api.get_memories()
     assert any("pytest" in m["content"] for m in items)
+    assert items[0]["source"] == "manual"
     hits = api.get_memories("pytest")
     assert hits
+    assert api.update_memory(items[0]["id"], "用户喜欢 pytest 和 tmp_path") is True
+    updated = api.get_memories()
+    assert any("tmp_path" in m["content"] for m in updated)
     assert api.delete_memory(items[0]["id"]) is True
     assert api.get_memories() == []
+
+
+def test_project_memory_is_isolated(api, tmp_path):
+    assert api.add_memory("全局事实") is True
+    first = api.create_project("甲", str(tmp_path / "memproj"))
+    assert first["ok"]
+    assert api.add_memory("甲的事实") is True
+    names_a = [m["content"] for m in api.get_memories()]
+    assert any("甲的事实" in c for c in names_a)
+    assert all("全局事实" not in c for c in names_a)
+    assert any("开始记录项目「甲」" in c for c in names_a)
+    second = api.create_project("乙", str(tmp_path / "memproj"))
+    assert second["ok"]
+    names_b = [m["content"] for m in api.get_memories()]
+    assert all("甲的事实" not in c for c in names_b)
+    assert any("开始记录项目「乙」" in c for c in names_b)
+    api.switch_project(first["project"]["id"])
+    names_again = [m["content"] for m in api.get_memories()]
+    assert any("甲的事实" in c for c in names_again)
+
+
+def test_send_auto_records_turn(api, monkeypatch, tmp_path):
+    from codeagent.core.types import LLMResponse
+
+    class FakeProvider:
+        name = "fake"
+        model = "fake-model"
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            return LLMResponse(content="记下了")
+
+    monkeypatch.setattr(
+        "codeagent.desktop.api.parse_provider_spec",
+        lambda *a, **k: FakeProvider(),
+    )
+    api.create_project("记事", str(tmp_path / "memproj"))
+    assert api.send("帮我改登录页") is True
+    wait_for(api._window, "done")
+    items = api.get_memories()
+    assert any(m["kind"] == "turn" and "帮我改登录页" in m["content"] for m in items)
+    assert any(m["kind"] == "progress" and "帮我改登录页" in m["content"] for m in items)
+
+
+def test_memory_backs_up_to_knowledge(api, tmp_path, monkeypatch):
+    monkeypatch.setattr("codeagent.knowledge.CONFIG_PATH", tmp_path / "knowledge.json")
+    vault = tmp_path / "vault"
+    assert api.save_knowledge_config(str(vault), "local", "obsidian", True)["ok"]
+    assert api.bootstrap_knowledge()["ok"]
+    api.create_project("备份项", str(tmp_path / "memproj"))
+    assert api.add_memory("备份这条事实") is True
+    files = list((vault / "raw" / "conversations").glob("*.md"))
+    assert files
+    blob = "\n".join(p.read_text(encoding="utf-8") for p in files)
+    assert "备份这条事实" in blob
+
+
+def test_desktop_agent_wires_memory(api, monkeypatch):
+    from codeagent.desktop import api as api_mod
+
+    captured: dict = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(api_mod, "Agent", FakeAgent)
+    monkeypatch.setattr(api, "_build_provider", lambda: object())
+    monkeypatch.setattr(api, "_load_skills", lambda: None)
+    monkeypatch.setattr(api, "_settings_with_patches", lambda: None)
+    monkeypatch.setattr(api, "_workspace_skill_hints", lambda: "")
+    api.add_memory("用户喜欢 pytest")
+    api._build_agent()
+    assert captured.get("memory") is not None
+    tools = captured.get("tools")
+    assert tools is not None
+    assert tools.get("memory_save") is not None
+    api.save_config({"memory_enabled": False})
+    api._build_agent()
+    assert captured.get("memory") is None
 
 
 def test_get_skills_includes_bundled(api):
@@ -661,6 +746,9 @@ def test_ui_has_all_pages_and_bridge():
     assert "voiceConfigFromForm" in HTML
     assert "陪伴型 AI" in HTML
     assert 'id="sectCompanion"' in HTML
+    assert 'id="cfg_memory"' in HTML
+    assert "每个项目单独一本" in HTML
+    assert "pywebview.api.update_memory" in HTML
     assert 'id="cfg_companion"' in HTML
     assert "companionConfigFromForm" in HTML
     assert "COMPANION_PRESETS" in HTML
@@ -724,8 +812,9 @@ def test_ui_has_all_pages_and_bridge():
     assert "CodeCoreAgent" in HTML
     assert '<div class="name">codeagent</div>' not in HTML
     assert "CodeCoreAgent 就绪" in HTML
-    assert 'alt="CCA"' in HTML
-    assert "__BRAND_MARK_SRC__" in HTML
+    assert 'alt="CodeCoreAgent"' in HTML
+    assert "__BRAND_LOGO_LIGHT__" in HTML
+    assert "__BRAND_LOGO_DARK__" in HTML
     # 设置页/侧栏展开后内容超出窗口须能滚动，不能被 body overflow 裁死
     assert "#main { flex: 1; display: flex; flex-direction: column; min-width: 0;" in HTML
     assert "min-height: 0; overflow: hidden;" in HTML
@@ -1789,7 +1878,7 @@ def test_format_attachments():
 def test_send_combines_attachments(api):
     captured = {}
     orig_run = api._run_chat
-    api._run_chat = lambda text: (captured.setdefault("text", text),
+    api._run_chat = lambda text, _recall="": (captured.setdefault("text", text),
                                   setattr(api, "_busy", False))
     api._attachments = [{"name": "a.txt", "size": "3 B", "text": "文件内容",
                          "note": ""}]
@@ -1799,8 +1888,26 @@ def test_send_combines_attachments(api):
     api._run_chat = orig_run
 
 
+def test_send_memory_query_uses_user_text_not_attachments(api):
+    captured = {}
+    orig_run = api._run_chat
+
+    def stub(text, memory_query=""):
+        captured["text"] = text
+        captured["recall"] = memory_query
+        api._busy = False
+
+    api._run_chat = stub
+    api._attachments = [{"name": "a.txt", "size": "3 B", "text": "附件里写了数据库",
+                         "note": ""}]
+    assert api.send("偏好怎么配") is True
+    assert captured["recall"] == "偏好怎么配"
+    assert "数据库" in captured["text"]
+    api._run_chat = orig_run
+
+
 def test_send_attachment_only_no_text(api):
-    api._run_chat = lambda text: setattr(api, "_busy", False)
+    api._run_chat = lambda text, _recall="": setattr(api, "_busy", False)
     api._attachments = [{"name": "a.txt", "size": "3 B", "text": "x", "note": ""}]
     assert api.send("") is True  # 仅附件也可发送
     assert api._attachments == []
@@ -2160,7 +2267,7 @@ def test_send_video_params_without_gradio_still_chats(api):
     """Extra send() args are ignored unless a Gradio model is active."""
     captured = {}
     orig = api._run_chat
-    api._run_chat = lambda text: (captured.setdefault("text", text),
+    api._run_chat = lambda text, _recall="": (captured.setdefault("text", text),
                                   setattr(api, "_busy", False))
     api._run_video_gen = lambda *a, **k: captured.setdefault("video", True)
     assert api.send("你好", "1080p", 81, 40) is True
@@ -2391,7 +2498,7 @@ def test_conversation_list_and_load(api, tmp_path, monkeypatch):
     # 载入后续聊：下一条消息带前文上下文
     captured = {}
     orig = api._run_chat
-    api._run_chat = lambda t: (captured.setdefault("t", t),
+    api._run_chat = lambda t, _recall="": (captured.setdefault("t", t),
                                setattr(api, "_busy", False))
     api.send("继续")
     assert "本会话之前的对话记录" in captured["t"]

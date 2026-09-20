@@ -46,7 +46,7 @@ file:// — only http://127.0.0.1 or http://localhost.
 
 EventType = Literal[
     "text", "thinking", "tool_call", "tool_result", "iteration", "approval",
-    "done", "error", "skill_evolved", "skills_activated",
+    "done", "error", "skill_evolved", "skills_activated", "plugins_activated",
 ]
 EventHandler = Callable[["AgentEvent"], None | Awaitable[None]]
 
@@ -138,9 +138,12 @@ class Agent:
         self._memory_context = ""
         self._auto_skill_names: list[str] = []
         self._invoked_skill_names: list[str] = []
+        self._auto_plugin_names: list[str] = []
+        self._invoked_plugin_names: list[str] = []
         self._browser_navigated = False
         self._showcase_nudged = False
         self._bind_skill_runtime()
+        self._bind_plugin_runtime()
 
     @property
     def usage(self) -> Usage:
@@ -169,6 +172,8 @@ class Agent:
         self._children_usage = Usage()
         self._auto_skill_names.clear()
         self._invoked_skill_names.clear()
+        self._auto_plugin_names.clear()
+        self._invoked_plugin_names.clear()
         self._memory_context = ""
         self._browser_navigated = False
         self._showcase_nudged = False
@@ -182,6 +187,28 @@ class Agent:
         from codeagent.skills.runtime import UseSkillTool
 
         self.tools.register(UseSkillTool(self.skills, self.invoke_skills))
+
+    def _bind_plugin_runtime(self) -> None:
+        """Expose use_plugin so the model can load connector instructions."""
+        if self.tools.get("use_plugin") is not None:
+            return
+        from codeagent.plugins import UsePluginTool
+
+        self.tools.register(UsePluginTool(self.invoke_plugins))
+
+    def invoke_plugins(self, names: list[str]) -> list[Any]:
+        """Remember plugins the model extracted for this session."""
+        from codeagent.plugins import PluginSpec, get_plugin
+
+        loaded: list[PluginSpec] = []
+        for name in names:
+            spec = get_plugin(name)
+            if spec is None:
+                continue
+            if spec.name not in self._invoked_plugin_names:
+                self._invoked_plugin_names.append(spec.name)
+            loaded.append(spec)
+        return loaded
 
     def invoke_skills(self, names: list[str]) -> list["Skill"]:
         """Mark skills as user-invoked (or model-invoked) for this session."""
@@ -222,6 +249,25 @@ class Agent:
         names = [skill.name for skill in hits]
         self._auto_skill_names = names
         return names
+
+    def _auto_activate_plugins(self, task: str) -> list[str]:
+        """Pick MCP / builtin connectors from the task; do not ask the user."""
+        from codeagent.plugins import match_work_plugins
+
+        hits = match_work_plugins(task, hints=self.workspace_hints, limit=4)
+        names = [spec.name for spec in hits]
+        self._auto_plugin_names = names
+        return names
+
+    def _active_plugin_names(self) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for name in (*self._auto_plugin_names, *self._invoked_plugin_names):
+            if name in seen:
+                continue
+            seen.add(name)
+            ordered.append(name)
+        return ordered
 
     def _budget_exceeded(self) -> bool:
         return self.budget is not None and self.budget.exceeded(self.usage)
@@ -333,6 +379,11 @@ class Agent:
             block = self.skills.prompt_block(query=blob, active=active)
             if block:
                 parts.append(block)
+        from codeagent.plugins import plugin_prompt_block
+
+        plugin_block = plugin_prompt_block(self._active_plugin_names())
+        if plugin_block:
+            parts.append(plugin_block)
         if self._memory_context:
             parts.append(self._memory_context)
         if self.budget is not None and self.budget.aware:
@@ -342,17 +393,41 @@ class Agent:
         return "\n\n".join(parts)
 
     async def _refresh_memory_context(self, task: str) -> None:
-        """Recall long-term memories relevant to the incoming task."""
+        """Recall last 5 conversation memories, then keyword matches."""
+        self._memory_context = ""
         if self.memory is None:
             return
-        memories = await self.memory.search(task, limit=5)
-        if memories:
-            lines = "\n".join(f"- {m.content}" for m in memories)
-            self._memory_context = (
-                "[Recalled memories from previous sessions]\n" + lines
-            )
+        from codeagent.memory.journal import CONVERSATION_KINDS
 
-    async def run(self, task: str) -> str:
+        recent = await self.memory.list(limit=5, kinds=CONVERSATION_KINDS)
+        query = self._memory_query_from_task(task)
+        hits = await self.memory.search(query, limit=5) if query.strip() else []
+        seen = {m.id for m in recent}
+        extra = [m for m in hits if m.id not in seen]
+        if not recent and not extra:
+            return
+        parts: list[str] = []
+        if recent:
+            parts.append(
+                "[最近 5 条对话记忆 — 只使用下列条目，不要编造未列出的细节]"
+            )
+            parts.extend(f"- {m.content}" for m in recent)
+        if extra:
+            parts.append("[相关记忆 — 只使用下列条目，不要编造未列出的细节]")
+            parts.extend(f"- {m.content}" for m in extra)
+        self._memory_context = "\n".join(parts)
+
+    def _memory_query_from_task(self, task: str) -> str:
+        """Prefer the user's new message, not conversation seed or file dumps."""
+        blob = task or ""
+        marker = "（用户新消息）"
+        if marker in blob:
+            tail = blob.split(marker, 1)[-1].strip()
+            if tail:
+                blob = tail
+        return blob[:800]
+
+    async def run(self, task: str, memory_query: str | None = None) -> str:
         """Run the agent on a task until the model stops calling tools.
 
         Returns the final assistant text. Raises :class:`MaxIterationsError`
@@ -369,11 +444,15 @@ class Agent:
         self._browser_navigated = False
         self._showcase_nudged = False
         self.messages.append(Message.user(task))
-        await self._refresh_memory_context(task)
+        await self._refresh_memory_context(memory_query if memory_query is not None else task)
         activated = self._auto_activate_skills(task)
         if activated:
             await self._emit("skills_activated", activated)
             log.info("auto skills: %s", ", ".join(activated))
+        plugins = self._auto_activate_plugins(task)
+        if plugins:
+            await self._emit("plugins_activated", plugins)
+            log.info("auto plugins: %s", ", ".join(plugins))
 
         for iteration in range(1, self.max_iterations + 1):
             await self._emit("iteration", iteration)

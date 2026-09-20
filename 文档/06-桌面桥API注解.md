@@ -78,6 +78,7 @@
 | `get_runs` | 1922 | 指挥中心历史运行存档。 |
 | `get_memories` | 1939 | 长期记忆列表（可带搜索）。 |
 | `add_memory` | 1953 | 手工新增一条长期记忆。 |
+| `update_memory` | — | 修改一条已有长期记忆。 |
 | `delete_memory` | 1963 | 删除一条长期记忆。 |
 | `get_knowledge` | 1973 | 知识库状态、路径、页面列表。 |
 | `save_knowledge_config` | 1994 | 保存知识库根路径等配置。 |

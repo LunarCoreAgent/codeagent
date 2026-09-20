@@ -125,3 +125,16 @@ async def test_agent_emits_approval_events(tmp_path):
     )
     await agent.run("task")
     assert "approval" in events
+
+
+async def test_worker_agent_denies_destructive_shell(tmp_path):
+    from codeagent.leader.worker import WorkerConfig, build_worker_agent
+
+    agent = build_worker_agent(
+        WorkerConfig(name="w1", provider="openai", api_key="test-key"),
+        tmp_path,
+    )
+    echo = await agent._authorize(ToolCall(name="bash", arguments={"command": "echo hi"}))
+    assert echo == ApprovalDecision.APPROVE
+    wipe = await agent._authorize(ToolCall(name="bash", arguments={"command": "rm -rf /"}))
+    assert wipe == ApprovalDecision.DENY

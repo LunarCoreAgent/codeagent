@@ -9,6 +9,8 @@ from codeagent.mcp.presets import (
     deveco_mcp,
     drawio_mcp,
     keenable,
+    motionsites_mcp,
+    silex_mcp,
     weapp_agent_mcp,
 )
 
@@ -21,5 +23,7 @@ __all__ = [
     "drawio_mcp",
     "keenable",
     "load_mcp_config",
+    "motionsites_mcp",
+    "silex_mcp",
     "weapp_agent_mcp",
 ]

@@ -45,6 +45,18 @@ def test_list_search_ingest(tmp_path):
     assert page and "CodeCoreAgent" in page["content"]
 
 
+def test_append_memory_backup_appends_same_file(tmp_path):
+    from codeagent.knowledge import append_memory_backup
+
+    root = tmp_path / "kb"
+    bootstrap_vault(root)
+    append_memory_backup(root, "演示项目", "[fact] 第一条")
+    append_memory_backup(root, "演示项目", "[turn] 第二条")
+    dest = root / "raw" / "conversations" / "演示项目.md"
+    text = dest.read_text(encoding="utf-8")
+    assert "第一条" in text and "第二条" in text
+
+
 def test_path_traversal_blocked(tmp_path):
     root = tmp_path / "kb"
     bootstrap_vault(root)

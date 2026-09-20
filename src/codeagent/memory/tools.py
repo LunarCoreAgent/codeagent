@@ -12,36 +12,41 @@ from codeagent.tools.base import Tool
 class MemorySaveTool(Tool):
     name = "memory_save"
     description = (
-        "Save a fact, user preference, decision, or lesson learned to "
-        "long-term memory. It will be retrievable in future sessions."
+        "把事实、用户偏好、决定或教训写入长期记忆，供以后会话自动检索。"
+        "自己调用，不要问用户要不要记。"
     )
     parameters = {
         "type": "object",
         "properties": {
-            "content": {"type": "string", "description": "What to remember, as a concise statement."},
-            "tags": {"type": "string", "description": "Optional comma-separated tags."},
+            "content": {"type": "string", "description": "要记住的一句话，尽量短而具体。"},
+            "tags": {"type": "string", "description": "可选，逗号分隔标签。"},
         },
         "required": ["content"],
     }
-    risk_level = RiskLevel.WRITE
+    # 只写本机 ~/.codeagent/memory.json，不碰工作区；桌面默认策略只自动放行只读工具。
+    risk_level = RiskLevel.READ_ONLY
 
     def __init__(self, store: MemoryStore) -> None:
         self.store = store
 
     async def execute(self, content: str, tags: str = "", **_: Any) -> str:
-        metadata = {"tags": [t.strip() for t in tags.split(",") if t.strip()]}
+        metadata = {
+            "tags": [t.strip() for t in tags.split(",") if t.strip()],
+            "source": "agent",
+            "kind": "fact",
+        }
         memory = await self.store.add(content, metadata)
-        return f"Saved memory {memory.id}: {content[:80]}"
+        return f"已保存记忆 {memory.id}：{content[:80]}"
 
 
 class MemorySearchTool(Tool):
     name = "memory_search"
-    description = "Search long-term memories saved in previous sessions."
+    description = "检索以往会话写入的长期记忆。"
     parameters = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "What to look for."},
-            "limit": {"type": "integer", "description": "Max results.", "minimum": 1, "default": 5},
+            "query": {"type": "string", "description": "要找的内容。"},
+            "limit": {"type": "integer", "description": "最多返回几条。", "minimum": 1, "default": 5},
         },
         "required": ["query"],
     }
@@ -52,17 +57,17 @@ class MemorySearchTool(Tool):
     async def execute(self, query: str, limit: int = 5, **_: Any) -> str:
         memories = await self.store.search(query, limit=limit)
         if not memories:
-            return "(no matching memories)"
+            return "没有匹配的记忆。"
         return "\n".join(f"- [{m.id}] {m.content}" for m in memories)
 
 
 class MemoryListTool(Tool):
     name = "memory_list"
-    description = "List recently saved long-term memories."
+    description = "列出最近保存的长期记忆。"
     parameters = {
         "type": "object",
         "properties": {
-            "limit": {"type": "integer", "description": "Max results.", "minimum": 1, "default": 20},
+            "limit": {"type": "integer", "description": "最多返回几条。", "minimum": 1, "default": 20},
         },
     }
 
@@ -72,7 +77,7 @@ class MemoryListTool(Tool):
     async def execute(self, limit: int = 20, **_: Any) -> str:
         memories = await self.store.list(limit=limit)
         if not memories:
-            return "(no memories saved yet)"
+            return "还没有长期记忆。"
         return "\n".join(f"- [{m.id}] {m.content}" for m in memories)
 
 

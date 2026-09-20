@@ -13,6 +13,26 @@ MAX_RESULTS = 200
 _SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".mypy_cache", ".pytest_cache", "dist", "build"}
 
 
+def _resolve_under_root(root_dir: Path, path: str) -> Path:
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = root_dir / candidate
+    resolved = candidate.resolve()
+    if resolved != root_dir and root_dir not in resolved.parents:
+        raise PermissionError(
+            f"Path {path!r} escapes the workspace root {str(root_dir)!r}"
+        )
+    return resolved
+
+
+def _is_under_root(root_dir: Path, path: Path) -> bool:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    return resolved == root_dir or root_dir in resolved.parents
+
+
 def _iter_files(root: Path) -> list[Path]:
     files: list[Path] = []
     stack = [root]
@@ -51,7 +71,7 @@ class GrepTool(Tool):
         self.root_dir = Path(root_dir).resolve()
 
     async def execute(self, pattern: str, path: str = ".", include: str | None = None, **_: Any) -> str:
-        target = (self.root_dir / path).resolve()
+        target = _resolve_under_root(self.root_dir, path)
         if not target.exists():
             raise FileNotFoundError(f"No such path: {path!r}")
         regex = re.compile(pattern)
@@ -95,6 +115,7 @@ class GlobTool(Tool):
             p
             for p in self.root_dir.glob(pattern)
             if not any(part in _SKIP_DIRS for part in p.parts)
+            and _is_under_root(self.root_dir, p)
         ]
         matches.sort()
         if not matches:

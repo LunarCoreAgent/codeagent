@@ -262,6 +262,8 @@ agent = Agent(provider=provider, tools=tools, memory=store)
 # Agent 也可以通过工具主动保存/搜索记忆
 ```
 
+桌面版默认开启：每个项目一份 `memory.json`（对话、思考、进度自动写入）。对话与 Agent 工作时先注入最近 5 条对话记忆。已配置知识库时同时追加到 `raw/conversations/`。CLI 需加 `--memory`。
+
 生产环境可实现 `MemoryStore` 接口接入 mem0 / 向量数据库 / neo4j 图存储，Agent 代码无需改动。
 
 ### 智能记忆：两阶段写入（事实提取 + 对账）

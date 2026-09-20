@@ -40,6 +40,9 @@ AutoCAD / 源 DWG 精确重绘 → autocad-dwg-redraw；图纸照片/扫描件�
 团队四类记忆资产 → tencentdb-agent-memory（默认同本地 Wiki，外挂 Docker 可选）。
 鸿蒙 / HarmonyOS NEXT / ArkTS API → harmony-next；.ets 语法与迁移 → arkts-syntax-assistant；\
 编译装机 / UI / hilog → deveco-mcp（MCP `deveco-mcp-server`，需本机 DevEco）。
+可视化无代码建站 / Silex / GrapesJS → silex（本机 MCP :6807，先开 Desktop）。\
+MotionSites 付费提示词 → motionsites-mcp（需账号 OAuth）。\
+用哪个 MCP 插件由任务自动提取，自己调用 use_plugin，不要问用户点选。
 """
 
 # Everyday phrasing → skill-search tokens (CJK has no spaces).
@@ -134,6 +137,14 @@ _QUERY_EXPAND: tuple[tuple[re.Pattern[str], str], ...] = (
         r"DevEco|deveco-mcp|deveco-toolbox|hilog|hvigor|\bhdc\b|HAP\b",
         re.I,
     ), " 鸿蒙 HarmonyOS ArkTS DevEco harmony-next arkts-syntax-assistant deveco-mcp"),
+    (re.compile(
+        r"Silex|GrapesJS|可视化建站|无代码建站|拖拽建站|开源\s*Webflow|silex\.me",
+        re.I,
+    ), " Silex GrapesJS 可视化建站 silex"),
+    (re.compile(
+        r"MotionSites|motionsites|付费设计提示词|Premium Website Design|motionsites\.ai",
+        re.I,
+    ), " MotionSites 设计提示词 motionsites-mcp"),
 )
 
 _EXT_HINTS: dict[str, str] = {

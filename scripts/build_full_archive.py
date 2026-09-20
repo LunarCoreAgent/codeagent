@@ -307,6 +307,7 @@ DESKTOP_API_ZH = {
     "get_runs": "指挥中心历史运行存档。",
     "get_memories": "长期记忆列表（可带搜索）。",
     "add_memory": "手工新增一条长期记忆。",
+    "update_memory": "修改一条已有长期记忆。",
     "delete_memory": "删除一条长期记忆。",
     "get_knowledge": "知识库状态、路径、页面列表。",
     "save_knowledge_config": "保存知识库根路径等配置。",

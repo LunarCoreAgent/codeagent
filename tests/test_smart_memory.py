@@ -153,7 +153,7 @@ async def test_smart_store_is_drop_in_memory_store(tmp_path):
 
     save, search, _ = memory_tools(smart)
     out = await save.execute(content="我喜欢简洁的回答")
-    assert "Saved memory" in out
+    assert "已保存记忆" in out
     found = await search.execute(query="简洁")
     assert "偏好简洁回答" in found
 

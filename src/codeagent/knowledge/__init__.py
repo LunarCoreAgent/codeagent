@@ -78,7 +78,7 @@ AGENTS_MD = """# CodeCoreAgent 知识库 Schema（LLM Wiki）
 
 ## 四类记忆资产（写入时归类）
 
-1. **Chat Memory** — 偏好、决策、事实 → `wiki/entities/` 或对话摘录进 `raw/conversations/`
+1. **Chat Memory** — 偏好、决策、事实 → `wiki/entities/`；对话摘录与长期记忆自动备份进 `raw/conversations/`
 2. **Skill** — 可复用步骤/清单 → `wiki/concepts/`（或软件 `~/.codeagent/skills/`）
 3. **LLM-Wiki** — 文档/设计沉淀 → `wiki/projects/` / `wiki/syntheses/`
 4. **Code-Graph** — 模块关系与入口说明 → `wiki/concepts/` + 大量 `[[wikilinks]]`（非强制外挂图库）
@@ -598,3 +598,23 @@ def ingest_text(root: Path, title: str, body: str, folder: str = "raw/inbox") ->
     path.write_text(f"# {title.strip()}\n\n{body.strip()}\n", encoding="utf-8")
     append_log(root, f"ingest raw：{folder}/{name}")
     return {"ok": True, "rel": f"{folder}/{name}", "path": str(path)}
+
+
+def append_memory_backup(root: Path, zone: str, body: str) -> dict[str, Any]:
+    """Append a long-term memory snapshot into raw/conversations/ (append-only)."""
+    root = Path(root).expanduser()
+    slug = re.sub(r"[^\w\u4e00-\u9fff-]+", "-", (zone or "global").strip())[:60].strip("-") or "global"
+    dest_dir = root / "raw" / "conversations"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    path = dest_dir / f"{slug}.md"
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    chunk = f"\n## {ts}\n\n{body.strip()}\n"
+    if not path.is_file():
+        path.write_text(
+            f"# 长期记忆备份 · {zone or 'global'}\n\n"
+            "由 CodeCoreAgent 在写入长期记忆时自动追加，不改历史段落。\n",
+            encoding="utf-8",
+        )
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(chunk)
+    return {"ok": True, "rel": f"raw/conversations/{slug}.md", "path": str(path)}

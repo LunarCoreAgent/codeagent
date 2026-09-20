@@ -123,12 +123,16 @@ def test_agent_without_settings_unchanged():
 
 def test_worker_agent_receives_settings(tmp_path):
     from codeagent.leader.worker import build_worker_agent
+    from codeagent.security.policy import RiskLevel
 
     config = WorkerConfig(name="w1", provider="openai", api_key="test-key")
     agent = build_worker_agent(
         config, tmp_path, settings=Settings(context="测试上下文")
     )
     assert "测试上下文" in agent._system_prompt()
+    assert agent.permissions is not None
+    assert agent.permissions.auto_approve_up_to == RiskLevel.EXECUTE
+    assert agent.permissions.handler is None
 
 
 def test_leader_planner_uses_settings(tmp_path):

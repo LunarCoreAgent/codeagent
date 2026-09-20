@@ -36,6 +36,15 @@ async def test_store_add_search_list_delete(tmp_path):
     assert not await store.delete("nonexistent")
 
 
+async def test_store_list_filters_kinds(tmp_path):
+    store = LocalMemoryStore(tmp_path / "mem.json")
+    await store.add("用户：hi\n助手：hello", {"kind": "turn"})
+    await store.add("手动事实", {"kind": "fact"})
+    turns = await store.list(limit=10, kinds=("turn",))
+    assert len(turns) == 1
+    assert "hi" in turns[0].content
+
+
 async def test_store_persists_across_instances(tmp_path):
     path = tmp_path / "mem.json"
     store = LocalMemoryStore(path)
@@ -63,7 +72,7 @@ async def test_memory_tools_roundtrip(tmp_path):
     save, search, list_ = memory_tools(store)
 
     out = await save.execute(content="remember this fact", tags="demo, test")
-    assert "Saved memory" in out
+    assert "已保存记忆" in out
 
     found = await search.execute(query="fact")
     assert "remember this fact" in found
@@ -72,7 +81,7 @@ async def test_memory_tools_roundtrip(tmp_path):
     assert "remember this fact" in listed
 
     empty = await search.execute(query="qqqqq")
-    assert empty == "(no matching memories)"
+    assert "没有匹配的记忆" in empty
 
 
 # ---------------------------------------------------------------------------
@@ -137,8 +146,19 @@ async def test_agent_injects_recalled_memories(tmp_path):
     await agent.run("告诉我关于偏好的设置")
 
     system_prompt = provider.seen_system_prompts[0]
-    assert "[Recalled memories from previous sessions]" in system_prompt
+    assert "[相关记忆" in system_prompt
     assert "用户偏好简洁的回答风格" in system_prompt
+
+
+async def test_agent_injects_recent_turns_first(tmp_path):
+    store = LocalMemoryStore(tmp_path / "mem.json")
+    await store.add("用户：上一轮在做什么\n助手：在改记忆", {"kind": "turn", "source": "auto"})
+    provider = FakeProvider([LLMResponse(content="ok")])
+    agent = Agent(provider=provider, memory=store, system_prompt="BASE")
+    await agent.run("zzzzz")
+    prompt = provider.seen_system_prompts[0]
+    assert "最近 5 条对话记忆" in prompt
+    assert "上一轮在做什么" in prompt
 
 
 async def test_agent_without_matching_memories_injects_nothing(tmp_path):
@@ -150,6 +170,71 @@ async def test_agent_without_matching_memories_injects_nothing(tmp_path):
     await agent.run("zzzzz")
 
     assert provider.seen_system_prompts[0] == "BASE"
+
+
+async def test_agent_clears_stale_memory_context(tmp_path):
+    store = LocalMemoryStore(tmp_path / "mem.json")
+    await store.add("用户偏好简洁的回答风格")
+    provider = FakeProvider([LLMResponse(content="ok"), LLMResponse(content="ok")])
+    agent = Agent(provider=provider, memory=store, system_prompt="BASE")
+    await agent.run("告诉我关于偏好的设置")
+    assert "用户偏好简洁的回答风格" in provider.seen_system_prompts[0]
+    await agent.run("zzzzz")
+    assert "相关记忆" not in provider.seen_system_prompts[1]
+
+
+async def test_agent_run_memory_query_overrides_task(tmp_path):
+    store = LocalMemoryStore(tmp_path / "mem.json")
+    await store.add("用户偏好 pytest")
+    provider = FakeProvider([LLMResponse(content="ok")])
+    agent = Agent(provider=provider, memory=store, system_prompt="BASE")
+    await agent.run("zzzzz unrelated", memory_query="偏好")
+    assert "pytest" in provider.seen_system_prompts[0]
+
+
+async def test_store_search_matches_tags(tmp_path):
+    store = LocalMemoryStore(tmp_path / "mem.json")
+    await store.add("一条无关内容", {"tags": ["pytest偏好"]})
+    found = await store.search("pytest")
+    assert found and found[0].content == "一条无关内容"
+
+
+def test_memory_save_is_readonly_risk():
+    from codeagent.memory.tools import MemorySaveTool
+    from codeagent.security.policy import RiskLevel
+
+    assert MemorySaveTool.risk_level == RiskLevel.READ_ONLY
+
+
+async def test_agent_memory_query_ignores_conversation_seed(tmp_path):
+    store = LocalMemoryStore(tmp_path / "mem.json")
+    await store.add("用户偏好 pytest")
+    provider = FakeProvider([LLMResponse(content="ok")])
+    agent = Agent(provider=provider, memory=store, system_prompt="BASE")
+    seeded = "（本会话之前的对话记录）\n用户: 讲数据库\n\n（用户新消息）\n偏好怎么配"
+    await agent.run(seeded)
+    assert "pytest" in provider.seen_system_prompts[0]
+
+
+async def test_store_update_and_consolidate(tmp_path):
+    store = LocalMemoryStore(tmp_path / "mem.json")
+    first = await store.add("用户喜欢用 pytest 写测试")
+    await store.add("用户喜欢用 pytest 写测试。")
+    updated = await store.update(first.id, "用户喜欢用 pytest 和 tmp_path")
+    assert updated is not None
+    assert updated.content.endswith("tmp_path")
+    result = await store.consolidate(threshold=0.5)
+    assert result["remaining"] >= 1
+    assert result["merged"] >= 0
+
+
+async def test_store_reload_sees_other_instance_writes(tmp_path):
+    path = tmp_path / "mem.json"
+    a = LocalMemoryStore(path)
+    b = LocalMemoryStore(path)
+    await a.add("从另一实例写入的事实")
+    found = await b.search("另一实例")
+    assert found and "另一实例" in found[0].content
 
 
 async def test_agent_compacts_during_run():

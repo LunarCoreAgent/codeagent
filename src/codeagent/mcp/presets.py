@@ -121,3 +121,25 @@ def deveco_mcp(
         args=["-y", "deveco-mcp-server"],
         env=env or None,
     )
+
+
+MOTIONSITES_MCP_URL = "https://xgdzyqfalbibzelpdpvr.supabase.co/functions/v1/mcp"
+SILEX_MCP_URL = "http://127.0.0.1:6807/mcp"
+
+
+def motionsites_mcp() -> MCPServerConfig:
+    """MotionSites hosted prompt library (OAuth in the MCP client).
+
+    Pair with the ``motionsites-mcp`` fusion skill. Free accounts get a
+    handful of prompts; paid plans unlock the catalog. Do not scrape.
+    """
+    return MCPServerConfig(name="motionsites", url=MOTIONSITES_MCP_URL)
+
+
+def silex_mcp() -> MCPServerConfig:
+    """Silex Desktop local MCP (visual static-site canvas).
+
+    Requires Silex Desktop running. Editor is ``:6805``; MCP is ``:6807``.
+    Pair with the ``silex`` fusion skill. AGPL — do not vendor into the app.
+    """
+    return MCPServerConfig(name="silex", url=SILEX_MCP_URL)

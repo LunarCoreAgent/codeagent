@@ -5,6 +5,7 @@
 
     <项目文件夹>/
     ├── project.json            # 元数据
+    ├── memory.json             # 本项目长期记忆（对话/思考/进度）
     ├── files/                  # 上传附件与用户放入的文件
     └── conversations/
         ├── <id>.jsonl          # 对话事件流（程序用）

@@ -124,6 +124,9 @@ def test_fusion_pack_and_chinese_routing():
     assert "harmony-next" in FUSION_SKILLS
     assert "arkts-syntax-assistant" in FUSION_SKILLS
     assert "deveco-mcp" in FUSION_SKILLS
+    assert "claw-code" in FUSION_SKILLS
+    assert "silex" in FUSION_SKILLS
+    assert "motionsites-mcp" in FUSION_SKILLS
     lib = fusion_library()
     anime = lib.search("用 anime.js 做入场交错")
     assert anime[0].name == "anime-js"
@@ -143,6 +146,12 @@ def test_fusion_pack_and_chinese_routing():
     assert {s.name for s in hits} & {"stop-slop-zh", "humanizer-zh"}
     ui = lib.search("做个落地页")
     assert ui[0].name == "impeccable-craft"
+    claw = lib.search("doctor --json 权限闸门 fail-closed")
+    assert claw[0].name == "claw-code"
+    silex = lib.search("用 Silex GrapesJS 可视化建站")
+    assert silex[0].name == "silex"
+    ms = lib.search("用 MotionSites 付费设计提示词")
+    assert ms[0].name == "motionsites-mcp"
     block = lib.prompt_block(query="通宵挂机调研")
     assert "### Skill: research-overnight" in block
 
@@ -166,6 +175,9 @@ def test_install_fusion_skills(tmp_path):
     assert "harmony-next" in written
     assert "arkts-syntax-assistant" in written
     assert "deveco-mcp" in written
+    assert "claw-code" in written
+    assert "silex" in written
+    assert "motionsites-mcp" in written
     assert (tmp_path / "karpathy-craft" / "SKILL.md").is_file()
     assert (tmp_path / "jianying-editor" / "SKILL.md").is_file()
     assert (tmp_path / "hyperframes" / "SKILL.md").is_file()
@@ -179,6 +191,9 @@ def test_install_fusion_skills(tmp_path):
     assert (tmp_path / "harmony-next" / "SKILL.md").is_file()
     assert (tmp_path / "arkts-syntax-assistant" / "SKILL.md").is_file()
     assert (tmp_path / "deveco-mcp" / "SKILL.md").is_file()
+    assert (tmp_path / "claw-code" / "SKILL.md").is_file()
+    assert (tmp_path / "silex" / "SKILL.md").is_file()
+    assert (tmp_path / "motionsites-mcp" / "SKILL.md").is_file()
     # 二次 ensure 应跳过重写（防启动卡顿）
     again = ensure_fusion_skills(tmp_path)
     assert again == []
@@ -280,6 +295,12 @@ def test_expand_and_match_work_content():
     assert "deveco-mcp" in {
         s.name for s in match_work_skills(lib, "用 DevEco MCP 编译安装并抓 hilog")
     }
+    assert "Silex" in expand_work_query("用 Silex 可视化建站")
+    assert "silex" in {s.name for s in match_work_skills(lib, "用 GrapesJS 无代码建站")}
+    assert "MotionSites" in expand_work_query("用 MotionSites 付费设计提示词")
+    assert "motionsites-mcp" in {
+        s.name for s in match_work_skills(lib, "接 MotionSites MCP 取一条提示词")
+    }
 
 
 def test_workspace_hints_see_frontend_files(tmp_path):
@@ -346,6 +367,7 @@ async def test_agent_auto_activates_and_registers_use_skill():
             captured.append(system or "")
             names = [t.get("name") for t in (tools or [])]
             assert "use_skill" in names
+            assert "use_plugin" in names
             return await super().complete(messages, tools, system, **kwargs)
 
     library = SkillLibrary([Skill.parse(SKILL_MD)])

@@ -178,15 +178,14 @@ def run_evolution(
         patch_ids=[p.id for p in new_patches],
         routing_note=f"路由权重微调：反馈样本 {samples} 条，"
                      f"规则命中率纳入下一轮加权",
-        memory_note=f"压缩会话 {stats.get('compressed', 0)} 段，"
-                    f"合并相似记忆 {stats.get('merged', 0)} 条",
+        memory_note=f"合并相似记忆 {stats.get('merged', 0)} 条，现余 {stats.get('remaining', 0)} 条",
         skill_drafts=skills,
         phases=[
             EvolutionPhase("复盘员", f"重放近期全部交互（{stats.get('messages', 0)} 条对话、"
                                      f"{stats.get('events', 0)} 条事件），定位可改进点"),
             EvolutionPhase("归因员", "失败与低效任务归因：输出结构、环境确认、凭证意识等维度"),
             EvolutionPhase("路由师", "基于反馈样本微调路由权重，变更已记录可回滚"),
-            EvolutionPhase("记忆官", "episode 压缩、相似合并、低价值遗忘"),
+            EvolutionPhase("记忆官", "合并高度相似的本机记忆，去掉重复条目"),
             EvolutionPhase("教官", f"产出行为补丁 {len(new_patches)} 条"
                                    + (f"、技能草稿 {len(skills)} 份" if skills else "")),
         ],

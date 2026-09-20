@@ -1,0 +1,59 @@
+# CodeCoreAgent Windows 封装配置说明（v0.81.0）
+
+在 **Windows 10/11 x64** 上把本工程打成桌面安装包。macOS 无法直接产出 `.exe`。
+
+## 产物
+
+| 文件 | 说明 |
+|------|------|
+| `dist/codeagent-desktop-windows-amd64-setup.exe` | Inno Setup 安装向导 |
+| `dist/codeagent-desktop-windows-amd64.zip` | 便携包（`codeagent.exe` + README） |
+
+## 版本号须一致
+
+版本号来源：**`pyproject.toml` 的 `version = "0.81.0"`**。以下位置须一致：
+
+| 位置 | 值 |
+|------|-----|
+| `pyproject.toml` | `0.81.0` |
+| `src/codeagent/__init__.py` | `__version__ = "0.81.0"` |
+| `src/codeagent/releases.py` | `Release("0.81.0", ...)` |
+| `CHANGELOG.md` | `## 0.81.0` |
+| `packaging/codeagent-desktop.spec` | `CFBundleShortVersionString: "0.81.0"`（macOS） |
+| `packaging/windows-setup.iss` | `#define MyAppVersion "0.81.0"`（`build_desktop.py` 会用 `/DMyAppVersion=` 覆盖） |
+
+## 本机依赖
+
+1. Python 3.12（勾选 Add to PATH）
+2. [Inno Setup 6](https://jrsoftware.org/isinfo.php)（或 `choco install innosetup -y`）
+3. 可选：Git
+
+## 一键构建
+
+```bat
+cd codeagent
+python -m venv .venv
+.venv\Scripts\activate
+pip install -U pip
+pip install -e ".[anthropic,openai,mcp,voice,desktop,packaging]"
+python scripts\build_desktop.py
+```
+
+手动 Inno（若脚本未找到 iscc）：
+
+```bat
+"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /DMyAppVersion=0.81.0 /Fcodeagent-desktop-windows-amd64-setup packaging\windows-setup.iss
+```
+
+## 验收
+
+1. 双击 `*-setup.exe` 能走完向导。
+2. 开始菜单出现 CodeCoreAgent；启动为窗口应用，无黑色控制台。
+3. 设置页可见版本 **0.81.0**。
+4. 不要把 `.venv`、API Key、用户目录 `\.codeagent` 打进安装包。
+
+## 0.81.0 相对上一版
+
+- 长期记忆按项目单独落盘，对话与思考自动写入，并滚动记录项目进度
+- 对话与 Agent 工作时先注入最近 5 条对话记忆，仍可手工增删改
+- 已配置知识库时，长期记忆写入同时备份到 raw/conversations/

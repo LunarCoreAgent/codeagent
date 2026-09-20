@@ -12,8 +12,10 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 
+from codeagent.cli.output import emit_json, envelope
 from codeagent.core.agent import DEFAULT_SYSTEM_PROMPT, Agent, AgentEvent, MaxIterationsError
 from codeagent.core.budget import Budget, BudgetExceededError
+from codeagent.doctor import run_doctor
 from codeagent.llm.registry import list_providers
 from codeagent.llm.aggregate import parse_provider_spec
 from codeagent.mcp import MCPManager, load_mcp_config
@@ -97,6 +99,13 @@ def _build_policy(auto_yes: bool) -> PermissionPolicy:
         auto_approve_up_to=RiskLevel.READ_ONLY,
         handler=_make_approval_handler(),
     )
+
+
+def _worker_policy(auto_yes: bool) -> PermissionPolicy:
+    """Lead workers have no TTY prompt: allow shell, fail-closed on destructive."""
+    if auto_yes:
+        return PermissionPolicy.permissive()
+    return PermissionPolicy(auto_approve_up_to=RiskLevel.EXECUTE)
 
 
 def _build_provider(
@@ -266,7 +275,7 @@ def chat(
     voice_name: str | None = typer.Option(None, "--voice-name", help="TTS voice: preset (xiaoxiao/xiaoyi/yunxi/yunjian/xiaochen/hsiaochen/hsiaoyu/yunjhe) or full edge-tts voice ID."),
     mic: bool = typer.Option(False, "--mic", help="Full voice loop: push-to-talk microphone input via local Whisper ASR."),
     mic_model: str = typer.Option("base", "--mic-model", help="Whisper model size: tiny/base/small/medium/large-v3."),
-    memory: bool = typer.Option(False, "--memory", help="Persist long-term memory across sessions (~/.codeagent/memory.json)."),
+    memory: bool = typer.Option(False, "--memory", help="Persist long-term memory across sessions (~/.codeagent/memory.json). Desktop enables this by default."),
 ) -> None:
     """Start an interactive multi-turn chat session with the agent."""
     setup_logging()
@@ -381,6 +390,7 @@ def lead(
     mic: bool = typer.Option(False, "--mic", help="Voice commands via push-to-talk microphone (local Whisper ASR)."),
     mic_model: str = typer.Option("base", "--mic-model", help="Whisper model size."),
     no_escalate: bool = typer.Option(False, "--no-escalate", help="Disable escalation to external agent platforms on worker failure."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve worker tool calls, including destructive ones."),
 ) -> None:
     """Lead a team of worker models: voice/text commands, live progress."""
     setup_logging()
@@ -422,6 +432,7 @@ def lead(
             escalate=not no_escalate,
             archive=RunArchive(),
             settings=Settings.load(),
+            worker_permissions=_worker_policy(yes),
         )
 
         tts = None
@@ -479,18 +490,37 @@ app.add_typer(settings_app, name="settings")
 
 
 @settings_app.command("show")
-def settings_show() -> None:
+def settings_show(
+    as_json: bool = typer.Option(False, "--json", help="Print a JSON envelope (ok/version/data)."),
+) -> None:
     """Show version info and the current personalization settings."""
     rel = latest()
+    settings = Settings.load()
+    log_path = str(Path("~/.codeagent/logs/codeagent.log").expanduser())
+    settings_path = str(Path("~/.codeagent/settings.json").expanduser())
+    if as_json:
+        emit_json(envelope(ok=True, data={
+            "version": rel.version,
+            "date": rel.date,
+            "highlights": list(rel.highlights),
+            "log_path": log_path,
+            "settings_path": settings_path,
+            "settings": None if settings.is_empty() else {
+                "nickname": settings.nickname,
+                "language": settings.language,
+                "instructions": settings.instructions,
+                "context": settings.context,
+            },
+        }))
+        return
     console.print(f"[bold]codeagent[/bold] v{rel.version}（{rel.date}）")
     console.print(f"[dim]本次更新：{'；'.join(rel.highlights)}[/dim]")
-    console.print(f"[dim]日志：{Path('~/.codeagent/logs/codeagent.log').expanduser()}[/dim]")
-    settings = Settings.load()
+    console.print(f"[dim]日志：{log_path}[/dim]")
     if settings.is_empty():
         console.print("[dim]（个性化未设置）用 codeagent settings set 来配置。[/dim]")
         return
     console.print(Panel(settings.prompt_block(), title="个性化设置", border_style="cyan"))
-    console.print("[dim]存储于 ~/.codeagent/settings.json[/dim]")
+    console.print(f"[dim]存储于 {settings_path}[/dim]")
 
 
 @settings_app.command("set")
@@ -535,13 +565,45 @@ def desktop_cmd(
 
 
 @app.command("version")
-def version_cmd() -> None:
+def version_cmd(
+    as_json: bool = typer.Option(False, "--json", help="Print a JSON envelope (ok/version/data)."),
+) -> None:
     """Show the current version and what changed in this release."""
     rel = latest()
+    if as_json:
+        emit_json(envelope(ok=True, data={
+            "version": rel.version,
+            "date": rel.date,
+            "highlights": list(rel.highlights),
+        }))
+        return
     console.print(f"[bold]codeagent[/bold] v{rel.version}（{rel.date}）")
     for highlight in rel.highlights:
         console.print(f"  · {highlight}")
     console.print("[dim]完整历史：codeagent changelog[/dim]")
+
+
+@app.command()
+def doctor(
+    root: Path = typer.Option(Path.cwd(), "--root", "-r", help="Workspace root to check."),
+    probe: bool = typer.Option(False, "--probe", help="Ping local model endpoints (Ollama / LM Studio / llama.cpp)."),
+    as_json: bool = typer.Option(False, "--json", help="Print a JSON envelope (ok/version/data)."),
+) -> None:
+    """Check that this machine can run CodeCoreAgent (no secrets printed)."""
+    report = run_doctor(root, probe=probe)
+    if as_json:
+        emit_json(envelope(ok=report.ok, data=report.to_dict()))
+        raise typer.Exit(code=report.exit_code)
+    marks = {"ok": "[green]✓[/green]", "warn": "[yellow]![/yellow]", "fail": "[red]✗[/red]"}
+    console.print(f"[bold]codeagent doctor[/bold]  v{report.version}")
+    for check in report.checks:
+        mark = marks.get(check.status, "·")
+        console.print(f"  {mark} [bold]{check.name}[/bold]  {check.message}")
+    if report.ok:
+        console.print("[dim]自检通过（警告不阻止运行）。[/dim]")
+    else:
+        console.print("[red]自检未通过，请按上面的失败项处理。[/red]")
+        raise typer.Exit(code=report.exit_code)
 
 
 @app.command("changelog")

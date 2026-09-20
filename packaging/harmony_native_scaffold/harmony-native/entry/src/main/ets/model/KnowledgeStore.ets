@@ -252,6 +252,34 @@ export function ingestText(ctx: common.UIAbilityContext, title: string, content:
   return page;
 }
 
+export function appendMemoryBackup(ctx: common.UIAbilityContext, zone: string, body: string): void {
+  const cfg = loadKnowledgeConfig(ctx);
+  if (!cfg.enabled) {
+    return;
+  }
+  const slug = (zone.trim() || 'global').slice(0, 40);
+  const rel = `raw/conversations/${slug}.md`;
+  const now = new Date();
+  const chunk = `\n## ${now.toLocaleString()}\n\n${body.trim()}\n`;
+  const pages = loadPages(ctx);
+  const hit = pages.find((p) => p.rel === rel);
+  if (hit) {
+    hit.body = hit.body + chunk;
+    hit.updated = Date.now();
+    savePages(ctx, pages);
+    return;
+  }
+  const page: WikiPage = {
+    id: newId(),
+    rel: rel,
+    title: `长期记忆备份 · ${slug}`,
+    body: `# 长期记忆备份 · ${slug}\n\n由 CodeCoreAgent 自动追加。\n${chunk}`,
+    kind: 'raw',
+    updated: Date.now(),
+  };
+  upsertPage(ctx, page);
+}
+
 export function vaultStatus(ctx: common.UIAbilityContext): VaultStatusInfo {
   const cfg = loadKnowledgeConfig(ctx);
   const pages = loadPages(ctx);
