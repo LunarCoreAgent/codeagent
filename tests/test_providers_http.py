@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 
 from codeagent.core.types import Message
-from codeagent.llm.ollama import OllamaProvider
+from codeagent.llm.ollama import OllamaProvider, StallTimeout
 from codeagent.llm.openai import LLMError, OpenAIProvider, is_transient_serving_error
 
 
@@ -113,6 +114,61 @@ async def test_ollama_native_tool_calls(monkeypatch):
     assert sent["function"]["name"] == "read_file"
 
 
+async def test_ollama_stall_timeout_when_stream_silent(monkeypatch):
+    class SilentResp(_FakeStreamResp):
+        async def aiter_lines(self):
+            await __import__("asyncio").sleep(1)
+            yield ""
+
+    class SilentClient(_FakeClient):
+        def stream(self, method, url, json=None):
+            type(self).captured = {"method": method, "url": url, "json": json}
+            return SilentResp([])
+
+    monkeypatch.setattr(
+        OllamaProvider, "_resolve_model", staticmethod(lambda b, m: m), raising=False
+    )
+    monkeypatch.setattr("codeagent.llm.ollama.httpx.AsyncClient", SilentClient)
+    provider = OllamaProvider(model="gpt-oss:120b", idle_timeout=0.05)
+    with pytest.raises(StallTimeout, match="卡住"):
+        await provider.complete([Message.user("hi")])
+    assert provider.idle_timeout == 0.05
+
+
+async def test_ollama_keepalive_lines_do_not_reset_stall(monkeypatch):
+    """Empty load-progress NDJSON must not keep a hung 120B looking alive."""
+    import asyncio
+
+    class KeepaliveResp(_FakeStreamResp):
+        async def aiter_lines(self):
+            for _ in range(8):
+                await asyncio.sleep(0.03)
+                yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": False})
+
+    class KeepaliveClient(_FakeClient):
+        def stream(self, method, url, json=None):
+            type(self).captured = {"method": method, "url": url, "json": json}
+            return KeepaliveResp([])
+
+    monkeypatch.setattr(
+        OllamaProvider, "_resolve_model", staticmethod(lambda b, m: m), raising=False
+    )
+    monkeypatch.setattr("codeagent.llm.ollama.httpx.AsyncClient", KeepaliveClient)
+    provider = OllamaProvider(model="gpt-oss:120b", idle_timeout=0.08)
+    with pytest.raises(StallTimeout, match="卡住"):
+        await provider.complete([Message.user("hi")])
+
+
+def test_ollama_idle_timeout_is_600_for_every_model(monkeypatch):
+    monkeypatch.setattr(
+        OllamaProvider, "_resolve_model", staticmethod(lambda b, m: m), raising=False
+    )
+    huge = OllamaProvider(model="gpt-oss:120b")
+    small = OllamaProvider(model="qwen3:8b")
+    assert huge.idle_timeout == 600.0
+    assert small.idle_timeout == 600.0
+
+
 # ---------------------------------------------------------------------------
 # OpenAI reasoning_content fallback + truncation diagnosis
 # ---------------------------------------------------------------------------
@@ -211,3 +267,63 @@ async def test_openai_retries_dashscope_500(monkeypatch):
 
 async def _instant_sleep(_delay):
     return None
+
+
+class _HangStream:
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        await asyncio.sleep(30)
+        raise StopAsyncIteration
+
+
+async def test_openai_stream_silence_switches_as_stall():
+    provider = OpenAIProvider(model="qwen3.8-max", api_key="k")
+    provider.idle_timeout = 0.05
+
+    class StreamCreate:
+        async def create(self, **kwargs):
+            assert kwargs.get("stream") is True
+            return _HangStream()
+
+    provider.client = type("C", (), {
+        "chat": type("Chat", (), {"completions": StreamCreate()})()
+    })()
+    with pytest.raises(StallTimeout, match="没有思考也没有工作"):
+        await provider.complete([Message.user("hi")])
+
+
+async def test_openai_stream_thinking_counts_as_alive():
+    provider = OpenAIProvider(model="qwen3.8-max", api_key="k")
+    provider.idle_timeout = 0.4
+
+    class ThinkThenAnswer:
+        def __init__(self):
+            self._n = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            self._n += 1
+            if self._n == 1:
+                delta = type("D", (), {"content": None, "reasoning_content": "想", "tool_calls": None})()
+                choice = type("Ch", (), {"delta": delta, "finish_reason": None})()
+                return type("Chunk", (), {"choices": [choice], "usage": None})()
+            if self._n == 2:
+                await asyncio.sleep(0.05)
+                delta = type("D", (), {"content": "答", "reasoning_content": None, "tool_calls": None})()
+                choice = type("Ch", (), {"delta": delta, "finish_reason": "stop"})()
+                return type("Chunk", (), {"choices": [choice], "usage": None})()
+            raise StopAsyncIteration
+
+    class StreamCreate:
+        async def create(self, **kwargs):
+            return ThinkThenAnswer()
+
+    provider.client = type("C", (), {
+        "chat": type("Chat", (), {"completions": StreamCreate()})()
+    })()
+    resp = await provider.complete([Message.user("hi")])
+    assert resp.content == "答"

@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from codeagent.security.policy import RiskLevel
+from codeagent.skills.language import HOST_RULES
 from codeagent.skills.skill import Skill, SkillLibrary
 from codeagent.tools.base import Tool
 
-STUDIO_SKILL_RULES = """\
+STUDIO_SKILL_RULES = HOST_RULES + """\
 [工作室技能运行时]
 根据用户任务和项目文件自动识别工作内容，并启用匹配的技能。你必须遵守已启用技能正文。
 目录里的每一条技能都可以由你自己调用 use_skill 加载，不要让用户点选或确认。
@@ -21,12 +22,14 @@ video_ops_status / video_ops_log / video_ops_draft / video_generate / video_stud
 文生视频用 video_generate：wan（局域网 Gradio）、minimax（Hailuo）、kimi、comfy（ComfyUI 工作流）。
 完整拍片走导演台：企划、分镜、生成、ffmpeg 合成，工具 video_studio；Comfy 不是聊天模型。
 本机 ComfyUI 出图/跑节点图：直接调用 comfy 工具（status / queue），不要把它当聊天模型。
-打开网页、登录站、点按钮、填表、截图时，直接调用 browser 工具（软件内置浏览器，桌面有窗口），\
+打开网页、登录站、点按钮、填表、截图时，直接调用 browser 工具（软件内置浏览器，桌面有真实窗口；\
+不是沙盒、不受限，禁止输出「sandbox 受限 / 无法直接展示」并跳过），\
 不要只用 web_fetch，不要让用户自己去点浏览器。
 网站 / 落地页 / 前端界面做完后必须展示成品：先启动本地 HTTP 预览（vite preview / \
 serve dist / python -m http.server，后台运行），再 browser action=navigate 打开 \
 http://127.0.0.1:端口/（禁止 file://），最后才文字总结。用户要的是看见页面，不是只听描述。
 手机 App 界面走 mobile-app-ui；微信小程序从需求到提审走 wechat-miniprogram。
+真机 USB 安装 / 启动 / 截图 / 点按冒烟：直接调用 phone 工具（hdc 鸿蒙 / adb 安卓），叠 phone-device 技能。
 Material 3 Expressive 草图用 browser 打开 m3e-canvas 站点，不要把画布拷进工程。
 在微信开发者工具里点页面或截图时按 weapp-agent-mcp（需本机开发者工具与 npx MCP）。
 情感陪伴 / AI 伴侣 / 人设与长期记忆：按 y-ai-accompany、ai-companion；语音叠 voice-surface。
@@ -39,7 +42,7 @@ AutoCAD / 源 DWG 精确重绘 → autocad-dwg-redraw；图纸照片/扫描件�
 知识库随软件自动部署（本机 LLM Wiki）；分层检索思路 → openviking；\
 团队四类记忆资产 → tencentdb-agent-memory（默认同本地 Wiki，外挂 Docker 可选）。
 鸿蒙 / HarmonyOS NEXT / ArkTS API → harmony-next；.ets 语法与迁移 → arkts-syntax-assistant；\
-编译装机 / UI / hilog → deveco-mcp（MCP `deveco-mcp-server`，需本机 DevEco）。
+真机装测 → phone 工具（phone-device）；完整 DevEco 编译/UI 录制 → deveco-mcp（MCP，需本机 DevEco）。
 可视化无代码建站 / Silex / GrapesJS → silex（本机 MCP :6807，先开 Desktop）。\
 MotionSites 付费提示词 → motionsites-mcp（需账号 OAuth）。\
 用哪个 MCP 插件由任务自动提取，自己调用 use_plugin，不要问用户点选。
@@ -119,6 +122,11 @@ _QUERY_EXPAND: tuple[tuple[re.Pattern[str], str], ...] = (
         r"手机\s*App|手机应用|拇指热区|健身App|iOS\s*App|Android\s*App",
         re.I,
     ), " 手机App 移动端 拇指热区 8pt"),
+    (re.compile(
+        r"装到手机|真机安装|真机测试|USB\s*调试|安装\s*HAP|安装\s*APK|"
+        r"hdc\s*install|adb\s*install|手机冒烟|平板安装|phone\s*工具",
+        re.I,
+    ), " 真机 装到手机 USB hdc adb phone-device"),
     (re.compile(
         r"微信小程序|小程序|AppID|提审|体验版|wxml|wxss",
         re.I,

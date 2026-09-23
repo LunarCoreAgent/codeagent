@@ -76,6 +76,7 @@ body:not(.light) #sidebar .brand .brandlogo .logo-dark { display: block; }
   padding: 0 2px; flex-shrink: 0; }
 .navbtn.proj:hover .p-del { opacity: 1; }
 .navbtn.proj .p-del:hover { color: var(--bad); }
+.ctx-menu button.danger { color: var(--bad); }
 .nav-group .g-label {
   font-size: 11px; color: var(--faint); padding: 0 10px 6px;
   letter-spacing: .5px;
@@ -496,7 +497,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 .toast.show { opacity: 1; }
 
 /* ---------- 对话右键菜单（鼠标复制粘贴） ---------- */
-.ctx-menu { position: fixed; z-index: 60; min-width: 150px;
+.ctx-menu { position: fixed; z-index: 60; min-width: 168px;
   background: var(--panel); border: 1px solid var(--border-hi);
   border-radius: 8px; padding: 4px; box-shadow: 0 6px 22px rgba(0,0,0,.28);
   display: none; }
@@ -518,15 +519,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 #navStatus .ns-row .v-blue { color: var(--pill-blue); }
 #navStatus .ns-row .v-purple { color: var(--pill-purple); }
 
-/* ---------- 对话反馈（赞/踩） ---------- */
-.fb-row { display: flex; gap: 6px; align-self: flex-start;
-  margin-top: -6px; padding-left: 4px; animation: pop .16s ease; }
-.fb-btn { background: none; border: 1px solid var(--border); color: var(--faint);
-  border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer;
-  transition: all .12s; }
-.fb-btn:hover { color: var(--text); border-color: var(--border-hi); }
-.fb-btn.voted-up { color: var(--pill-green); border-color: rgba(16,185,129,.4); }
-.fb-btn.voted-down { color: var(--pill-red); border-color: rgba(239,68,68,.4); }
+/* 对话反馈（赞/踩）已取消：自我学习改为按项目对话自动复盘 */
 
 /* ---------- 自动化 / 定时任务 / 学习 / 进化 ---------- */
 .step-chip { display: inline-flex; align-items: center; gap: 8px; }
@@ -1108,7 +1101,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     <div class="card sect">
       <h3>本机工具链</h3>
       <div id="voToolchain" class="hint">检测中…</div>
-      <div class="hint" style="margin-top:8px">LibTV 用于画布生成；Node+npx 用于 Remotion；ffmpeg 用于中文竖屏剪辑。未安装时 Agent 会改用已有路径并提示。</div>
+      <div class="hint" style="margin-top:8px">LibTV 用于画布生成；Node.js 24 LTS 与 npx 随安装包提供，用于 Remotion 与 MCP；ffmpeg 用于中文竖屏剪辑。未安装时 Agent 会改用已有路径并提示。</div>
     </div>
     <div class="card sect">
       <h3>融合技能包</h3>
@@ -1356,52 +1349,49 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
   </div></div>
 </section>
 
-<!-- ============ 自我学习（LCA Learning.tsx） ============ -->
+<!-- ============ 自我学习 ============ -->
 <section class="page" id="page-learning">
   <div class="page-head"><h1>自我学习</h1>
-    <span class="sub">对话赞/踩即时计入，驱动路由权重持续修正</span>
+    <span class="sub">有对话的项目自动复盘学习；默认关闭，由你决定是否开启</span>
     <span class="spacer"></span>
-    <button class="btn primary" onclick="learnNow()">⟳ 立刻自我学习</button>
+    <button class="btn primary" id="nlBtnOn" onclick="setSelfLearn(true)">开启</button>
+    <button class="btn" id="nlBtnOff" onclick="setSelfLearn(false)">关闭</button>
+    <button class="btn" onclick="runNightLearn()">⟳ 立刻复盘学习</button>
   </div>
   <div class="page-body"><div class="page-wrap">
+    <div class="card sect" style="margin-bottom:14px">
+      <h3>总开关</h3>
+      <div class="hint" style="margin-bottom:12px">关闭时不会在夜里自动学。开启后，每天 02:00–06:00 自动复盘<strong>所有有过对话</strong>的项目（对话、思考过程与代码），并可上网补资料，写入本机记忆库。</div>
+      <div class="pipe-row"><div><div style="font-weight:550">自我学习</div>
+        <div style="font-size:11px;color:var(--faint)" id="nlStatusHint">当前：已关闭</div></div>
+        <span class="pill" id="nlStatusPill">已关闭</span></div>
+      <div class="pipe-row"><div><div style="font-weight:550">允许上网检索</div>
+        <div style="font-size:11px;color:var(--faint)">关闭后只阅读本机对话、思考与代码</div></div>
+        <div class="switch" id="nlWeb" onclick="this.classList.toggle('on');saveNightLearnWeb()"></div></div>
+    </div>
     <div class="stat-grid" style="max-width:none">
-      <div class="card stat"><div class="s-label">最新路由准确率</div>
-        <div class="s-value" id="lnAcc">—</div><div class="s-sub">规则 + 反馈学习叠加</div></div>
-      <div class="card stat"><div class="s-label">累计样本</div>
-        <div class="s-value" id="lnSamples">—</div><div class="s-sub">赞/踩反馈总数</div></div>
-      <div class="card stat"><div class="s-label">今日反馈</div>
-        <div class="s-value" id="lnToday">—</div><div class="s-sub">赞 / 踩</div></div>
-      <div class="card stat"><div class="s-label">学习模式</div>
-        <div class="s-value" style="font-size:17px;padding-top:4px">在线学习</div>
-        <div class="s-sub">活动流即真相</div></div>
+      <div class="card stat"><div class="s-label">可复盘项目</div>
+        <div class="s-value" id="lnEligible">—</div>
+        <div class="s-sub" id="lnEligibleSub">有过对话的项目数</div></div>
+      <div class="card stat"><div class="s-label">记忆库</div>
+        <div class="s-value" id="lnMemTotal">—</div>
+        <div class="s-sub" id="lnMemSub">夜间自学写入的知识条数</div></div>
+      <div class="card stat"><div class="s-label">今晚新写入</div>
+        <div class="s-value" id="lnTonight">—</div>
+        <div class="s-sub">本轮复盘产出</div></div>
+      <div class="card stat"><div class="s-label">窗口</div>
+        <div class="s-value" style="font-size:17px;padding-top:4px">02–06</div>
+        <div class="s-sub">本地时间 · 未学完次日续跑</div></div>
     </div>
-    <div class="grid-2" style="margin-bottom:14px">
-      <div class="card sect"><h3>路由准确率趋势</h3>
-        <div class="chart-box" id="accChart"></div>
-        <div class="hint" id="accChartHint">暂无学习记录，点右上角「立刻自我学习」</div>
-      </div>
-      <div class="card sect"><h3>每日反馈量</h3>
-        <div class="chart-box" id="fbChart"></div>
-        <div class="hint" id="fbChartHint">赞（绿）/ 踩（红）是路由修正的主要信号</div>
-      </div>
+    <div class="card sect" style="margin-bottom:14px">
+      <h3>最近学到的知识</h3>
+      <div class="hint" id="nlSummary" style="margin-bottom:10px">尚未运行自我学习</div>
+      <div id="nlNotes"></div>
     </div>
-    <div class="grid-2">
-      <div class="card sect"><h3>学习管线</h3>
-        <div class="hint" style="margin-bottom:12px">从反馈到权重更新的完整链路</div>
-        <div id="pipeList"></div>
-      </div>
-      <div class="card sect"><h3>数据导出与微调</h3>
-        <div class="hint" style="margin-bottom:12px">学习数据完全属于你</div>
-        <div class="pipe-row"><div><div style="font-weight:550">路由样本集（JSONL）</div>
-          <div style="font-size:11px;color:var(--faint)" id="sampleCount">0 条 · 可用于训练自有路由器</div></div>
-          <button class="btn" style="padding:5px 12px;font-size:11.5px" onclick="exportSamples()">⬇ 导出</button></div>
-        <div class="pipe-row"><div><div style="font-weight:550">对话偏好对（DPO）</div>
-          <div style="font-size:11px;color:var(--faint)">正/负反馈配对 · 适用于偏好对齐微调</div></div>
-          <button class="btn" style="padding:5px 12px;font-size:11.5px" onclick="exportSamples()">⬇ 导出</button></div>
-        <p style="font-size:11px;color:var(--faint);line-height:1.7;margin-top:6px">
-          积累的样本可定期对本地模型做 LoRA 微调，让「便宜档」越来越懂你的任务分布，进一步降低 API 依赖——这是平台成本曲线持续下降的第二引擎。
-        </p>
-      </div>
+    <div class="card sect">
+      <h3>学习管线</h3>
+      <div class="hint" style="margin-bottom:12px">只处理有过对话的项目 · 对话 + 思考 → 分析入库 → 任务时自动检索</div>
+      <div id="pipeList"></div>
     </div>
   </div></div>
 </section>
@@ -1444,7 +1434,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 <!-- ============ 偏好设置 ============ -->
 <section class="page" id="page-settings">
   <div class="page-head"><h1>偏好设置</h1>
-    <span class="sub">陪伴型 AI、语音、个性化与指挥中心默认链路</span></div>
+    <span class="sub">陪伴型 AI、语音、个性化；指挥中心从已接入模型里选链路</span></div>
   <div class="page-body"><div class="settings-wrap">
 
     <div class="card sect"><h3>外观</h3>
@@ -1482,9 +1472,20 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     </div>
 
     <div class="card sect"><h3>长期记忆</h3>
-      <p class="hint">每个项目在自己的 memory.json 里自动记录对话、思考与进度。对话时先注入最近 5 条对话记忆。已配置知识库时写入同时备份到 raw/conversations/。关闭后仍可手工增删。</p>
+      <p class="hint">每个项目在自己的 memory.json 里自动记录对话、思考与进度。夜间自学还会把网上学到的代码/设计/UI/流程/数据库知识写入本机 SQLite 记忆库。对话时先注入最近 5 条对话记忆和相关自学知识。已配置知识库时写入同时备份到 raw/conversations/。关闭后仍可手工增删。</p>
       <div class="checkline"><input type="checkbox" id="cfg_memory" checked>
         <span>对话时自动注入并允许写入长期记忆</span></div>
+    </div>
+    <div class="card sect"><h3>内置数据库</h3>
+      <p class="hint" id="dbStatusHint">安装前请选择位置：本地、局域网或广域网。确认后才创建 SQLite 库文件。</p>
+      <button class="btn" type="button" onclick="openDatabaseSetup()">选择位置并安装</button>
+    </div>
+    <div class="card sect"><h3>代码审计</h3>
+      <p class="hint">写完项目文件后，自动换另一模型只读检查错误；发现问题再让原模型修复。</p>
+      <div class="checkline"><input type="checkbox" id="cfg_code_audit" checked>
+        <span>写入/修改代码后自动审计</span></div>
+      <label class="field">审计模型（可空=自动选与写作不同的模型）
+        <input id="cfg_code_audit_ref" type="text" placeholder="api:… / local:模型@端点 / mix:…"></label>
     </div>
 
     <div class="card sect" id="sectCompanion"><h3>陪伴型 AI</h3>
@@ -1501,22 +1502,9 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       <div class="hint">选预设会自动填入角色名与性格，仍可再改。保存后立即对新对话生效。</div>
     </div>
 
-    <div class="card sect"><h3>高级：聚合与兜底（指挥中心默认链路）</h3>
-      <label>Provider（逗号串联 = 聚合模式，如 ollama,openrouter）</label>
-      <input id="cfg_provider" list="providers">
-      <datalist id="providers"></datalist>
-      <label>模型（留空用默认）</label><input id="cfg_model">
-      <label>API Key（留空用环境变量）</label>
-      <input id="cfg_key" type="password" placeholder="sk-...">
-      <label>Base URL（自建中转 / 兼容端点）</label>
-      <input id="cfg_base" placeholder="http://localhost:3000/v1">
-      <label>聚合策略</label>
-      <select id="cfg_strategy">
-        <option value="fallback">fallback（故障转移，本地优先云端兜底）</option>
-        <option value="round-robin">round-robin（轮询分流）</option>
-      </select>
-      <div class="checkline"><input type="checkbox" id="cfg_yes">
-        <span>自动批准所有工具调用（含写文件/执行命令，慎用）</span></div>
+    <div class="card sect"><h3>指挥中心默认链路</h3>
+      <p class="hint">从「模型管理」里已接入的本地、API 或聚合池中勾选。至少勾选两个才能切换。勾选顺序就是切换顺序：当前模型连续 600 秒没有思考也没有工作，立刻改走下一个；聚合池会按成员顺序切换，池内都挂了再走链路里下一个。列表还在加载时保存，不会把已选链路清空。</p>
+      <div id="chainModels"><div class="empty">正在读取已接入模型…</div></div>
     </div>
 
     <div class="card sect" id="sectAgentLimits"><h3>Agent 执行上限</h3>
@@ -1581,7 +1569,9 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     </div>
 
     <div class="card sect"><h3>工人团队（指挥中心用）</h3>
-      <label>JSON 名册，留空则单个默认工人</label>
+      <div class="checkline"><input type="checkbox" id="cfg_yes">
+        <span>自动批准所有工具调用（含写文件/执行命令，慎用）</span></div>
+      <label>JSON 名册，留空则使用上面勾选的默认链路</label>
       <textarea id="cfg_workers" rows="4" placeholder='[{"name":"claude","provider":"anthropic","description":"代码与审查"},{"name":"qwen","provider":"ollama","model":"qwen2.5-coder:7b","description":"本地快速执行"}]'></textarea>
       <div class="hint">每个工人可指定不同 provider/model——聪明大脑规划，便宜模型干活</div>
     </div>
@@ -1619,6 +1609,29 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
     <div class="privacy-scroll" id="privacyDlgBody"></div>
     <div style="display:flex;gap:8px">
       <button class="btn primary" style="flex:1" onclick="acceptPrivacy()">我已阅读并同意</button>
+    </div>
+  </div>
+</div>
+
+<!-- 数据库安装位置：本地 / 局域网 / 广域网 -->
+<div class="modal-mask" id="dbSetupDialog">
+  <div class="modal wide">
+    <h3>安装数据库</h3>
+    <div class="hint" style="margin:-6px 0 10px">安装包自带 SQLite。请先选择安装位置，确认后才会创建库文件。记忆仍写在 memory.json。</div>
+    <label>安装范围</label>
+    <div style="display:flex;gap:8px;margin:6px 0 10px">
+      <label class="checkline"><input type="radio" name="db_scope" value="local" checked onchange="refreshDbDisks()"> 本地</label>
+      <label class="checkline"><input type="radio" name="db_scope" value="lan" onchange="refreshDbDisks()"> 局域网</label>
+      <label class="checkline"><input type="radio" name="db_scope" value="wan" onchange="refreshDbDisks()"> 广域网</label>
+    </div>
+    <div id="db_disks" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+    <label>安装位置</label>
+    <input id="db_path_input" placeholder="文件夹路径">
+    <div class="hint" id="db_scope_hint" style="margin-top:6px"></div>
+    <div class="hint" id="db_setup_err" style="color:#f87171;min-height:1.2em"></div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn" style="flex:1" onclick="closeDatabaseSetup()">稍后</button>
+      <button class="btn primary" style="flex:1" onclick="confirmDatabaseInstall()">安装到此位置</button>
     </div>
   </div>
 </div>
@@ -1727,7 +1740,8 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
 <!-- 新建项目对话框 -->
 <div class="modal-mask" id="projDialog">
   <div class="modal">
-    <h3>新建项目</h3>
+    <h3 id="pj_title">新建项目</h3>
+    <input type="hidden" id="pj_parent" value="">
     <label>项目名称</label>
     <input id="pj_name" placeholder="如：网站重构、数据分析">
     <label>存放位置（可选硬盘 / 文件夹，留空用默认目录）</label>
@@ -1736,10 +1750,22 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
       <button type="button" class="btn" onclick="pickProjectBase()">选择…</button>
     </div>
     <div id="pj_disks" class="hint" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
-    <div class="hint">将在该目录下创建项目文件夹——可点上方硬盘快捷项，或「选择…」浏览任意盘符/文件夹。对话、思考与工程文件都保存在项目文件夹里。</div>
+    <div class="hint" id="pj_hint">将在该目录下创建项目文件夹——可点上方硬盘快捷项，或「选择…」浏览任意盘符/文件夹。对话、思考与工程文件都保存在项目文件夹里。</div>
     <div style="display:flex;gap:8px;margin-top:16px">
       <button class="btn" style="flex:1" onclick="$('projDialog').classList.remove('open')">取消</button>
       <button class="btn primary" style="flex:1" onclick="createProject()">创建</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="projDelDialog">
+  <div class="modal">
+    <h3 id="pj_del_title">删除项目</h3>
+    <div class="hint" id="pj_del_hint">从列表移除后，本地文件夹默认会保留。</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:16px">
+      <button class="btn" onclick="confirmDeleteProject(false)">仅从列表移除（文件夹保留）</button>
+      <button class="btn danger" onclick="confirmDeleteProject(true)">删除项目文件夹</button>
+      <button class="btn" onclick="$('projDelDialog').classList.remove('open')">取消</button>
     </div>
   </div>
 </div>
@@ -1751,6 +1777,12 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
   <button id="ctxCopyAll">复制全部</button>
   <div class="sep"></div>
   <button id="ctxPaste">粘贴到输入框</button>
+</div>
+<div class="ctx-menu" id="projCtxMenu">
+  <button id="projCtxRetarget">修改项目路径</button>
+  <button id="projCtxSub">添加子项目</button>
+  <div class="sep"></div>
+  <button id="projCtxDelete" class="danger">删除项目</button>
 </div>
 
 <script>
@@ -1948,7 +1980,7 @@ function fillProjectSelects(d){
     const sel=$(id); if(!sel)return;
     const keep=sel.value;
     sel.innerHTML='';
-    if(!d.projects.length){
+    if(!d.projects||!d.projects.length){
       const o=document.createElement('option');
       o.value='__new'; o.textContent='＋ 新建项目…';
       sel.appendChild(o);
@@ -1956,7 +1988,10 @@ function fillProjectSelects(d){
     }
     d.projects.forEach(p=>{
       const o=document.createElement('option');
-      o.value=p.id; o.textContent=p.name; o.title=p.path;
+      o.value=p.id;
+      const depth=Math.max(0, Number(p.depth)||0);
+      o.textContent=(depth?('　'.repeat(depth)+'└ '):'')+p.name;
+      o.title=p.path;
       if(p.id===d.active)o.selected=true;
       sel.appendChild(o);
     });
@@ -1981,13 +2016,16 @@ function projBtn(p,d){
   const b=document.createElement('button');
   b.className='navbtn proj'+(p.id===d.active?' active':'');
   b.title=p.path;
+  b.dataset.pid=p.id;
+  b._proj=p;
+  const depth=Math.max(0, Number(p.depth)||0);
+  b.style.paddingLeft=(10+depth*14)+'px';
   b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>'+
     '<span class="p-name">'+esc(p.name)+'</span>'+
-    '<span class="p-del" title="从列表移除（文件夹保留）">×</span>';
+    '<span class="p-del" title="删除项目">×</span>';
   b.onclick=e=>{
     if(e.target.classList.contains('p-del')){
-      if(confirm('从列表移除项目「'+p.name+'」？\n本地文件夹与全部对话记录都会保留。'))
-        pywebview.api.delete_project(p.id).then(()=>{loadProjects();loadConversations();});
+      openProjDelete(p);
       return;
     }
     if(p.id!==d.active)switchProject(p.id,true);
@@ -1995,11 +2033,24 @@ function projBtn(p,d){
   };
   return b;
 }
-function openProjDialog(){
+function openProjDialog(parent){
   $('pj_name').value=''; $('pj_base').value='';
+  const parentEl=$('pj_parent');
+  if(parentEl) parentEl.value=(parent&&parent.id)||'';
   $('pj_disks').innerHTML='';
+  const title=$('pj_title');
+  const hint=$('pj_hint');
+  if(parent&&parent.id){
+    if(title) title.textContent='添加子项目 · '+parent.name;
+    $('pj_base').placeholder=parent.path||'';
+    if(hint) hint.textContent='默认建在父项目文件夹内。可改存放位置，或点「选择…」浏览。';
+  }else{
+    if(title) title.textContent='新建项目';
+    if(hint) hint.textContent='将在该目录下创建项目文件夹——可点上方硬盘快捷项，或「选择…」浏览任意盘符/文件夹。对话、思考与工程文件都保存在项目文件夹里。';
+  }
   pywebview.api.get_projects().then(d=>{
-    $('pj_base').placeholder=d.default_base||'';
+    if(!(parent&&parent.id))
+      $('pj_base').placeholder=d.default_base||'';
     const box=$('pj_disks');
     const roots=d.disk_roots||[];
     if(!roots.length){
@@ -2030,15 +2081,16 @@ function pickProjectBase(){
 function createProject(){
   const name=$('pj_name').value.trim();
   if(!name){toast('请填写项目名称');return;}
-  pywebview.api.create_project(name,$('pj_base').value.trim()).then(r=>{
+  const parentId=($('pj_parent')&&$('pj_parent').value)||'';
+  pywebview.api.create_project(name,$('pj_base').value.trim(),'其他',parentId).then(r=>{
     if(!r.ok){toast('创建失败：'+r.error);return;}
     $('projDialog').classList.remove('open');
-    toast('项目已创建：'+r.project.path);
+    toast((parentId?'子项目已创建：':'项目已创建：')+r.project.path);
     loadProjects(); loadConversations();
     clearChat('当前项目：'+r.project.name+' · 新对话');
     if($('page-chat').classList.contains('active'))return;  // 从对话页新建则留下
     loadProjectRecords(); go('project');
-  });
+  }).catch(()=>toast('创建失败'));
 }
 function switchProject(pid,openRecords){
   pywebview.api.switch_project(pid).then(r=>{
@@ -2280,8 +2332,55 @@ function copyPlain(text){
 }
 
 /* ---------- 对话右键菜单（鼠标复制粘贴） ---------- */
-let _ctxMsg=null, _ctxSel='', _pasteTarget=null;
-function hideCtx(){const m=$('ctxMenu');if(m)m.classList.remove('open');}
+let _ctxMsg=null, _ctxSel='', _pasteTarget=null, _projCtx=null;
+function hideProjCtx(){const m=$('projCtxMenu');if(m)m.classList.remove('open');}
+function hideCtx(){const m=$('ctxMenu');if(m)m.classList.remove('open'); hideProjCtx();}
+function showProjMenu(e,p){
+  _projCtx=p;
+  const chat=$('ctxMenu'); if(chat)chat.classList.remove('open');
+  const m=$('projCtxMenu'); if(!m)return;
+  m.style.left=Math.min(e.clientX, innerWidth-200)+'px';
+  m.style.top=Math.min(e.clientY, innerHeight-180)+'px';
+  m.classList.add('open');
+}
+function retargetProject(){
+  const p=_projCtx; hideProjCtx();
+  if(!p)return;
+  pywebview.api.retarget_project(p.id).then(r=>{
+    if(r.cancelled)return;
+    if(!r.ok){toast(r.error||'无法修改路径');return;}
+    toast('已改路径：'+r.project.path);
+    loadProjects(); loadConversations();
+    if($('page-project')&&$('page-project').classList.contains('active'))
+      loadProjectRecords();
+  }).catch(()=>toast('无法修改路径'));
+}
+function addSubproject(){
+  const p=_projCtx; hideProjCtx();
+  if(!p)return;
+  openProjDialog(p);
+}
+function openProjDelete(p){
+  hideProjCtx();
+  _projCtx=p||_projCtx;
+  if(!_projCtx)return;
+  const title=$('pj_del_title');
+  const hint=$('pj_del_hint');
+  if(title)title.textContent='删除项目「'+_projCtx.name+'」';
+  if(hint)hint.textContent='仅移除列表时，本地文件夹与对话记录都会保留。删除文件夹会把该项目目录（含其中的子项目）从磁盘去掉，不可恢复。';
+  $('projDelDialog').classList.add('open');
+}
+function confirmDeleteProject(deleteFiles){
+  const p=_projCtx;
+  $('projDelDialog').classList.remove('open');
+  if(!p)return;
+  pywebview.api.delete_project(p.id, !!deleteFiles).then(ok=>{
+    if(!ok){toast('删除失败');return;}
+    toast(deleteFiles?'已删除项目文件夹':'已从列表移除，文件夹保留');
+    loadProjects(); loadConversations();
+    loadProjectRecords();
+  }).catch(()=>toast('删除失败'));
+}
 function composerInput(){
   if(_pasteTarget&&document.body.contains(_pasteTarget))return _pasteTarget;
   const a=document.activeElement;
@@ -2330,6 +2429,14 @@ document.addEventListener('focusin',e=>{
 });
 document.addEventListener('contextmenu',e=>{
   const t=e.target;
+  const projBtnEl=t&&t.closest&&t.closest('#projectList .navbtn.proj');
+  if(projBtnEl){
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    showProjMenu(e, projBtnEl._proj||{id:projBtnEl.dataset.pid,name:projBtnEl.querySelector('.p-name')?projBtnEl.querySelector('.p-name').textContent:'',path:projBtnEl.title||''});
+    return;
+  }
+  if(t&&t.closest&&t.closest('#sidebar,#projCtxMenu,#projDialog,#projDelDialog'))return;
   const inField=t&&t.closest&&t.closest('textarea,input');
   const chatOn=$('page-chat')&&$('page-chat').classList.contains('active');
   if(!inField&&!chatOn)return;
@@ -2339,17 +2446,21 @@ document.addEventListener('contextmenu',e=>{
   if(inField&&typeof t.selectionStart==='number'&&t.selectionStart!==t.selectionEnd)
     _ctxSel=t.value.slice(t.selectionStart,t.selectionEnd);
   _ctxMsg=t&&t.closest?t.closest('.msg'):null;
+  hideProjCtx();
   const m=$('ctxMenu'); if(!m)return;
   m.style.left=Math.min(e.clientX, innerWidth-168)+'px';
   m.style.top=Math.min(e.clientY, innerHeight-160)+'px';
   m.classList.add('open');
-});
+}, true);
 document.addEventListener('click',e=>{
-  if(e.target&&e.target.closest&&e.target.closest('#ctxMenu'))return;
+  if(e.target&&e.target.closest&&e.target.closest('#ctxMenu,#projCtxMenu'))return;
   hideCtx();
 });
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape')hideCtx();
+  if(e.key==='Escape'){
+    hideCtx();
+    const d=$('projDelDialog'); if(d)d.classList.remove('open');
+  }
   // ⌘/Ctrl+C/V/X 交给系统（WKWebView 需打开 DOMPasteAllowed）
 });
 ['ctxCopySel','ctxCopyMsg','ctxCopyAll'].forEach(id=>{
@@ -2358,6 +2469,11 @@ document.addEventListener('keydown',e=>{
 const _pasteEl=$('ctxPaste'); if(_pasteEl)_pasteEl.onclick=ctxPaste;
 const _ctxMenu=$('ctxMenu');
 if(_ctxMenu)_ctxMenu.addEventListener('mousedown',e=>e.preventDefault());
+const _projCtxMenu=$('projCtxMenu');
+if(_projCtxMenu)_projCtxMenu.addEventListener('mousedown',e=>e.preventDefault());
+const _projCtxRetarget=$('projCtxRetarget'); if(_projCtxRetarget)_projCtxRetarget.onclick=retargetProject;
+const _projCtxSub=$('projCtxSub'); if(_projCtxSub)_projCtxSub.onclick=addSubproject;
+const _projCtxDelete=$('projCtxDelete'); if(_projCtxDelete)_projCtxDelete.onclick=()=>openProjDelete(_projCtx);
 function chatPlainText(chan){
   const C=colOf(chan||'A');
   const parts=[];
@@ -2856,24 +2972,7 @@ document.addEventListener('keydown',e=>{
   sel.removeAllRanges(); sel.addRange(range);
 });
 
-/* 赞/踩反馈（LCA：对话页反馈即时计入活动流） */
-function addFeedbackRow(chan){
-  const C=colOf(chan||'A');
-  const row=document.createElement('div');
-  row.className='fb-row';
-  row.innerHTML='<button class="fb-btn" data-v="1">👍 有用</button>'+
-    '<button class="fb-btn" data-v="0">👎 不行</button>';
-  row.querySelectorAll('.fb-btn').forEach(b=>b.onclick=()=>{
-    const up=b.dataset.v==='1';
-    pywebview.api.send_feedback(up).then(()=>{
-      row.querySelectorAll('.fb-btn').forEach(x=>x.disabled=true);
-      b.classList.add(up?'voted-up':'voted-down');
-      toast(up?'已记录正向反馈':'已记录：这条回复不行');
-    });
-  });
-  C.col.appendChild(row);
-  C.chat.scrollTop=C.chat.scrollHeight;
-}
+/* 赞/踩反馈已取消：自我学习按项目对话自动复盘 */
 
 /* ---------- leader ---------- */
 function sendLead(){
@@ -4116,59 +4215,72 @@ function toggleEvoJob(){
   });
 }
 
-/* ---------- 自我学习（LCA Learning.tsx） ---------- */
+/* ---------- 自我学习 ---------- */
 const PIPE=[
-  ['① 信号采集','对话赞/踩、任务成败、自动化流执行结果',true],
-  ['② 样本入库','（任务特征 → 路由选择 → 结果分）三元组',true],
-  ['③ 在线更新','多臂老虎机算法实时调整路由权重',true],
-  ['④ 夜间复盘','离线重放当日样本，训练分类器路由器',true],
-  ['⑤ LoRA 微调','样本积累到 5000+ 后可对本地模型微调',false],
+  ['① 筛选项目','只处理有过对话的项目，空项目跳过',true],
+  ['② 阅读复盘','聊天记录、思考过程、代码一并阅读',true],
+  ['③ 夜间检索','开启后 02:00–06:00 可上网补技术与设计资料',true],
+  ['④ 分析入库','写入本机记忆库（代码 / 设计 / UI / 流程 / 数据库）',true],
+  ['⑤ 任务检索','做项目时自动召回已学知识',true],
 ];
 function loadLearning(){
   pywebview.api.get_learning().then(r=>{
-    $('lnAcc').textContent=r.accuracy?r.accuracy+'%':'—';
-    $('lnSamples').textContent=r.total_samples;
-    $('lnToday').textContent=r.today_up+' / '+r.today_down;
-    $('sampleCount').textContent=r.total_samples+' 条 · 可用于训练自有路由器';
+    const night=r.night||{};
+    const on=!!(night.settings&&night.settings.enabled);
+    $('lnEligible').textContent=r.eligible_projects!=null?r.eligible_projects:(night.eligible_projects||0);
+    $('lnEligibleSub').textContent='共 '+(r.total_projects!=null?r.total_projects:(night.total_projects||0))+' 个项目';
+    $('lnMemTotal').textContent=night.total||0;
+    $('lnMemSub').textContent='本项目 '+(night.project_total||0)+' 条';
+    $('lnTonight').textContent=night.notes_today||0;
+    if($('nlWeb'))$('nlWeb').classList.toggle('on', !!(night.settings&&night.settings.web_enabled));
+    if($('nlStatusPill')){
+      $('nlStatusPill').textContent=on?'已开启':'已关闭';
+      $('nlStatusPill').className=on?'pill green':'pill';
+      $('nlStatusPill').dataset.on=on?'1':'0';
+    }
+    if($('nlStatusHint'))$('nlStatusHint').textContent=on
+      ?'当前：已开启 · 夜里会自动复盘有对话的项目'
+      :'当前：已关闭 · 点右上角「开启」才会自动学';
+    if($('nlBtnOn'))$('nlBtnOn').disabled=on;
+    if($('nlBtnOff'))$('nlBtnOff').disabled=!on;
+    if($('nlSummary'))$('nlSummary').textContent=night.summary||('状态：'+(night.status||'idle'));
+    const notes=night.notes||[];
+    if($('nlNotes')){
+      if(!notes.length)$('nlNotes').innerHTML='<div class="empty">记忆库还是空的。先开启自我学习，或点「立刻复盘学习」。</div>';
+      else $('nlNotes').innerHTML=notes.slice(0,12).map(n=>
+        '<div class="pipe-row"><div><span class="pill">'+esc(n.kind_label||n.kind)+'</span> '+
+        '<span style="font-weight:550">'+esc(n.title)+'</span>'+
+        '<div style="font-size:11px;color:var(--faint);margin-top:4px">'+esc((n.content||'').slice(0,90))+'</div></div>'+
+        '<span style="font-size:11px;color:var(--faint)">'+esc(n.project_name||'')+'</span></div>').join('');
+    }
     $('pipeList').innerHTML=PIPE.map(p=>
       '<div class="pipe-row"><div><span style="font-weight:550">'+p[0]+'</span>'+
       '<span style="color:var(--faint);font-size:11px;margin-left:8px">'+p[1]+'</span></div>'+
       (p[2]?'<span class="pill green">运行中</span>':'<span class="pill">未解锁</span>')+'</div>').join('');
-    drawAccChart(r.records); drawFbChart(r.records);
   });
 }
-function drawAccChart(recs){
-  const el=$('accChart');
-  if(!recs.length){el.innerHTML='';$('accChartHint').style.display='';return;}
-  $('accChartHint').style.display='none';
-  el.innerHTML=recs.map(r=>{
-    const h=Math.max(4,Math.round((r.accuracy-50)/50*100)); // 50-100 → 4-100%
-    return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;justify-content:flex-end;height:100%">'+
-      '<span style="font-size:10px;color:var(--pill-green)">'+r.accuracy+'%</span>'+
-      '<div style="width:70%;max-width:34px;height:'+h+'%;background:var(--pill-green);border-radius:3px 3px 0 0;opacity:.85"></div>'+
-      '<span style="font-size:10px;color:var(--faint)">'+esc(r.day)+'</span></div>';
-  }).join('');
-}
-function drawFbChart(recs){
-  const el=$('fbChart');
-  if(!recs.length){el.innerHTML='';$('fbChartHint').style.display='';return;}
-  $('fbChartHint').style.display='none';
-  const max=Math.max(1,...recs.map(r=>Math.max(r.thumbs_up,r.thumbs_down)));
-  el.innerHTML=recs.map(r=>
-    '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;justify-content:flex-end;height:100%">'+
-    '<div style="display:flex;gap:3px;align-items:flex-end;height:75%">'+
-    '<div style="width:12px;height:'+Math.round(r.thumbs_up/max*100)+'%;min-height:2px;background:var(--pill-green);border-radius:2px 2px 0 0" title="赞 '+r.thumbs_up+'"></div>'+
-    '<div style="width:12px;height:'+Math.round(r.thumbs_down/max*100)+'%;min-height:2px;background:var(--pill-red);border-radius:2px 2px 0 0" title="踩 '+r.thumbs_down+'"></div></div>'+
-    '<span style="font-size:10px;color:var(--faint)">'+esc(r.day)+'</span></div>').join('');
-}
-function learnNow(){
-  pywebview.api.learn_now().then(r=>{
-    if(!r.ok){toast(r.error);return;}
-    toast('立即学习完成：当日路由准确率 '+r.accuracy+'%（'+r.samples+' 条反馈样本）');
+function setSelfLearn(on){
+  pywebview.api.set_self_learn(!!on).then(r=>{
+    if(!r||!r.ok){toast('设置失败');return;}
+    toast(on?'自我学习已开启':'自我学习已关闭');
     loadLearning();
+  }).catch(()=>toast('设置失败'));
+}
+function runNightLearn(){
+  toast('开始复盘：正在阅读有对话的项目…');
+  pywebview.api.run_night_learn_now().then(r=>{
+    if(!r.ok){toast(r.error||'复盘未完成');return;}
+    toast(r.summary||('复盘完成，新写入 '+(r.notes_today||0)+' 条'));
+    loadLearning(); loadMemories();
+  }).catch(()=>toast('复盘执行失败'));
+}
+function saveNightLearnWeb(){
+  const on=$('nlStatusPill')&&$('nlStatusPill').dataset.on==='1';
+  const web=$('nlWeb').classList.contains('on');
+  pywebview.api.save_night_learn_settings(!!on, web).then(()=>{
+    toast(web?'已允许上网检索':'已关闭上网检索');
   });
 }
-function exportSamples(){ toast('已导出到 ~/.codeagent（演示）'); }
 
 /* ---------- 进化日志（LCA Evolution.tsx） ---------- */
 const PATCH_PILL={active:'<span class="pill green">生效中</span>',
@@ -4331,15 +4443,135 @@ function acceptPrivacy(){
     $('privacyDialog').classList.remove('open');
     toast('已同意隐私条款');
     loadPrivacy();
+    ensureDatabaseInstalled();
   });
 }
 function ensurePrivacyAccepted(){
   pywebview.api.get_privacy_policy().then(p=>{
-    if(p.accepted)return;
+    if(p.accepted){ensureDatabaseInstalled();return;}
     $('privacyDlgTitle').textContent=p.title||'隐私条款';
     $('privacyDlgBody').innerHTML=renderPrivacySections(p.sections);
     $('privacyDialog').classList.add('open');
   });
+}
+
+let _dbDisks=[];
+function dbScope(){
+  const el=document.querySelector('input[name=db_scope]:checked');
+  return el?el.value:'local';
+}
+function dbScopeHint(scope){
+  if(scope==='lan')return '局域网：选择已挂载的网络盘，或填写 \\\\服务器\\共享 。';
+  if(scope==='wan')return '广域网：填写网盘同步目录，或公网可写路径（如 \\\\公网主机\\共享）。';
+  return '本地：选择本机文件夹。默认在用户目录的 .codeagent。';
+}
+function refreshDbDisks(){
+  const scope=dbScope();
+  $('db_scope_hint').textContent=dbScopeHint(scope);
+  const box=$('db_disks');
+  box.innerHTML='';
+  const rows=scope==='lan'?_dbDisks.filter(d=>d.kind==='network')
+    :scope==='local'?_dbDisks.filter(d=>d.kind!=='network'):[];
+  rows.forEach(r=>{
+    const b=document.createElement('button');
+    b.type='button'; b.className='btn';
+    b.style.cssText='padding:4px 10px;font-size:12px';
+    b.textContent=r.label; b.title=r.path||'';
+    b.onclick=()=>{$('db_path_input').value=r.path||'';};
+    box.appendChild(b);
+  });
+}
+function paintDbStatus(st){
+  const hint=$('dbStatusHint');
+  if(!hint||!st)return;
+  const names={local:'本地',lan:'局域网',wan:'广域网'};
+  if(st.ready)hint.textContent='已安装 '+ (names[st.scope]||st.scope) +'：'+st.path;
+  else hint.textContent='尚未安装。请选择本地、局域网或广域网位置后再创建 SQLite。';
+}
+function openDatabaseSetup(){
+  pywebview.api.database_status().then(st=>{
+    _dbDisks=st.disks||[];
+    const scope=st.scope||'local';
+    const radio=document.querySelector('input[name=db_scope][value="'+scope+'"]');
+    if(radio)radio.checked=true;
+    $('db_path_input').value=st.ready?st.path.replace(/[\\/]codecore\.sqlite$/i,''):(st.default_dir||'');
+    $('db_setup_err').textContent='';
+    refreshDbDisks();
+    $('dbSetupDialog').classList.add('open');
+  });
+}
+function closeDatabaseSetup(){ $('dbSetupDialog').classList.remove('open'); }
+function confirmDatabaseInstall(){
+  $('db_setup_err').textContent='';
+  pywebview.api.install_database(dbScope(), $('db_path_input').value.trim()).then(r=>{
+    if(!r.ok){$('db_setup_err').textContent=r.error||'安装失败';return;}
+    $('dbSetupDialog').classList.remove('open');
+    toast('数据库已安装');
+    paintDbStatus({ready:true,scope:r.scope,path:r.path});
+  });
+}
+function ensureDatabaseInstalled(){
+  pywebview.api.database_status().then(st=>{
+    paintDbStatus(st);
+    if(!st.ready)openDatabaseSetup();
+  });
+}
+function renderChainModels(models, selected){
+  const box=$('chainModels');
+  if(!box)return;
+  box.innerHTML='';
+  if(!models.length){
+    box.innerHTML='<div class="empty">模型管理里还没有可对话的本地、API 模型或聚合池。请先在「模型管理」接入。</div>';
+    return;
+  }
+  const picked=Array.isArray(selected)?selected:[];
+  const byRef={};
+  models.forEach(m=>{ byRef[m.ref]=m; });
+  const ordered=[];
+  picked.forEach(ref=>{ if(byRef[ref]) ordered.push(byRef[ref]); });
+  models.forEach(m=>{ if(!picked.includes(m.ref)) ordered.push(m); });
+  const kindLabel={local:'本地',api:'API',mix:'聚合池'};
+  ordered.forEach(m=>{
+    const row=document.createElement('div');
+    row.className='checkline';
+    row.dataset.ref=m.ref;
+    row.style.gap='8px';
+    const cb=document.createElement('input');
+    cb.type='checkbox';
+    cb.checked=picked.includes(m.ref);
+    const span=document.createElement('span');
+    span.style.flex='1';
+    span.textContent=m.label+' · '+(kindLabel[m.kind]||m.kind||'模型');
+    const up=document.createElement('button');
+    up.type='button'; up.className='btn'; up.textContent='上移';
+    up.onclick=()=>moveChainRow(row,-1);
+    const down=document.createElement('button');
+    down.type='button'; down.className='btn'; down.textContent='下移';
+    down.onclick=()=>moveChainRow(row,1);
+    row.append(cb,span,up,down);
+    box.appendChild(row);
+  });
+}
+function moveChainRow(row, dir){
+  const box=row.parentElement;
+  if(!box)return;
+  const rows=[...box.children];
+  const i=rows.indexOf(row);
+  const j=i+dir;
+  if(j<0||j>=rows.length)return;
+  if(dir<0) box.insertBefore(row, rows[j]);
+  else box.insertBefore(rows[j], row);
+}
+function chainRefsFromForm(){
+  const box=$('chainModels');
+  if(!box)return null;
+  if(!box.querySelector('[data-ref]') && !box.querySelector('.empty')) return null;
+  const refs=[];
+  box.querySelectorAll('[data-ref]').forEach(row=>{
+    const cb=row.querySelector('input');
+    if(cb&&cb.checked) refs.push(row.dataset.ref);
+  });
+  return refs;
 }
 
 /* ---------- settings ---------- */
@@ -4350,11 +4582,6 @@ function loadSettings(){
     // 服务端配置是主题真相源：无条件对齐（覆盖 localStorage 缓存）
     applyTheme(st.config.theme||'dark');
     storeSet(THEME_KEY,st.config.theme||'dark');
-    $('cfg_provider').value=st.config.provider;
-    $('cfg_model').value=st.config.model;
-    $('cfg_key').value=st.config.api_key;
-    $('cfg_base').value=st.config.base_url;
-    $('cfg_strategy').value=st.config.strategy;
     $('cfg_yes').checked=st.config.auto_yes;
     $('cfg_voice').checked=st.config.voice_enabled;
     if($('cfg_cute'))$('cfg_cute').checked=st.config.voice_cute_tone!==false;
@@ -4368,6 +4595,9 @@ function loadSettings(){
     fillCompanionPresets(st.config.companion_preset||'');
     if($('cfg_companion'))$('cfg_companion').checked=!!st.config.companion_enabled;
     if($('cfg_memory'))$('cfg_memory').checked=st.config.memory_enabled!==false;
+    if($('cfg_code_audit'))$('cfg_code_audit').checked=st.config.code_audit_enabled!==false;
+    if($('cfg_code_audit_ref'))$('cfg_code_audit_ref').value=st.config.code_audit_ref||'';
+    if(st.config.db_ready)paintDbStatus({ready:true,scope:st.config.db_scope,path:st.config.db_path});
     if($('cfg_companion_name'))$('cfg_companion_name').value=st.config.companion_name||'';
     if($('cfg_companion_nature'))$('cfg_companion_nature').value=st.config.companion_nature||'';
     $('cfg_workers').value=st.config.workers_json;
@@ -4375,8 +4605,10 @@ function loadSettings(){
     $('set_lang').value=st.settings.language;
     $('set_inst').value=st.settings.instructions;
     $('set_ctx').value=st.settings.context;
-    const dl=$('providers'); dl.innerHTML='';
-    st.providers.forEach(p=>{const o=document.createElement('option');o.value=p;dl.appendChild(o);});
+    let chainSelected=[];
+    try{ chainSelected=JSON.parse(st.config.chain_refs||'[]'); }catch(e){ chainSelected=[]; }
+    if(!Array.isArray(chainSelected)) chainSelected=[];
+    pywebview.api.connected_chat_models().then(models=>renderChainModels(models||[], chainSelected));
     const vs=$('cfg_voicename'); vs.innerHTML='';
     Object.keys(st.voices).forEach(k=>{
       const o=document.createElement('option');o.value=k;o.textContent=k+' · '+st.voices[k];
@@ -4457,6 +4689,8 @@ function companionConfigFromForm(){
     companion_name:$('cfg_companion_name')?$('cfg_companion_name').value:'',
     companion_nature:$('cfg_companion_nature')?$('cfg_companion_nature').value:'',
     memory_enabled:$('cfg_memory')?$('cfg_memory').checked:true,
+    code_audit_enabled:$('cfg_code_audit')?$('cfg_code_audit').checked:true,
+    code_audit_ref:$('cfg_code_audit_ref')?$('cfg_code_audit_ref').value.trim():'',
   };
 }
 function voiceConfigFromForm(){
@@ -4586,9 +4820,8 @@ function openFeedbackMail(){
 function saveAll(){
   Promise.all([
     pywebview.api.save_config({
-      provider:$('cfg_provider').value, model:$('cfg_model').value,
-      api_key:$('cfg_key').value, base_url:$('cfg_base').value,
-      strategy:$('cfg_strategy').value, auto_yes:$('cfg_yes').checked,
+      chain_refs:chainRefsFromForm(),
+      auto_yes:$('cfg_yes').checked,
       ...voiceConfigFromForm(),
       ...companionConfigFromForm(),
       ...agentLimitsFromForm(),
@@ -4626,7 +4859,6 @@ window._onEvent=function(ev){
     if(ch==='B'){curBot2=null;setChatBusy(false,'B');}else{curBot=null;setChatBusy(false,'A');}
     if(ev.emotion && ev.emotion!=='neutral')
       addChip('status','情绪 · '+(EMOTION_ZH[ev.emotion]||ev.emotion),ch);
-    addFeedbackRow(ch);
     loadConversations(); loadConversations2();  // 刷新历史对话计数
   }else if(ev.kind==='stopped'){
     if(ch==='B'){curBot2=null;setChatBusy(false,'B');}else{curBot=null;setChatBusy(false,'A');}
@@ -4713,10 +4945,10 @@ function bootUi(){
   loadConversations();
   loadNavStatus();
   ensurePrivacyAccepted();
+  // 必须全程泵送：对话里调 browser 时若只在「浏览器」页才 pump，
+  // 窗口创建队列永远不排水 → 退化成抓取模式，模型会误报「sandbox 受限、无法展示」。
   setInterval(function(){
     try{
-      const page=$('page-browser');
-      if(!page||!page.classList.contains('active'))return;
       if(window.pywebview&&pywebview.api&&pywebview.api.browser_pump)
         pywebview.api.browser_pump();
     }catch(e){}

@@ -1,4 +1,9 @@
-from codeagent.llm.aggregate import AggregateError, AggregateProvider, parse_provider_spec
+from codeagent.llm.aggregate import (
+    AggregateError,
+    AggregateProvider,
+    parse_provider_spec,
+    reset_unhealthy,
+)
 from codeagent.llm.anthropic import AnthropicProvider
 from codeagent.llm.base import LLMProvider
 from codeagent.llm.ollama import OllamaProvider
@@ -16,4 +21,5 @@ __all__ = [
     "list_providers",
     "parse_provider_spec",
     "register_provider",
+    "reset_unhealthy",
 ]

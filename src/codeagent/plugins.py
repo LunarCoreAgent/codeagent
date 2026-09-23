@@ -120,6 +120,15 @@ PLUGIN_CATALOG: tuple[PluginSpec, ...] = (
         connect="直接调用 browser 工具，无需安装",
         auth="none",
     ),
+    PluginSpec(
+        name="phone",
+        kind="builtin",
+        description="USB 真机：安装 HAP/APK、启动、截图、日志、UI 树、点按冒烟（hdc/adb）。",
+        triggers="装到手机,真机安装,真机测试,USB调试,hdc,adb,安装HAP,安装APK,手机冒烟",
+        skill="phone-device",
+        connect="直接调用 phone 工具（需本机 hdc 或 adb + USB 调试）",
+        auth="none",
+    ),
 )
 
 

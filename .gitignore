@@ -19,3 +19,4 @@ oh_modules/
 *.app
 *.dmg
 *Windows打包.zip
+packaging/vendor/node/

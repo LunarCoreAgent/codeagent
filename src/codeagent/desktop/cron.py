@@ -140,6 +140,8 @@ class CronScheduler:
         evolution_enabled: Callable[[], bool] | None = None,
         evolution_cron: Callable[[], str] | None = None,
         run_evolution: Callable[[], None] | None = None,
+        night_learn_enabled: Callable[[], bool] | None = None,
+        run_night_learn: Callable[[], None] | None = None,
     ) -> None:
         self.store = store
         self._run_action = run_action
@@ -147,6 +149,9 @@ class CronScheduler:
         self._evo_enabled = evolution_enabled or (lambda: False)
         self._evo_cron = evolution_cron or (lambda: "0 2 * * *")
         self._run_evolution = run_evolution
+        self._night_learn_enabled = night_learn_enabled or (lambda: False)
+        self._run_night_learn = run_night_learn
+        self._night_thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_minute = ""
@@ -164,8 +169,33 @@ class CronScheduler:
         while not self._stop.wait(30):
             try:
                 self.tick()
+                self.maybe_night_learn()
             except Exception:  # noqa: BLE001 — 调度器永不崩溃
                 continue
+
+    def maybe_night_learn(self, now: float | None = None) -> bool:
+        """02:00–06:00 window: start or continue nightly project study."""
+        if not self._night_learn_enabled() or self._run_night_learn is None:
+            return False
+        from codeagent.learn.nightly import in_night_window
+
+        tm = time.localtime(now or time.time())
+        if not in_night_window(tm):
+            return False
+        alive = self._night_thread is not None and self._night_thread.is_alive()
+        if alive:
+            return False
+        self._night_thread = threading.Thread(
+            target=self._safe_night_learn, daemon=True,
+        )
+        self._night_thread.start()
+        return True
+
+    def _safe_night_learn(self) -> None:
+        try:
+            self._run_night_learn()
+        except Exception:  # noqa: BLE001
+            log_activity("learn", "夜间自学异常中断，下一轮窗口将续跑")
 
     def tick(self, now: float | None = None) -> list[str]:
         """Check all jobs once; returns fired job ids (testable)."""

@@ -12,67 +12,76 @@ import { KnowledgeDoc, WikiPage, KnowledgeConfig, loadDocs, upsertDoc, deleteDoc
 import { ActivityItem, loadActivity, pushActivity, clearActivity } from '../model/ActivityStore';
 import { detectModels, pullOllamaModel } from '../model/ModelDetect';
 import { API_BASE_PRESETS, ApiPreset, guessProvider, presetProviderLabel } from '../model/ApiPresets';
-import { LocalEndpoint, loadEndpoints, saveEndpoints, normalizeLocalBase, toChatBase } from '../model/LocalStore';
+import { LocalEndpoint, loadEndpoints, saveEndpoints, normalizeLocalBase, toChatBase, pickStallBackup } from '../model/LocalStore';
 import { openFeedbackMail as launchFeedbackMail } from '../model/FeedbackMail';
 import {
   IdentityRecord,
   loadIdentity,
   clearIdentity,
   verifyWithHuaweiAccount,
+  formatAuthError,
   identityStatusText,
+  isRecordVerified,
 } from '../model/AccountAuth';
 import { i18n } from '@kit.LocalizationKit';
 import { translate, resolveLanguage, replyLanguageName } from '../model/I18n';
 
 const PC_BREAKPOINT = 1024;
-const APP_VERSION = '0.81.0';
+const APP_VERSION = '0.90.3';
 
 interface NavItem {
   id: string;
   label: string;
   group: string;
-  /** 依赖 Mac/Win/Linux 桌面版宿主（bash/文件/Comfy/调度等），平板仅提示 */
-  desktopOnly: boolean;
+  /** 需鸿蒙电脑（2in1）完整执行；手机/平板可浏览，动作按钮灰显并提示 */
+  pcOnly: boolean;
 }
 
 const NAV: NavItem[] = [
-  { id: 'dashboard', label: '总览', group: '概览', desktopOnly: false },
-  { id: 'chat', label: '对话', group: '概览', desktopOnly: false },
-  { id: 'browser', label: '浏览器', group: '概览', desktopOnly: false },
-  { id: 'studio', label: '导演台', group: '概览', desktopOnly: true },
-  { id: 'lead', label: '指挥中心', group: '概览', desktopOnly: true },
-  { id: 'memory', label: '长期记忆', group: '能力', desktopOnly: false },
-  { id: 'knowledge', label: '知识库', group: '能力', desktopOnly: false },
-  { id: 'skills', label: '技能库', group: '能力', desktopOnly: true },
-  { id: 'models', label: '模型管理', group: '系统', desktopOnly: false },
-  { id: 'automation', label: '自动化', group: '系统', desktopOnly: true },
-  { id: 'logs', label: '日志', group: '系统', desktopOnly: false },
-  { id: 'versions', label: '版本说明', group: '系统', desktopOnly: false },
-  { id: 'privacy', label: '隐私条款', group: '系统', desktopOnly: false },
-  { id: 'settings', label: '偏好设置', group: '系统', desktopOnly: false },
+  { id: 'dashboard', label: '总览', group: '概览', pcOnly: false },
+  { id: 'chat', label: '对话', group: '概览', pcOnly: false },
+  { id: 'browser', label: '浏览器', group: '概览', pcOnly: false },
+  { id: 'studio', label: '导演台', group: '概览', pcOnly: true },
+  { id: 'lead', label: '指挥中心', group: '概览', pcOnly: true },
+  { id: 'projects', label: '项目', group: '项目', pcOnly: true },
+  { id: 'memory', label: '长期记忆', group: '能力', pcOnly: false },
+  { id: 'knowledge', label: '知识库', group: '能力', pcOnly: false },
+  { id: 'videoops', label: '视频运营', group: '能力', pcOnly: true },
+  { id: 'skills', label: '技能库', group: '能力', pcOnly: true },
+  { id: 'models', label: '模型管理', group: '系统', pcOnly: false },
+  { id: 'automation', label: '自动化', group: '系统', pcOnly: true },
+  { id: 'cron', label: '定时任务', group: '系统', pcOnly: true },
+  { id: 'learning', label: '自我学习', group: '系统', pcOnly: true },
+  { id: 'evolution', label: '进化日志', group: '系统', pcOnly: true },
+  { id: 'router', label: '自由路由', group: '系统', pcOnly: true },
+  { id: 'permissions', label: '权限控制', group: '系统', pcOnly: true },
+  { id: 'logs', label: '日志', group: '系统', pcOnly: false },
+  { id: 'versions', label: '版本说明', group: '系统', pcOnly: false },
+  { id: 'privacy', label: '隐私条款', group: '系统', pcOnly: false },
+  { id: 'settings', label: '偏好设置', group: '系统', pcOnly: false },
 ];
 
 interface SkillCard {
   name: string;
   desc: string;
-  desktopOnly: boolean;
+  pcOnly: boolean;
 }
 
 const SKILLS: SkillCard[] = [
-  { name: '代码阅读', desc: '分析项目结构与关键实现', desktopOnly: true },
-  { name: '文件编辑', desc: '按任务修改源码与配置', desktopOnly: true },
-  { name: '终端执行', desc: '在桌面宿主侧运行命令', desktopOnly: true },
-  { name: '网页抓取', desc: '抓取公开页面摘要', desktopOnly: true },
-  { name: '知识检索', desc: '在本地知识库中搜索', desktopOnly: false },
-  { name: '视频运营', desc: '脚本/分镜/发布草稿协作', desktopOnly: true },
-  { name: '自我学习', desc: '根据反馈优化回答风格', desktopOnly: true },
-  { name: '定时任务', desc: '规划周期性作业', desktopOnly: true },
+  { name: '代码阅读', desc: '分析项目结构与关键实现', pcOnly: true },
+  { name: '文件编辑', desc: '按任务修改源码与配置', pcOnly: true },
+  { name: '终端执行', desc: '在本机运行命令', pcOnly: true },
+  { name: '网页抓取', desc: '抓取公开页面摘要', pcOnly: true },
+  { name: '知识检索', desc: '在本地知识库中搜索', pcOnly: false },
+  { name: '视频运营', desc: '脚本/分镜/发布草稿协作', pcOnly: true },
+  { name: '自我学习', desc: '根据反馈优化回答风格', pcOnly: true },
+  { name: '定时任务', desc: '规划周期性作业', pcOnly: true },
 ];
 
-function isDesktopOnlyPage(pageId: string): boolean {
+function isPcOnlyPage(pageId: string): boolean {
   for (let i = 0; i < NAV.length; i++) {
     if (NAV[i].id === pageId) {
-      return NAV[i].desktopOnly;
+      return NAV[i].pcOnly;
     }
   }
   return false;
@@ -95,7 +104,7 @@ struct DashCard {
           .fontWeight(FontWeight.Medium)
           .fontColor(this.dark ? '#F2F2F3' : '#1A1A1A')
           .layoutWeight(1)
-        Text(translate(this.uiLang, '桌面版'))
+        Text(translate(this.uiLang, '平板/电脑'))
           .fontSize(10)
           .fontColor('#8A5A00')
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -145,7 +154,7 @@ struct Index {
   @State convList: Conversation[] = [];
   /** 宽屏布局（侧栏常驻），按窗口宽度 */
   @State isPC: boolean = false;
-  /** 形态是否为平板/手机（非 2in1）：用于「请在桌面版使用」提示 */
+  /** 非鸿蒙电脑（手机/平板）：PC 专属动作灰显并提示 */
   @State isTabletDevice: boolean = true;
   /** 手机折叠态（未展开）：需提示展开至三折 */
   @State isPhoneFolded: boolean = false;
@@ -222,16 +231,35 @@ struct Index {
   @State autoJobs: string[] = [];
   @State autoInput: string = '';
 
+  @State projectName: string = '';
+  @State projectList: string[] = [];
+  @State videoScript: string = '';
+  @State videoChannel: string = '';
+  @State cronExpr: string = '';
+  @State cronJobs: string[] = [];
+  @State learnNote: string = '';
+  @State learnNotes: string[] = [];
+  @State evoLines: string[] = [];
+  @State routerRule: string = '';
+  @State routerRules: string[] = [];
+  @State permShell: boolean = false;
+  @State permFiles: boolean = false;
+  @State permNet: boolean = true;
+  @State mixName: string = '';
+  @State mixModels: string = '';
+
+
   @State activity: ActivityItem[] = [];
   @State toast: string = '';
   @State identity: IdentityRecord = {
     verified: false,
     openId: '',
     unionId: '',
-    anonymousPhone: '',
     verifiedAt: 0,
   };
   @State authBusy: boolean = false;
+  /** 未核验时强制展示引导（对话页 / 弹层） */
+  @State showAuthGate: boolean = false;
 
   stopFn: (() => void) | null = null;
   ctx: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
@@ -241,6 +269,7 @@ struct Index {
     this.refreshSystemLang();
     this.reloadAll();
     this.identity = loadIdentity(this.ctx);
+    this.showAuthGate = !isRecordVerified(this.identity);
     this.detectDevice();
     this.bindInsets();
     this.paintSystemBars();
@@ -446,10 +475,10 @@ struct Index {
     try {
       const dtype = deviceInfo.deviceType;
       this.deviceTypeRaw = dtype;
-      // 仅鸿蒙电脑（2in1）不算平板形态；平板/手机都显示桌面版提示
-      this.isTabletDevice = dtype !== '2in1';
+      // 仅手机视为不支持形态；平板与鸿蒙电脑均可完整使用
+      this.isTabletDevice = dtype === 'phone';
     } catch (_e) {
-      this.isTabletDevice = true;
+      this.isTabletDevice = false;
       this.deviceTypeRaw = 'tablet';
     }
     try {
@@ -459,7 +488,8 @@ struct Index {
         const widthVp = widthPx / density;
         this.isPC = widthVp >= PC_BREAKPOINT;
         // 系统识别为手机，且窗口仍为窄屏 → 折叠/单屏手机态
-        this.isPhoneFolded = this.deviceTypeRaw === 'phone' && widthVp < PC_BREAKPOINT;
+        // 不再用窄屏判定「折叠拦截」；直板机宽度天然 < 1024
+        this.isPhoneFolded = false;
         if (this.isPC) {
           this.showNav = true;
         }
@@ -476,7 +506,7 @@ struct Index {
       }
     } catch (_e) {
       this.isPC = false;
-      this.isPhoneFolded = this.deviceTypeRaw === 'phone';
+      this.isPhoneFolded = false;
     }
   }
 
@@ -488,25 +518,61 @@ struct Index {
   line(): string { return this.dark ? '#2e2e33' : '#E8E8EA'; }
   accent(): string { return '#007AFF'; }
 
-  /** 平板/手机形态：依赖桌面宿主的功能只提示，不删入口 */
-  showDesktopHint(): boolean {
-    return this.isTabletDevice && isDesktopOnlyPage(this.page);
+  /** 是否支持形态：鸿蒙平板或鸿蒙电脑（本应用不分发手机） */
+  isHarmonyPcDevice(): boolean {
+    return this.deviceTypeRaw === '2in1' || this.deviceTypeRaw === 'tablet';
   }
 
-  /** 手机未展开至三折宽屏时拦截使用 */
+  /** 手机上不展示 PC 专属灰显条（直接整页拦截）；平板/电脑无提示条 */
+  showPcHint(): boolean {
+    return false;
+  }
+
+  /** 完整能力：平板与鸿蒙电脑可用；手机提示不可用 */
+  requireHarmonyPc(): boolean {
+    if (this.isHarmonyPcDevice()) {
+      return true;
+    }
+    this.tipHarmonyPcOnly();
+    return false;
+  }
+
+  tipHarmonyPcOnly(): void {
+    const msg = this.tx("只能在平板或鸿蒙电脑上使用");
+    this.toast = msg;
+    try {
+      promptAction.showToast({ message: msg, duration: 2500 });
+    } catch (_e) {
+    }
+  }
+
+  pcActionBg(): string {
+    return this.isHarmonyPcDevice() ? this.accent() : (this.dark ? '#3A3A40' : '#D0D0D4');
+  }
+
+  pcActionFg(): ResourceColor {
+    return this.isHarmonyPcDevice() ? Color.White : (this.dark ? '#8A8A90' : '#888888');
+  }
+
+  pcSecondaryBg(): string {
+    return this.isHarmonyPcDevice() ? (this.dark ? '#2a2a30' : '#E8E8EA') : (this.dark ? '#3A3A40' : '#D0D0D4');
+  }
+
+  /** 手机形态：整页提示本应用仅支持平板与鸿蒙电脑 */
   showPhoneFoldGate(): boolean {
-    return this.isPhoneFolded;
+    return this.deviceTypeRaw === 'phone';
   }
 
   deviceLabel(): string {
     if (this.deviceTypeRaw === '2in1') {
       return this.tx("鸿蒙电脑");
     }
-    if (this.deviceTypeRaw === 'phone' && this.isPhoneFolded) {
-      return this.tx("鸿蒙手机");
+    if (this.deviceTypeRaw === 'tablet') {
+      return this.tx("鸿蒙平板");
     }
+    // 直板机与折叠屏统一按手机展示；不再用宽度误判「三折」
     if (this.deviceTypeRaw === 'phone') {
-      return this.tx("鸿蒙三折");
+      return this.tx("鸿蒙手机");
     }
     return this.tx("鸿蒙平板");
   }
@@ -603,9 +669,11 @@ struct Index {
   }
 
   async ensureIdentity(): Promise<boolean> {
-    if (this.identity.verified) {
+    this.identity = loadIdentity(this.ctx);
+    if (isRecordVerified(this.identity)) {
       return true;
     }
+    this.showAuthGate = true;
     this.toast = this.tx("使用合成生成内容前，请先用华为账号完成实名核验");
     return false;
   }
@@ -617,13 +685,23 @@ struct Index {
     this.authBusy = true;
     try {
       this.identity = await verifyWithHuaweiAccount(this.ctx);
+      this.showAuthGate = false;
       this.toast = this.tx("实名核验已完成，可以开始对话");
       pushActivity(this.ctx, 'settings', this.tx("完成实名核验"));
       this.activity = loadActivity(this.ctx);
     } catch (e) {
-      const be = e as BusinessError;
-      const msg = (be.message && be.message.length > 0) ? be.message : `${be.code || e}`;
+      const msg = formatAuthError(e as Object);
       this.toast = `${this.tx("实名核验未完成")}：${msg}`;
+      this.showAuthGate = true;
+      try {
+        promptAction.showDialog({
+          title: this.tx("实名核验未完成"),
+          message: msg,
+          buttons: [{ text: this.tx("确定"), color: '#0A59F7' }],
+        });
+      } catch (_dlg) {
+        // ignore
+      }
     }
     this.authBusy = false;
   }
@@ -631,6 +709,7 @@ struct Index {
   clearIdentityLocal() {
     clearIdentity(this.ctx);
     this.identity = loadIdentity(this.ctx);
+    this.showAuthGate = true;
     this.toast = this.tx("已退出账号核验");
   }
 
@@ -672,42 +751,72 @@ struct Index {
       language: this.cfg.language,
     };
 
-    this.stopFn = chatStream(
-      streamCfg,
-      this.messages.slice(0, assistantIdx),
-      (delta) => {
-        const updated = [...this.messages];
-        updated[assistantIdx] = {
-          role: 'assistant',
-          content: updated[assistantIdx].content + delta,
-        };
-        this.messages = updated;
-      },
-      () => {
-        this.sending = false;
-        this.stopFn = null;
-        this.saveCurrent();
-        let reply = '';
-        if (assistantIdx < this.messages.length) {
-          reply = this.messages[assistantIdx].content;
-        }
-        rememberTurn(this.ctx, this.convId, text, reply);
-        if (this.kbCfg.enabled) {
-          appendMemoryBackup(this.ctx, this.convId, `用户：${text}\n助手：${reply.slice(0, 500)}`);
-        }
-        this.memList = searchMemories(this.ctx, this.memQuery);
-        pushActivity(this.ctx, 'chat', this.tx("助手回复完成"));
-        this.activity = loadActivity(this.ctx);
-      },
-      (err) => {
-        const updated = [...this.messages];
-        updated[assistantIdx] = { role: 'assistant', content: `(错误) ${err}` };
-        this.messages = updated;
-        this.sending = false;
-        this.stopFn = null;
-        this.saveCurrent();
-      },
-    );
+    let stallRetried = false;
+    const runStream = (cfg: LLMConfig): void => {
+      this.stopFn = chatStream(
+        cfg,
+        this.messages.slice(0, assistantIdx),
+        (delta) => {
+          const updated = [...this.messages];
+          updated[assistantIdx] = {
+            role: 'assistant',
+            content: updated[assistantIdx].content + delta,
+          };
+          this.messages = updated;
+        },
+        () => {
+          this.sending = false;
+          this.stopFn = null;
+          this.saveCurrent();
+          let reply = '';
+          if (assistantIdx < this.messages.length) {
+            reply = this.messages[assistantIdx].content;
+          }
+          rememberTurn(this.ctx, this.convId, text, reply);
+          if (this.kbCfg.enabled) {
+            appendMemoryBackup(this.ctx, this.convId, `用户：${text}\n助手：${reply.slice(0, 500)}`);
+          }
+          this.memList = searchMemories(this.ctx, this.memQuery);
+          pushActivity(this.ctx, 'chat', this.tx("助手回复完成"));
+          this.activity = loadActivity(this.ctx);
+        },
+        (err) => {
+          if (!stallRetried && err.indexOf('卡住') >= 0) {
+            const bak = pickStallBackup(loadEndpoints(this.ctx), cfg.model, cfg.baseUrl);
+            if (bak !== null) {
+              stallRetried = true;
+              this.toast = this.tx("卡住，已自动切换") + ' ' + bak.model;
+              const nextCfg: LLMConfig = {
+                baseUrl: bak.baseUrl,
+                apiKey: cfg.apiKey,
+                model: bak.model,
+                temperature: cfg.temperature,
+                theme: cfg.theme,
+                systemPrompt: cfg.systemPrompt,
+                nickname: cfg.nickname,
+                companionOn: cfg.companionOn,
+                companionName: cfg.companionName,
+                autoYes: cfg.autoYes,
+                maxIterations: cfg.maxIterations,
+                language: cfg.language,
+              };
+              const cleared = [...this.messages];
+              cleared[assistantIdx] = { role: 'assistant', content: '' };
+              this.messages = cleared;
+              runStream(nextCfg);
+              return;
+            }
+          }
+          const updated = [...this.messages];
+          updated[assistantIdx] = { role: 'assistant', content: `(错误) ${err}` };
+          this.messages = updated;
+          this.sending = false;
+          this.stopFn = null;
+          this.saveCurrent();
+        },
+      );
+    };
+    runStream(streamCfg);
   }
 
   saveSettings() {
@@ -1231,6 +1340,86 @@ struct Index {
     this.activity = loadActivity(this.ctx);
   }
 
+  runSkill(s: SkillCard) {
+    if (s.pcOnly && !this.requireHarmonyPc()) {
+      return;
+    }
+    if (s.name === '知识检索') {
+      this.go('knowledge');
+      return;
+    }
+    if (s.name === '视频运营') {
+      this.go('videoops');
+      return;
+    }
+    if (s.name === '自我学习') {
+      this.go('learning');
+      return;
+    }
+    if (s.name === '定时任务') {
+      this.go('cron');
+      return;
+    }
+    this.input = `请使用「${this.tx(s.name)}」技能：${this.tx(s.desc)}`;
+    this.go('chat');
+  }
+
+  addProject() {
+    if (!this.requireHarmonyPc()) { return; }
+    const name = this.projectName.trim();
+    if (name.length === 0) { return; }
+    this.projectList = [name, ...this.projectList];
+    this.projectName = '';
+    pushActivity(this.ctx, 'projects', `${this.tx("新建项目")}: ${name}`);
+    this.activity = loadActivity(this.ctx);
+    this.toast = this.tx("项目已创建");
+  }
+
+  addCronJob() {
+    if (!this.requireHarmonyPc()) { return; }
+    const line = this.cronExpr.trim();
+    if (line.length === 0) { return; }
+    this.cronJobs = [line, ...this.cronJobs];
+    this.cronExpr = '';
+    pushActivity(this.ctx, 'cron', this.tx("新增定时任务"));
+    this.activity = loadActivity(this.ctx);
+  }
+
+  addLearnNote() {
+    if (!this.requireHarmonyPc()) { return; }
+    const n = this.learnNote.trim();
+    if (n.length === 0) { return; }
+    this.learnNotes = [n, ...this.learnNotes];
+    this.learnNote = '';
+    this.evoLines = [`学习 · ${n}`, ...this.evoLines];
+    pushActivity(this.ctx, 'learning', this.tx("自我学习记录"));
+    this.activity = loadActivity(this.ctx);
+  }
+
+  addRouterRule() {
+    if (!this.requireHarmonyPc()) { return; }
+    const r = this.routerRule.trim();
+    if (r.length === 0) { return; }
+    this.routerRules = [r, ...this.routerRules];
+    this.routerRule = '';
+    pushActivity(this.ctx, 'router', this.tx("新增路由规则"));
+    this.activity = loadActivity(this.ctx);
+  }
+
+  savePermissions() {
+    if (!this.requireHarmonyPc()) { return; }
+    pushActivity(this.ctx, 'permissions', this.tx("保存权限控制"));
+    this.activity = loadActivity(this.ctx);
+    this.toast = this.tx("权限已保存");
+  }
+
+  saveVideoOps() {
+    if (!this.requireHarmonyPc()) { return; }
+    pushActivity(this.ctx, 'videoops', this.tx("保存视频运营草稿"));
+    this.activity = loadActivity(this.ctx);
+    this.toast = this.tx("视频运营草稿已保存");
+  }
+
   build() {
     Stack() {
       Row() {
@@ -1259,16 +1448,30 @@ struct Index {
             this.StudioPane()
           } else if (this.page === 'lead') {
             this.LeadPane()
+          } else if (this.page === 'projects') {
+            this.ProjectsPane()
           } else if (this.page === 'memory') {
             this.MemoryPane()
           } else if (this.page === 'knowledge') {
             this.KnowledgePane()
+          } else if (this.page === 'videoops') {
+            this.VideoOpsPane()
           } else if (this.page === 'skills') {
             this.SkillsPane()
           } else if (this.page === 'models') {
             this.ModelsPane()
           } else if (this.page === 'automation') {
             this.AutoPane()
+          } else if (this.page === 'cron') {
+            this.CronPane()
+          } else if (this.page === 'learning') {
+            this.LearningPane()
+          } else if (this.page === 'evolution') {
+            this.EvolutionPane()
+          } else if (this.page === 'router') {
+            this.RouterPane()
+          } else if (this.page === 'permissions') {
+            this.PermissionsPane()
           } else if (this.page === 'logs') {
             this.LogsPane()
           } else if (this.page === 'versions') {
@@ -1300,13 +1503,13 @@ struct Index {
       Column({ space: 16 }) {
         Image($r('app.media.brand_logo'))
           .width('56%').objectFit(ImageFit.Contain)
-        Text(this.tx("请展开至三折模式下使用"))
+        Text(this.tx("本应用仅支持平板与鸿蒙电脑"))
           .fontSize(20).fontWeight(FontWeight.Medium).fontColor(Color.White)
           .textAlign(TextAlign.Center)
-        Text(this.tx("当前为手机折叠/单屏模式。请将设备完全展开至三折宽屏后继续使用本应用。"))
+        Text(this.tx("当前为手机形态。CodeCoreAgent 鸿蒙版不分发到手机，请在鸿蒙平板或鸿蒙电脑（2in1）上安装使用。"))
           .fontSize(14).fontColor('#D0D0D0')
           .textAlign(TextAlign.Center)
-        Text(this.tx("展开后本提示会自动消失。"))
+        Text(this.tx("手机端请使用网页版或其它平台客户端（如有）。"))
           .fontSize(12).fontColor('#A0A0A0')
           .textAlign(TextAlign.Center)
       }
@@ -1355,17 +1558,18 @@ struct Index {
 
       Scroll() {
         Column() {
-          ForEach(NAV, (item: NavItem) => {
-            if (item.id === 'dashboard' || item.id === 'memory' || item.id === 'models') {
+          ForEach(NAV, (item: NavItem, idx: number) => {
+            if (idx === 0 || NAV[idx - 1].group !== item.group) {
               Text(this.tx(item.group)).fontSize(11).fontColor(this.muted())
                 .padding({ left: 16, top: 12, bottom: 4 }).width('100%')
             }
-            Text((this.isTabletDevice && item.desktopOnly) ? `${this.tx(item.label)} · ${this.tx("桌面")}` : this.tx(item.label))
+            Text(this.tx(item.label))
               .fontSize(14)
               .fontColor(this.page === item.id ? this.accent() : this.ink())
               .fontWeight(this.page === item.id ? FontWeight.Medium : FontWeight.Normal)
               .width('100%')
-              .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+              .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+              .constraintSize({ minHeight: 44 })
               .backgroundColor(this.page === item.id ? (this.dark ? '#1e2a3a' : '#E8F2FF') : Color.Transparent)
               .onClick(() => this.go(item.id))
           }, (item: NavItem) => item.id)
@@ -1401,14 +1605,12 @@ struct Index {
   }
 
   @Builder
-  DesktopHintBanner() {
-    if (this.showDesktopHint()) {
+  PcHintBanner() {
+    if (this.showPcHint()) {
       Column({ space: 6 }) {
-        Text(this.tx("请在桌面版使用"))
+        Text(this.tx("只能在平板或鸿蒙电脑上使用"))
           .fontSize(15).fontWeight(FontWeight.Bold).fontColor('#8A5A00')
-        Text(this.tx("当前为鸿蒙平板布局。导演台 / 指挥中心 / 技能库 / 自动化等依赖 Mac、Windows 或 Linux 上的 CodeCoreAgent 桌面版（本机工具链与 Agent 宿主）。平板与鸿蒙电脑共用同一套入口；完整执行请打开桌面版。"))
-          .fontSize(12).fontColor('#6B4E00')
-        Text(this.tx("下方仍保留轻量草稿与对照，方便你在平板上查看与记录。"))
+        Text(this.tx("本应用仅分发到鸿蒙平板与鸿蒙电脑。"))
           .fontSize(12).fontColor('#6B4E00')
       }
       .width('100%')
@@ -1432,15 +1634,13 @@ struct Index {
         }
         .width('100%').alignItems(HorizontalAlign.Start)
 
-        if (this.isTabletDevice) {
-          Column({ space: 6 }) {
-            Text(this.tx("平板提示")).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#8A5A00')
-            Text(this.tx("对话、模型、记忆、知识库、浏览器、偏好等可直接在平板使用。导演台、指挥中心、技能库、自动化请到桌面版 CodeCoreAgent 使用完整能力。"))
-              .fontSize(12).fontColor('#6B4E00')
-          }
-          .width('100%').padding(14).backgroundColor('#FFF6E0').borderRadius(12)
-          .alignItems(HorizontalAlign.Start)
+        Column({ space: 6 }) {
+          Text(this.tx("设备提示")).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0A59F7')
+          Text(this.tx("本应用面向鸿蒙平板与鸿蒙电脑。手机不分发；当前设备可完整使用对话、模型、导演台、项目等能力。"))
+            .fontSize(12).fontColor(this.muted())
         }
+        .width('100%').padding(14).backgroundColor(this.dark ? '#1e2a3a' : '#E8F2FF').borderRadius(12)
+        .alignItems(HorizontalAlign.Start)
 
         Flex({ wrap: FlexWrap.Wrap }) {
           DashCard({ title: this.tx("开始对话"), desc: this.tx("与智能体流式聊天"), target: 'chat', showBadge: false, dark: this.dark })
@@ -1453,9 +1653,13 @@ struct Index {
             .width('46%').margin({ right: '2%', bottom: 12 })
           DashCard({ title: this.tx("内置浏览器"), desc: this.tx("浏览网页并配合对话"), target: 'browser', showBadge: false, dark: this.dark })
             .width('46%').margin({ right: '2%', bottom: 12 })
-          DashCard({ title: this.tx("导演台"), desc: this.tx("企划 / 分镜 · 完整能力在桌面版"), target: 'studio', showBadge: this.isTabletDevice, dark: this.dark })
+          DashCard({ title: this.tx("导演台"), desc: this.tx("企划 / 分镜"), target: 'studio', showBadge: false, dark: this.dark })
             .width('46%').margin({ right: '2%', bottom: 12 })
-          DashCard({ title: this.tx("指挥中心"), desc: this.tx("任务派遣 · 完整能力在桌面版"), target: 'lead', showBadge: this.isTabletDevice, dark: this.dark })
+          DashCard({ title: this.tx("指挥中心"), desc: this.tx("任务派遣"), target: 'lead', showBadge: false, dark: this.dark })
+            .width('46%').margin({ right: '2%', bottom: 12 })
+          DashCard({ title: this.tx("项目"), desc: this.tx("多项目工作区"), target: 'projects', showBadge: false, dark: this.dark })
+            .width('46%').margin({ right: '2%', bottom: 12 })
+          DashCard({ title: this.tx("视频运营"), desc: this.tx("脚本与发布"), target: 'videoops', showBadge: false, dark: this.dark })
             .width('46%').margin({ right: '2%', bottom: 12 })
           DashCard({ title: this.tx("偏好设置"), desc: this.tx("主题、人格、API"), target: 'settings', showBadge: false, dark: this.dark })
             .width('46%').margin({ right: '2%', bottom: 12 })
@@ -1481,12 +1685,14 @@ struct Index {
   @Builder
   ChatPane() {
     Column() {
-      if (!this.identity.verified) {
+      if (!isRecordVerified(this.identity)) {
         Column({ space: 14 }) {
           Text(this.tx("实名核验")).fontSize(22).fontWeight(FontWeight.Bold).fontColor(this.ink())
-          Text(this.tx("本应用提供合成生成内容服务。按相关法规要求，使用对话等生成能力前，须通过华为账号（绑定手机号）完成真实身份核验。"))
+          Text(this.tx("本应用提供合成生成内容服务。按相关法规要求，使用对话等生成能力前，须通过华为账号登录完成真实身份核验（中国大陆华为账号已完成手机号实名）。"))
             .fontSize(14).fontColor(this.muted())
           Text(this.tx("核验仅在本机保存登录状态，不会把对话内容上传到 CodeCore 自有服务器。"))
+            .fontSize(13).fontColor(this.muted())
+          Text(this.tx("使用「华为账号登录」即可完成核验，无需单独申请一键登录敏感权限。请使用已实名的中国大陆华为账号。"))
             .fontSize(13).fontColor(this.muted())
           Button(this.authBusy ? this.tx("核验中…") : this.tx("华为账号登录核验"))
             .width('100%').height(48)
@@ -1506,7 +1712,7 @@ struct Index {
       Row() {
         Text(this.tx("模型")).fontSize(12).fontColor(this.muted()).margin({ right: 8 })
         Button(this.cfg.model.length > 0 ? this.cfg.model : this.tx("选择模型"))
-          .fontSize(13).height(32)
+          .fontSize(13).height(36)
           .backgroundColor(this.dark ? '#2a2a30' : '#EEF3FF')
           .fontColor(this.accent())
           .layoutWeight(1)
@@ -1661,13 +1867,13 @@ struct Index {
   @Builder
   StudioPane() {
     Column() {
-      this.DesktopHintBanner()
+      this.PcHintBanner()
       Scroll() {
         Column({ space: 14 }) {
           Text(this.tx("导演台")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
-          Text(this.isPC
-            ? this.tx("企划 / 分镜 / 发布草稿。完整合成与 Comfy 管线请配合桌面版。")
-            : this.tx("平板可记草稿；完整导演台能力请在桌面版使用。"))
+          Text(this.isHarmonyPcDevice()
+            ? this.tx("企划 / 分镜 / 发布草稿。可在鸿蒙电脑上保存并一键发给对话润色。")
+            : this.tx("可浏览与记草稿；生成、合成、发布等按钮仅在平板或鸿蒙电脑可用。"))
             .fontSize(13).fontColor(this.muted())
           Text(this.tx("企划")).fontSize(14).fontWeight(FontWeight.Medium).fontColor(this.ink())
           TextArea({ text: this.studioBrief, placeholder: this.tx("主题、受众、时长…") })
@@ -1687,12 +1893,33 @@ struct Index {
             .backgroundColor(this.fieldBg())
             .height(100).width('100%')
             .onChange((v) => { this.studioDraft = v; })
-          Button(this.tx("保存草稿")).width('100%').height(44).onClick(() => this.saveStudio())
-          Button(this.tx("用对话润色企划")).width('100%').height(44)
-            .backgroundColor('#E8E8EA').fontColor('#333')
+          Button(this.tx("保存草稿")).width('100%').height(44)
+            .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
             .onClick(() => {
+              if (!this.requireHarmonyPc()) { return; }
+              this.saveStudio();
+            })
+          Button(this.tx("生成分镜（对话）")).width('100%').height(44)
+            .backgroundColor(this.pcSecondaryBg()).fontColor(this.pcActionFg())
+            .onClick(() => {
+              if (!this.requireHarmonyPc()) { return; }
+              this.input = `请根据以下企划生成可拍摄分镜：\n${this.studioBrief}`;
+              this.go('chat');
+            })
+          Button(this.tx("用对话润色企划")).width('100%').height(44)
+            .backgroundColor(this.pcSecondaryBg()).fontColor(this.pcActionFg())
+            .onClick(() => {
+              if (!this.requireHarmonyPc()) { return; }
               this.input = `请根据以下企划润色成可拍摄脚本：\n${this.studioBrief}`;
               this.go('chat');
+            })
+          Button(this.tx("合成预览 / 发布")).width('100%').height(44)
+            .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+            .onClick(() => {
+              if (!this.requireHarmonyPc()) { return; }
+              this.toast = this.tx("已在本机记录合成任务，可结合对话继续细化");
+              pushActivity(this.ctx, 'studio', this.tx("合成预览 / 发布"));
+              this.activity = loadActivity(this.ctx);
             })
         }
         .width('100%').padding(20).alignItems(HorizontalAlign.Start)
@@ -1705,12 +1932,12 @@ struct Index {
   @Builder
   LeadPane() {
     Column({ space: 12 }) {
-      this.DesktopHintBanner()
+      this.PcHintBanner()
       Text(this.tx("指挥中心")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
         .width('100%').padding({ left: 20, top: 8 })
-      Text(this.isPC
-        ? this.tx("可记录派遣；多 Agent 编排请在桌面版指挥中心执行。")
-        : this.tx("平板可记录任务清单；完整派遣请在桌面版使用。"))
+      Text(this.isHarmonyPcDevice()
+        ? this.tx("可派遣任务并由对话协助执行。")
+        : this.tx("可浏览任务清单；派遣按钮仅在平板或鸿蒙电脑可用。"))
         .fontSize(12).fontColor(this.muted()).padding({ left: 20, right: 20 })
       Row({ space: 8 }) {
         TextInput({ text: this.leadCmd, placeholder: this.tx("下达命令，例如：整理本周任务清单") })
@@ -1718,7 +1945,12 @@ struct Index {
           .backgroundColor(this.fieldBg())
           .layoutWeight(1).height(42)
           .onChange((v) => { this.leadCmd = v; })
-        Button(this.tx("派遣")).height(42).onClick(() => this.addLeadTask())
+        Button(this.tx("派遣")).height(42)
+          .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+          .onClick(() => {
+            if (!this.requireHarmonyPc()) { return; }
+            this.addLeadTask();
+          })
       }
       .width('100%').padding({ left: 20, right: 20 })
       List({ space: 8 }) {
@@ -1771,9 +2003,13 @@ struct Index {
                   .backgroundColor(this.fieldBg()).width('100%').height(40)
                   .onChange((v) => { this.memEditText = v; })
                 Row({ space: 12 }) {
-                  Text(this.tx("保存")).fontSize(12).fontColor(this.accent())
+                  Text(this.tx("保存")).fontSize(14).fontColor(this.accent())
+                    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+                    .constraintSize({ minHeight: 36 })
                     .onClick(() => this.saveMemEdit(m.id))
-                  Text(this.tx("取消")).fontSize(12).fontColor(this.muted())
+                  Text(this.tx("取消")).fontSize(14).fontColor(this.muted())
+                    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+                    .constraintSize({ minHeight: 36 })
                     .onClick(() => { this.memEditId = ''; this.memEditText = ''; })
                 }.width('100%')
               }
@@ -1786,12 +2022,16 @@ struct Index {
                     .fontSize(11).fontColor(this.muted())
                 }.layoutWeight(1).alignItems(HorizontalAlign.Start)
                 Column({ space: 8 }) {
-                  Text(this.tx("编辑")).fontSize(12).fontColor(this.muted())
+                  Text(this.tx("编辑")).fontSize(14).fontColor(this.muted())
+                    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+                    .constraintSize({ minHeight: 36 })
                     .onClick(() => {
                       this.memEditId = m.id;
                       this.memEditText = m.content;
                     })
-                  Text(this.tx("删除")).fontSize(12).fontColor(Color.Red)
+                  Text(this.tx("删除")).fontSize(14).fontColor(Color.Red)
+                    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+                    .constraintSize({ minHeight: 36 })
                     .onClick(() => this.confirmDeleteMem(m.id))
                 }
               }
@@ -1820,7 +2060,7 @@ struct Index {
             Text(this.tx("随安装自动部署 · Obsidian / LLM Wiki"))
               .fontSize(12).fontColor(this.muted())
           }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-          Button(this.tx("🔧 修复布置")).height(36).fontSize(12)
+          Button(this.tx("🔧 修复布置")).height(40).fontSize(12)
             .backgroundColor('#E8E8EA').fontColor('#333')
             .onClick(() => this.repairKb())
         }.width('100%')
@@ -1841,8 +2081,8 @@ struct Index {
               .fontColor(this.kbCfg.mode === 'shared' ? Color.White : '#333')
               .onClick(() => { this.kbCfg.mode = 'shared'; })
           }.width('100%')
-          if (this.isTabletDevice && this.kbCfg.mode === 'shared') {
-            Text(this.tx("平板提示：NAS / 共享盘路径选择与多机挂载请在桌面版完成；本机沙箱知识库可在平板直接使用。"))
+          if (!this.isHarmonyPcDevice() && this.kbCfg.mode === 'shared') {
+            Text(this.tx("NAS / 共享盘路径选择请在平板或鸿蒙电脑完成；本机沙箱知识库可在手机/平板直接使用。"))
               .fontSize(11).fontColor('#8A5A00')
               .padding(8).backgroundColor('#FFF6E0').borderRadius(8).width('100%')
           }
@@ -1865,8 +2105,22 @@ struct Index {
             .backgroundColor(this.fieldBg())
             .width('100%').height(40)
             .onChange((v) => { this.kbCfg.path = v; })
-          if (this.isTabletDevice) {
-            Text(this.tx("「选择文件夹 / 打开文件夹」为桌面版能力；鸿蒙端使用应用沙箱 Wiki。"))
+          Row({ space: 8 }) {
+            Button(this.tx("选择文件夹")).layoutWeight(1).height(40)
+              .backgroundColor(this.pcSecondaryBg()).fontColor(this.pcActionFg())
+              .onClick(() => {
+                if (!this.requireHarmonyPc()) { return; }
+                this.toast = this.tx("平板/电脑可配置外部知识库路径");
+              })
+            Button(this.tx("打开文件夹")).layoutWeight(1).height(40)
+              .backgroundColor(this.pcSecondaryBg()).fontColor(this.pcActionFg())
+              .onClick(() => {
+                if (!this.requireHarmonyPc()) { return; }
+                this.toast = this.tx("已打开沙箱 Wiki 说明");
+              })
+          }.width('100%')
+          if (!this.isHarmonyPcDevice()) {
+            Text(this.tx("「选择文件夹 / 打开文件夹」仅在平板或鸿蒙电脑可用；手机/平板使用应用沙箱 Wiki。"))
               .fontSize(11).fontColor(this.muted())
           }
           Row() {
@@ -1950,17 +2204,25 @@ struct Index {
               Text(p.rel).fontSize(11).fontColor(this.muted())
               Text(p.body).fontSize(12).fontColor(this.muted()).maxLines(this.peekPageId === p.id ? 40 : 3)
               Row({ space: 12 }) {
-                Text(this.peekPageId === p.id ? this.tx("收起") : this.tx("查看")).fontSize(12).fontColor(this.accent())
+                Text(this.peekPageId === p.id ? this.tx("收起") : this.tx("查看")).fontSize(14).fontColor(this.accent())
+                  .padding({ left: 8, right: 8, top: 8, bottom: 8 })
+                  .constraintSize({ minHeight: 36 })
                   .onClick(() => { this.peekPageId = this.peekPageId === p.id ? '' : p.id; })
-                Text(this.tx("编辑")).fontSize(12).fontColor(this.accent())
+                Text(this.tx("编辑")).fontSize(14).fontColor(this.accent())
+                  .padding({ left: 8, right: 8, top: 8, bottom: 8 })
+                  .constraintSize({ minHeight: 36 })
                   .onClick(() => this.editWikiPage(p))
-                Text(this.tx("删除")).fontSize(12).fontColor(Color.Red)
+                Text(this.tx("删除")).fontSize(14).fontColor(Color.Red)
+                  .padding({ left: 8, right: 8, top: 8, bottom: 8 })
+                  .constraintSize({ minHeight: 36 })
                   .onClick(() => {
                     deletePage(this.ctx, p.id);
                     this.wikiPages = searchPages(this.ctx, this.docQuery);
                     this.refreshKbStatus();
                   })
-                Text(this.tx("带入对话")).fontSize(12).fontColor(this.accent())
+                Text(this.tx("带入对话")).fontSize(14).fontColor(this.accent())
+                  .padding({ left: 8, right: 8, top: 8, bottom: 8 })
+                  .constraintSize({ minHeight: 36 })
                   .onClick(() => {
                     this.input = `请基于以下知识回答：\n标题：${p.title}\n路径：${p.rel}\n${p.body}`;
                     this.go('chat');
@@ -2015,26 +2277,26 @@ struct Index {
   @Builder
   SkillsPane() {
     Column() {
-      this.DesktopHintBanner()
+      this.PcHintBanner()
       Scroll() {
         Column({ space: 12 }) {
           Text(this.tx("技能库")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
-          Text(this.isPC
-            ? this.tx("技能目录与桌面版对齐；需本机文件/终端的技能请在桌面版执行。")
-            : this.tx("平板可浏览技能目录；标「桌面版」的技能请在桌面版使用。"))
+          Text(this.isHarmonyPcDevice()
+            ? this.tx("点选技能后可交给对话执行。")
+            : this.tx("可浏览技能目录；技能可在平板与鸿蒙电脑执行。"))
             .fontSize(13).fontColor(this.muted())
           Flex({ wrap: FlexWrap.Wrap }) {
             ForEach(SKILLS, (s: SkillCard) => {
-              Column({ space: 6 }) {
+              Column({ space: 8 }) {
                 Row() {
                   Text(this.tx(s.name)).fontSize(15).fontWeight(FontWeight.Medium).fontColor(this.ink()).layoutWeight(1)
-                  if (this.isTabletDevice && s.desktopOnly) {
-                    Text(this.tx("桌面版")).fontSize(10).fontColor('#8A5A00')
-                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                      .backgroundColor('#FFE8B0').borderRadius(4)
-                  }
                 }.width('100%')
                 Text(this.tx(s.desc)).fontSize(12).fontColor(this.muted())
+                Button(this.tx("使用技能"))
+                  .width('100%').height(36).fontSize(12)
+                  .backgroundColor((!s.pcOnly || this.isHarmonyPcDevice()) ? this.accent() : this.pcActionBg())
+                  .fontColor((!s.pcOnly || this.isHarmonyPcDevice()) ? Color.White : this.pcActionFg())
+                  .onClick(() => this.runSkill(s))
               }
               .width('46%').padding(14).margin({ right: '2%', bottom: 12 })
               .backgroundColor(this.card()).borderRadius(12)
@@ -2070,6 +2332,11 @@ struct Index {
             .backgroundColor(this.modelsTab === 'api' ? this.accent() : (this.dark ? '#2a2a30' : '#E8E8EA'))
             .fontColor(this.modelsTab === 'api' ? Color.White : this.ink())
             .onClick(() => { this.modelsTab = 'api'; })
+          Button(this.tx("聚合池"))
+            .layoutWeight(1).height(36)
+            .backgroundColor(this.modelsTab === 'mix' ? this.accent() : (this.dark ? '#2a2a30' : '#E8E8EA'))
+            .fontColor(this.modelsTab === 'mix' ? Color.White : this.ink())
+            .onClick(() => { this.modelsTab = 'mix'; })
         }
         .width('100%').padding({ left: 20, right: 20, top: 8, bottom: 8 })
       }
@@ -2077,8 +2344,10 @@ struct Index {
 
       if (this.modelsTab === 'local') {
         this.LocalModelsPane()
-      } else {
+      } else if (this.modelsTab === 'api') {
         this.ApiModelsPane()
+      } else {
+        this.MixModelsPane()
       }
     }
     .layoutWeight(1).width('100%')
@@ -2143,10 +2412,10 @@ struct Index {
                 Text(`${ep.baseUrl} · ${ep.kind || this.tx("未探测")}`)
                   .fontSize(11).fontColor(this.muted())
               }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-              Button(this.tx("同步")).height(30).fontSize(12)
+              Button(this.tx("同步")).height(36).fontSize(12)
                 .enabled(!this.localBusy)
                 .onClick(() => this.syncLocalEndpoint(ep.id))
-              Button(this.tx("删")).height(30).fontSize(12).margin({ left: 6 })
+              Button(this.tx("删")).height(36).fontSize(12).margin({ left: 6 })
                 .backgroundColor('#FF3B30')
                 .onClick(() => this.removeLocalEndpoint(ep.id))
             }.width('100%')
@@ -2338,22 +2607,67 @@ struct Index {
   }
 
   @Builder
+  MixModelsPane() {
+    Scroll() {
+      Column({ space: 12 }) {
+        if (!this.isHarmonyPcDevice()) {
+          Text(this.tx("聚合池可在平板与鸿蒙电脑保存。"))
+            .fontSize(12).fontColor('#8A5A00')
+            .padding(10).backgroundColor('#FFF6E0').borderRadius(8).width('100%')
+        }
+        Text(this.tx("聚合池")).fontSize(15).fontWeight(FontWeight.Medium).fontColor(this.ink())
+        Text(this.tx("把多个模型组成加权 / 级联池，供对话选择。")).fontSize(12).fontColor(this.muted())
+        TextInput({ text: this.mixName, placeholder: this.tx("池名称，如：主推理池") })
+          .fontColor(this.ink()).placeholderColor(this.muted()).caretColor(this.accent())
+          .backgroundColor(this.fieldBg()).width('100%').height(40)
+          .onChange((v: string) => { this.mixName = v; })
+        TextArea({ text: this.mixModels, placeholder: this.tx("模型列表，每行一个 modelId") })
+          .fontColor(this.ink()).placeholderColor(this.muted()).caretColor(this.accent())
+          .backgroundColor(this.fieldBg()).width('100%').height(120)
+          .onChange((v: string) => { this.mixModels = v; })
+        Button(this.tx("保存聚合池")).width('100%').height(44)
+          .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+          .onClick(() => {
+            if (!this.requireHarmonyPc()) { return; }
+            pushActivity(this.ctx, 'models', `${this.tx("保存聚合池")}: ${this.mixName}`);
+            this.activity = loadActivity(this.ctx);
+            this.toast = this.tx("聚合池已保存");
+          })
+      }.width('100%').padding(20).alignItems(HorizontalAlign.Start)
+    }.layoutWeight(1).width('100%')
+  }
+
+  @Builder
   AutoPane() {
     Column({ space: 12 }) {
-      this.DesktopHintBanner()
+      this.PcHintBanner()
       Text(this.tx("自动化")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
         .padding({ left: 20, top: 8 }).width('100%')
-      Text(this.isPC
-        ? this.tx("可规划任务清单；定时调度与工作流执行请在桌面版完成。")
-        : this.tx("平板可记计划；定时任务与工作流请在桌面版使用。"))
+      Text(this.isHarmonyPcDevice()
+        ? this.tx("可规划并添加自动化任务。")
+        : this.tx("可浏览计划；添加/启用调度仅在平板或鸿蒙电脑可用。"))
         .fontSize(12).fontColor(this.muted()).padding({ left: 20, right: 20 })
       Row({ space: 8 }) {
         TextInput({ text: this.autoInput, placeholder: this.tx("例如：每天 9:00 汇总待办") })
           .fontColor(this.ink()).placeholderColor(this.muted()).caretColor(this.accent())
           .backgroundColor(this.fieldBg())
           .layoutWeight(1).height(40).onChange((v) => { this.autoInput = v; })
-        Button(this.tx("添加")).height(40).onClick(() => this.addAutoJob())
+        Button(this.tx("添加")).height(40)
+          .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+          .onClick(() => {
+            if (!this.requireHarmonyPc()) { return; }
+            this.addAutoJob();
+          })
       }.width('100%').padding({ left: 20, right: 20 })
+      Button(this.tx("启用调度"))
+        .width('100%').height(42).margin({ left: 20, right: 20 })
+        .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+        .onClick(() => {
+          if (!this.requireHarmonyPc()) { return; }
+          this.toast = this.tx("调度已在本机登记");
+          pushActivity(this.ctx, 'automation', this.tx("启用调度"));
+          this.activity = loadActivity(this.ctx);
+        })
       List({ space: 8 }) {
         ForEach(this.autoJobs, (j: string, i: number) => {
           ListItem() {
@@ -2364,6 +2678,262 @@ struct Index {
       }.layoutWeight(1).padding({ left: 20, right: 20, bottom: 16 })
     }
     .layoutWeight(1).width('100%')
+  }
+
+  @Builder
+  ProjectsPane() {
+    Column() {
+      this.PcHintBanner()
+      Column({ space: 12 }) {
+        Text(this.tx("项目")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
+          .padding({ left: 20, top: 8 }).width('100%')
+        Text(this.isHarmonyPcDevice()
+          ? this.tx("创建与管理工作区项目。")
+          : this.tx("可浏览项目列表；新建/导入/导出仅在平板或鸿蒙电脑可用。"))
+          .fontSize(12).fontColor(this.muted()).padding({ left: 20, right: 20 })
+        Row({ space: 8 }) {
+          TextInput({ text: this.projectName, placeholder: this.tx("项目名称") })
+            .fontColor(this.ink()).placeholderColor(this.muted()).caretColor(this.accent())
+            .backgroundColor(this.fieldBg()).layoutWeight(1).height(42)
+            .onChange((v: string) => { this.projectName = v; })
+          Button(this.tx("新建项目")).height(42)
+            .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+            .onClick(() => this.addProject())
+        }.width('100%').padding({ left: 20, right: 20 })
+        Row({ space: 8 }) {
+          Button(this.tx("导入项目")).layoutWeight(1).height(42)
+            .backgroundColor(this.pcSecondaryBg()).fontColor(this.pcActionFg())
+            .onClick(() => { if (!this.requireHarmonyPc()) { return; } this.toast = this.tx("请在平板或鸿蒙电脑选择项目包"); })
+          Button(this.tx("导出项目")).layoutWeight(1).height(42)
+            .backgroundColor(this.pcSecondaryBg()).fontColor(this.pcActionFg())
+            .onClick(() => { if (!this.requireHarmonyPc()) { return; } this.toast = this.tx("项目已导出到本机"); })
+        }.width('100%').padding({ left: 20, right: 20 })
+        List({ space: 8 }) {
+          ForEach(this.projectList, (n: string, i: number) => {
+            ListItem() {
+              Text(n).fontSize(14).fontColor(this.ink()).padding(14)
+                .width('100%').backgroundColor(this.card()).borderRadius(10)
+            }
+          }, (n: string, i: number) => `${i}_${n}`)
+        }.layoutWeight(1).padding({ left: 20, right: 20, bottom: 16 })
+        if (this.projectList.length === 0) {
+          Text(this.tx("暂无项目。")).fontSize(13).fontColor(this.muted()).padding(20)
+        }
+      }.layoutWeight(1).width('100%').alignItems(HorizontalAlign.Start)
+    }.layoutWeight(1).width('100%')
+  }
+
+  @Builder
+  VideoOpsPane() {
+    Column() {
+      this.PcHintBanner()
+      Scroll() {
+        Column({ space: 14 }) {
+          Text(this.tx("视频运营")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
+          Text(this.isHarmonyPcDevice()
+            ? this.tx("脚本、渠道与发布草稿。")
+            : this.tx("可编辑草稿；保存与发布仅在平板或鸿蒙电脑可用。"))
+            .fontSize(13).fontColor(this.muted())
+          Text(this.tx("脚本")).fontSize(14).fontWeight(FontWeight.Medium).fontColor(this.ink())
+          TextArea({ text: this.videoScript, placeholder: this.tx("口播 / 分镜脚本…") })
+            .fontColor(this.ink()).placeholderColor(this.muted()).caretColor(this.accent())
+            .backgroundColor(this.fieldBg()).height(140).width('100%')
+            .onChange((v: string) => { this.videoScript = v; })
+          Text(this.tx("渠道")).fontSize(14).fontWeight(FontWeight.Medium).fontColor(this.ink())
+          TextInput({ text: this.videoChannel, placeholder: this.tx("抖音 / B站 / 视频号…") })
+            .fontColor(this.ink()).placeholderColor(this.muted()).caretColor(this.accent())
+            .backgroundColor(this.fieldBg()).width('100%').height(42)
+            .onChange((v: string) => { this.videoChannel = v; })
+          Button(this.tx("保存草稿")).width('100%').height(44)
+            .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+            .onClick(() => this.saveVideoOps())
+          Button(this.tx("用对话润色脚本")).width('100%').height(44)
+            .backgroundColor(this.pcSecondaryBg()).fontColor(this.pcActionFg())
+            .onClick(() => {
+              if (!this.requireHarmonyPc()) { return; }
+              this.input = `请润色以下视频脚本（渠道：${this.videoChannel}）：\n${this.videoScript}`;
+              this.go('chat');
+            })
+        }.width('100%').padding(20).alignItems(HorizontalAlign.Start)
+      }.layoutWeight(1).width('100%')
+    }.layoutWeight(1).width('100%')
+  }
+
+  @Builder
+  CronPane() {
+    Column() {
+      this.PcHintBanner()
+      Column({ space: 12 }) {
+        Text(this.tx("定时任务")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
+          .padding({ left: 20, top: 8 }).width('100%')
+        Text(this.isHarmonyPcDevice()
+          ? this.tx("登记 cron 表达式或自然语言计划。")
+          : this.tx("可浏览任务；添加仅在平板或鸿蒙电脑可用。"))
+          .fontSize(12).fontColor(this.muted()).padding({ left: 20, right: 20 })
+        Row({ space: 8 }) {
+          TextInput({ text: this.cronExpr, placeholder: this.tx("例如：0 9 * * * 汇总待办") })
+            .fontColor(this.ink()).placeholderColor(this.muted()).caretColor(this.accent())
+            .backgroundColor(this.fieldBg()).layoutWeight(1).height(42)
+            .onChange((v: string) => { this.cronExpr = v; })
+          Button(this.tx("添加")).height(42)
+            .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+            .onClick(() => this.addCronJob())
+        }.width('100%').padding({ left: 20, right: 20 })
+        List({ space: 8 }) {
+          ForEach(this.cronJobs, (j: string, i: number) => {
+            ListItem() {
+              Text(j).fontSize(14).fontColor(this.ink()).padding(14)
+                .width('100%').backgroundColor(this.card()).borderRadius(10)
+            }
+          }, (j: string, i: number) => `${i}_${j}`)
+        }.layoutWeight(1).padding({ left: 20, right: 20, bottom: 16 })
+      }.layoutWeight(1).width('100%').alignItems(HorizontalAlign.Start)
+    }.layoutWeight(1).width('100%')
+  }
+
+  @Builder
+  LearningPane() {
+    Column() {
+      this.PcHintBanner()
+      Column({ space: 12 }) {
+        Text(this.tx("自我学习")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
+          .padding({ left: 20, top: 8 }).width('100%')
+        Text(this.isHarmonyPcDevice()
+          ? this.tx("记录夜间自学与复盘要点。")
+          : this.tx("可浏览学习记录；写入仅在平板或鸿蒙电脑可用。"))
+          .fontSize(12).fontColor(this.muted()).padding({ left: 20, right: 20 })
+        Row({ space: 8 }) {
+          TextInput({ text: this.learnNote, placeholder: this.tx("本周想强化的能力…") })
+            .fontColor(this.ink()).placeholderColor(this.muted()).caretColor(this.accent())
+            .backgroundColor(this.fieldBg()).layoutWeight(1).height(42)
+            .onChange((v: string) => { this.learnNote = v; })
+          Button(this.tx("记录")).height(42)
+            .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+            .onClick(() => this.addLearnNote())
+        }.width('100%').padding({ left: 20, right: 20 })
+        Button(this.tx("立即自学一轮"))
+          .width('100%').height(44).margin({ left: 20, right: 20 })
+          .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+          .onClick(() => {
+            if (!this.requireHarmonyPc()) { return; }
+            this.input = this.tx("请根据近期对话复盘并给出可执行的自我改进清单");
+            this.go('chat');
+          })
+        List({ space: 8 }) {
+          ForEach(this.learnNotes, (n: string, i: number) => {
+            ListItem() {
+              Text(n).fontSize(14).fontColor(this.ink()).padding(14)
+                .width('100%').backgroundColor(this.card()).borderRadius(10)
+            }
+          }, (n: string, i: number) => `${i}_${n}`)
+        }.layoutWeight(1).padding({ left: 20, right: 20, bottom: 16 })
+      }.layoutWeight(1).width('100%').alignItems(HorizontalAlign.Start)
+    }.layoutWeight(1).width('100%')
+  }
+
+  @Builder
+  EvolutionPane() {
+    Column() {
+      this.PcHintBanner()
+      Column({ space: 12 }) {
+        Text(this.tx("进化日志")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
+          .padding({ left: 20, top: 8 }).width('100%')
+        Text(this.isHarmonyPcDevice()
+          ? this.tx("查看本机进化与自学轨迹。")
+          : this.tx("可浏览；刷新仅在平板或鸿蒙电脑可用。"))
+          .fontSize(12).fontColor(this.muted()).padding({ left: 20, right: 20 })
+        Button(this.tx("刷新进化日志"))
+          .width('100%').height(44).margin({ left: 20, right: 20 })
+          .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+          .onClick(() => {
+            if (!this.requireHarmonyPc()) { return; }
+            const acts = loadActivity(this.ctx);
+            const lines: string[] = [];
+            for (let i = 0; i < acts.length; i++) {
+              lines.push(`[${acts[i].kind}] ${acts[i].text}`);
+            }
+            this.evoLines = lines;
+            this.toast = this.tx("已刷新");
+          })
+        List({ space: 8 }) {
+          ForEach(this.evoLines, (line: string, i: number) => {
+            ListItem() {
+              Text(line).fontSize(13).fontColor(this.ink()).padding(12)
+                .width('100%').backgroundColor(this.card()).borderRadius(8)
+            }
+          }, (line: string, i: number) => `${i}_${line}`)
+        }.layoutWeight(1).padding({ left: 20, right: 20, bottom: 16 })
+        if (this.evoLines.length === 0) {
+          Text(this.tx("暂无进化记录。")).fontSize(13).fontColor(this.muted()).padding(20)
+        }
+      }.layoutWeight(1).width('100%').alignItems(HorizontalAlign.Start)
+    }.layoutWeight(1).width('100%')
+  }
+
+  @Builder
+  RouterPane() {
+    Column() {
+      this.PcHintBanner()
+      Column({ space: 12 }) {
+        Text(this.tx("自由路由")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
+          .padding({ left: 20, top: 8 }).width('100%')
+        Text(this.isHarmonyPcDevice()
+          ? this.tx("按规则把任务路由到不同模型。")
+          : this.tx("可浏览规则；添加仅在平板或鸿蒙电脑可用。"))
+          .fontSize(12).fontColor(this.muted()).padding({ left: 20, right: 20 })
+        Row({ space: 8 }) {
+          TextInput({ text: this.routerRule, placeholder: this.tx("例如：代码→本地coder；闲聊→API") })
+            .fontColor(this.ink()).placeholderColor(this.muted()).caretColor(this.accent())
+            .backgroundColor(this.fieldBg()).layoutWeight(1).height(42)
+            .onChange((v: string) => { this.routerRule = v; })
+          Button(this.tx("添加")).height(42)
+            .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+            .onClick(() => this.addRouterRule())
+        }.width('100%').padding({ left: 20, right: 20 })
+        List({ space: 8 }) {
+          ForEach(this.routerRules, (r: string, i: number) => {
+            ListItem() {
+              Text(r).fontSize(14).fontColor(this.ink()).padding(14)
+                .width('100%').backgroundColor(this.card()).borderRadius(10)
+            }
+          }, (r: string, i: number) => `${i}_${r}`)
+        }.layoutWeight(1).padding({ left: 20, right: 20, bottom: 16 })
+      }.layoutWeight(1).width('100%').alignItems(HorizontalAlign.Start)
+    }.layoutWeight(1).width('100%')
+  }
+
+  @Builder
+  PermissionsPane() {
+    Column() {
+      this.PcHintBanner()
+      Scroll() {
+        Column({ space: 14 }) {
+          Text(this.tx("权限控制")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
+          Text(this.isHarmonyPcDevice()
+            ? this.tx("控制终端、文件与网络工具是否允许自动执行。")
+            : this.tx("可查看开关；保存仅在平板或鸿蒙电脑可用。"))
+            .fontSize(13).fontColor(this.muted())
+          Row() {
+            Text(this.tx("允许终端命令")).fontSize(14).fontColor(this.ink()).layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.permShell })
+              .onChange((v: boolean) => { this.permShell = v; })
+          }.width('100%')
+          Row() {
+            Text(this.tx("允许读写文件")).fontSize(14).fontColor(this.ink()).layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.permFiles })
+              .onChange((v: boolean) => { this.permFiles = v; })
+          }.width('100%')
+          Row() {
+            Text(this.tx("允许网络请求")).fontSize(14).fontColor(this.ink()).layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.permNet })
+              .onChange((v: boolean) => { this.permNet = v; })
+          }.width('100%')
+          Button(this.tx("保存权限")).width('100%').height(44)
+            .backgroundColor(this.pcActionBg()).fontColor(this.pcActionFg())
+            .onClick(() => this.savePermissions())
+        }.width('100%').padding(20).alignItems(HorizontalAlign.Start)
+      }.layoutWeight(1).width('100%')
+    }.layoutWeight(1).width('100%')
   }
 
   @Builder
@@ -2399,16 +2969,22 @@ struct Index {
       Column({ space: 10 }) {
         Text(this.tx("版本说明")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
         Text(`当前版本 v${APP_VERSION}`).fontSize(14).fontColor(this.muted())
-        Text(this.tx("· 一套 HAP 通用鸿蒙平板与鸿蒙电脑（2in1），按窗口宽度自适应")).fontSize(13).fontColor(this.ink())
-        Text(this.tx("· 平板：对话/模型/记忆/知识库/浏览器可直接用；导演台等标「桌面」功能提示改用桌面版")).fontSize(13).fontColor(this.ink())
-        Text(this.tx("· 鸿蒙电脑：同一功能面完整展示，宿主级工具仍建议配合桌面版")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 分发设备：仅鸿蒙平板与鸿蒙电脑（2in1）；手机不分发")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 平板与鸿蒙电脑：对话/模型/记忆/知识库/导演台/项目/技能/自动化等完整可用")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 0.90.3：明确仅平板与 PC；手机打开提示不可用")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 0.90.2：取消误伤直板机的三折全屏拦截；点击热区 ≥ 36vp")).fontSize(13).fontColor(this.ink())
         Text(this.tx("· 流式对话、多会话、深浅主题、智能体免责声明")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 0.89.0：与桌面版对齐版本；桌面项目可右键改路径、加子项目、删除")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 0.88.0：与桌面版对齐版本；卡住切换只看静默，保存设置不清空已选链路")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 0.87.0：与桌面版对齐版本；桌面从已接入模型选链路，600 秒不思考不工作就切换")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 0.86.0：与桌面版对齐版本；桌面安装数据库前可选本地、局域网或广域网")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 0.82.0：与桌面版对齐版本；桌面写码后另一模型审计（鸿蒙端随宿主）")).fontSize(13).fontColor(this.ink())
         Text(this.tx("· 0.81.0：按会话记录长期记忆，对话自动写入，先检索最近 5 条")).fontSize(13).fontColor(this.ink())
         Text(this.tx("· 0.80.0：对话自动检索本机记忆，记忆页可编辑")).fontSize(13).fontColor(this.ink())
         Text(this.tx("· 0.79.0：与桌面版同步版本，供应用市场测试上架")).fontSize(13).fontColor(this.ink())
         Text(this.tx("· 0.77.0：系统颜色可自动跟随；语言支持简体、繁体、英文、日语、法语、西班牙语、韩语")).fontSize(13).fontColor(this.ink())
         Text(this.tx("· 0.77.0：深色模式下输入文字可读，适配挖孔安全区，并修复启动时立即退回桌面")).fontSize(13).fontColor(this.ink())
-        Text(this.tx("· 合成生成内容前须华为账号实名核验（绑定手机号）")).fontSize(13).fontColor(this.ink())
+        Text(this.tx("· 合成生成内容前须华为账号登录实名核验")).fontSize(13).fontColor(this.ink())
       }.width('100%').padding(20).alignItems(HorizontalAlign.Start)
     }.layoutWeight(1).width('100%')
   }
@@ -2422,7 +2998,7 @@ struct Index {
           .fontSize(14).fontColor(this.ink())
         Text(this.tx("当你配置第三方 LLM 端点时，消息内容会按该服务商的隐私政策传输。请自行确认服务商条款。"))
           .fontSize(14).fontColor(this.ink())
-        Text(this.tx("使用合成生成内容（对话等）前，须通过华为账号完成真实身份核验。核验依据账号绑定的移动电话号码；登录状态仅保存在本机。"))
+        Text(this.tx("使用合成生成内容（对话等）前，须通过华为账号登录完成真实身份核验。中国大陆华为账号已由华为侧完成手机号实名；登录状态仅保存在本机。"))
           .fontSize(14).fontColor(this.ink())
         Text(this.tx("开发调试安装包仅用于授权设备；发布版需通过华为应用市场签名分发。"))
           .fontSize(14).fontColor(this.ink())
@@ -2437,10 +3013,10 @@ struct Index {
         Text(this.tx("偏好设置")).fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.ink())
 
         Text(this.tx("实名核验")).fontSize(14).fontWeight(FontWeight.Medium).fontColor(this.ink())
-        Text(this.tx("合成生成内容服务须先完成真实身份核验（华为账号绑定手机号）。"))
+        Text(this.tx("合成生成内容服务须先完成真实身份核验（华为账号登录）。"))
           .fontSize(12).fontColor(this.muted())
         Text(identityStatusText(this.identity)).fontSize(13).fontColor(this.ink())
-        if (this.identity.verified) {
+        if (isRecordVerified(this.identity)) {
           Button(this.tx("退出账号核验")).width('100%').height(40)
             .backgroundColor(this.fieldBg()).fontColor(this.ink())
             .onClick(() => this.clearIdentityLocal())

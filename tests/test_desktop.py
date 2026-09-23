@@ -91,6 +91,15 @@ def api(tmp_path, monkeypatch):
         "codeagent.desktop.evolution.EVOLUTION_PATH", tmp_path / "evolution.json"
     )
     monkeypatch.setattr(
+        "codeagent.learn.nightly.STATE_PATH", tmp_path / "night_learn.json"
+    )
+    monkeypatch.setattr(
+        "codeagent.learn.store.db_path", lambda: tmp_path / "codecore.sqlite"
+    )
+    monkeypatch.setattr(
+        "codeagent.sqlite_store.db_path", lambda: tmp_path / "codecore.sqlite"
+    )
+    monkeypatch.setattr(
         "codeagent.desktop.projects.PROJECTS_INDEX", tmp_path / "projects.json"
     )
     monkeypatch.setattr(
@@ -101,6 +110,7 @@ def api(tmp_path, monkeypatch):
     )
     a = DesktopAPI(root=tmp_path)
     a._window = FakeWindow()
+    a.scheduler._night_learn_enabled = lambda: False
     # 对话类集成测试需要真实模型：默认本地 Ollama，可用环境变量
     # CODEAGENT_OLLAMA_BASE 指向局域网/远端 Ollama 端点
     base = os.environ.get("CODEAGENT_OLLAMA_BASE", "")
@@ -194,6 +204,19 @@ def test_save_config_persists_and_resets_agent(api, tmp_path):
     assert api._agent2 is None
     reloaded = DesktopConfig.load(tmp_path / "desktop.json")
     assert reloaded.model == "gpt-4o-mini"
+
+
+def test_database_install_waits_for_location(api, tmp_path):
+    status = api.database_status()
+    assert status["ready"] is False
+    refused = api.install_database("local", "")
+    assert refused["ok"] is False
+    placed = api.install_database("local", str(tmp_path / "dbdir"))
+    assert placed["ok"] is True
+    assert placed["scope"] == "local"
+    again = api.database_status()
+    assert again["ready"] is True
+    assert again["path"].endswith("codecore.sqlite")
 
 
 def test_companion_settings_roundtrip(api, tmp_path):
@@ -332,7 +355,8 @@ def test_legacy_config_when_no_active_asset(api):
 
 def test_diagnose_messages(api):
     assert "连不上" in api._diagnose(Exception("Connection refused"))
-    assert "超时" in api._diagnose(Exception("request timed out"))
+    assert "卡住" in api._diagnose(Exception("request timed out"))
+    assert "卡住" in api._diagnose(Exception("本地模型 gpt-oss:120b 超过 120 秒没有输出，视为卡住"))
     assert "Key" in api._diagnose(Exception("401 Unauthorized"))
     assert "404" in api._diagnose(Exception("404 not found"))
     assert "兜底规则" in api._diagnose(ValueError("Empty provider spec"))
@@ -519,7 +543,7 @@ def test_stop_cancels_in_flight_chat(api, monkeypatch):
 def test_leader_workers_default(api):
     roster = api._leader_workers()
     assert len(roster) == 1
-    assert roster[0].provider == "ollama"
+    assert roster[0].provider == "chain"
 
 
 def test_leader_workers_from_json(api):
@@ -535,6 +559,143 @@ def test_leader_workers_from_json(api):
 def test_leader_workers_invalid_json_falls_back(api):
     api.config.workers_json = "{broken"
     assert len(api._leader_workers()) == 1
+    assert api._leader_workers()[0].provider == "chain"
+
+
+def test_command_chain_keeps_selected_order(api, monkeypatch):
+    from codeagent.desktop.models import ApiModel, OllamaEndpoint
+    from codeagent.llm.aggregate import AggregateProvider
+
+    ep = OllamaEndpoint(base="http://127.0.0.1:11434", kind="ollama", id="ep1", label="本机")
+    api.assets.endpoints.append(ep)
+    api.assets.api_models.append(ApiModel(
+        base_url="https://api.example.com/v1", model="deepseek-chat",
+        label="DeepSeek", id="api1",
+    ))
+    saved = api.save_config({
+        "chain_refs": ["api:api1", "local:qwen@ep1", "local:wan@missing", "mix:nope"],
+    })
+    assert json.loads(saved["chain_refs"]) == ["api:api1", "local:qwen@ep1"]
+
+    def fake_build(assets, ref):
+        from codeagent.llm.base import LLMProvider
+
+        class One(LLMProvider):
+            def __init__(self, ref):
+                super().__init__(model=ref)
+                self._ref = ref
+
+            @property
+            def name(self):
+                return self._ref
+
+            async def complete(self, messages, tools=None, system=None, **kwargs):
+                raise RuntimeError("not called")
+
+        return One(ref)
+
+    monkeypatch.setattr("codeagent.desktop.models._build_member", fake_build)
+    provider = api._command_provider()
+    assert isinstance(provider, AggregateProvider)
+    assert provider.strategy == "fallback"
+    assert [p.model for p in provider.providers] == ["api:api1", "local:qwen@ep1"]
+
+
+def test_command_chain_expands_mixture_for_stall_switch(api, monkeypatch):
+    """指挥中心勾选聚合池时，按成员顺序展开，死掉后切下一个成员。"""
+    from codeagent.llm.aggregate import AggregateProvider, reset_unhealthy
+    from codeagent.llm.ollama import StallTimeout
+
+    reset_unhealthy()
+    members = _two_members(api)
+    api.save_mixture("切换池", "weighted", members)
+    mix = api.assets.mixtures[0]
+    api.save_config({"chain_refs": [f"mix:{mix.id}"]})
+    seen: list[str] = []
+
+    def fake_build(assets, ref):
+        from codeagent.core.types import LLMResponse
+        from codeagent.llm.base import LLMProvider
+
+        class One(LLMProvider):
+            name = "ollama"
+
+            def __init__(self, model_ref, **kwargs):
+                super().__init__(model=model_ref)
+                self.model_ref = model_ref
+
+            async def complete(self, messages, tools=None, system=None, **kwargs):
+                seen.append(self.model)
+                if self.model == members[0]:
+                    raise StallTimeout(f"{self.model} 视为卡住")
+                return LLMResponse(content="mix-backup-ok")
+
+        resolved = assets.resolve_member(ref)
+        if resolved is None:
+            return None
+        return One(ref)
+
+    monkeypatch.setattr("codeagent.desktop.models._build_member", fake_build)
+    provider = api._command_provider()
+    assert isinstance(provider, AggregateProvider)
+    assert len(provider.providers) == 2
+    import asyncio
+    from codeagent.core.types import Message, Role
+
+    out = asyncio.run(provider.complete([Message(role=Role.USER, content="hi")]))
+    assert out.content == "mix-backup-ok"
+    assert seen == members
+    reset_unhealthy()
+
+
+def test_pinned_mixture_stall_fails_over(api, monkeypatch):
+    """对话钉死聚合池时，成员卡住也要切换到池内下一个。"""
+    from codeagent.core.types import LLMResponse
+    from codeagent.llm.aggregate import reset_unhealthy
+    from codeagent.llm.ollama import StallTimeout
+
+    reset_unhealthy()
+    seen: list[str] = []
+
+    class HangThen:
+        name = "ollama"
+
+        def __init__(self, model, **kwargs):
+            self.model = model
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            seen.append(self.model)
+            if "120b" in self.model:
+                raise StallTimeout(f"{self.model} 视为卡住")
+            return LLMResponse(content="pool-ok")
+
+    monkeypatch.setattr("codeagent.llm.ollama.OllamaProvider", HangThen)
+    ep = api.assets.endpoints[0]
+    api.save_mixture("钉死池", "weighted", [
+        f"local:gpt-oss:120b@{ep.id}",
+        f"local:qwen3:8b@{ep.id}",
+    ])
+    mix = api.assets.mixtures[0]
+    api.set_active_model(f"mix:{mix.id}")
+    assert api.send("继续做") is True
+    done = wait_for(api._window, "done")
+    assert done["text"] == "pool-ok"
+    assert "gpt-oss:120b" in seen
+    assert "qwen3:8b" in seen
+    assert any("自动切换" in c.get("text", "") for c in api._window.calls if c["kind"] == "status")
+    reset_unhealthy()
+
+
+def test_save_config_skips_unloaded_chain_refs(api):
+    from codeagent.desktop.models import ApiModel
+
+    api.assets.api_models.append(ApiModel(
+        base_url="https://api.example.com/v1", model="keep", id="keep",
+    ))
+    kept = api.save_config({"chain_refs": ["api:keep"]})
+    assert json.loads(kept["chain_refs"]) == ["api:keep"]
+    skipped = api.save_config({"chain_refs": None, "auto_yes": False})
+    assert json.loads(skipped["chain_refs"]) == ["api:keep"]
 
 
 def test_lead_pushes_task_and_done(api, monkeypatch):
@@ -548,14 +709,11 @@ def test_lead_pushes_task_and_done(api, monkeypatch):
             # planner call → one assignment; worker call → answer
             if "任务拆解" in (system or ""):
                 return LLMResponse(content=json.dumps({
-                    "assignments": [{"worker": "worker", "task": "查一下"}]
+                    "assignments": [{"worker": "默认", "task": "查一下"}]
                 }))
             return LLMResponse(content="查完了")
 
-    monkeypatch.setattr(
-        "codeagent.desktop.api.parse_provider_spec",
-        lambda *a, **k: FakePlanner(model="fake"),
-    )
+    monkeypatch.setattr(api, "_command_provider", lambda: FakePlanner(model="fake"))
     monkeypatch.setattr(
         "codeagent.leader.leader.build_worker_agent",
         lambda config, root, **kw: __import__("codeagent").Agent(
@@ -778,7 +936,8 @@ def test_ui_has_all_pages_and_bridge():
     assert "pywebview.api.set_permission_level" in HTML
     assert "pywebview.api.resolve_confirm" in HTML
     assert "pywebview.api.get_versions" in HTML
-    assert "pywebview.api.send_feedback" in HTML
+    assert "pywebview.api.send_feedback" not in HTML
+    assert "addFeedbackRow" not in HTML
     assert 'id="sectFeedback"' in HTML
     assert "openFeedbackMail" in HTML
     assert "pywebview.api.open_feedback_mail" in HTML
@@ -792,7 +951,14 @@ def test_ui_has_all_pages_and_bridge():
     assert ">官网<" in HTML
     assert "pywebview.api.get_workflows" in HTML
     assert "pywebview.api.add_cron_job" in HTML
-    assert "pywebview.api.learn_now" in HTML
+    assert "pywebview.api.learn_now" not in HTML
+    assert "pywebview.api.set_self_learn" in HTML
+    assert "pywebview.api.run_night_learn_now" in HTML
+    assert "02:00–06:00" in HTML
+    assert "本机记忆库" in HTML
+    assert "setSelfLearn(true)" in HTML
+    assert "setSelfLearn(false)" in HTML
+    assert "立刻复盘学习" in HTML
     assert "pywebview.api.run_evolution_now" in HTML
     assert "pywebview.api.set_patch_status" in HTML
     assert "pywebview.api.approve_skill" in HTML
@@ -1115,6 +1281,255 @@ def test_chat_free_route_cloud_500_fails_over(api, monkeypatch):
     assert "qwen3:8b" in seen
 
 
+def test_chat_free_route_local_stall_fails_over(api, monkeypatch):
+    """综合 → 本地 120B 卡住时，自动改走聚合池里的小模型。"""
+    from codeagent.core.types import LLMResponse
+    from codeagent.llm.aggregate import reset_unhealthy
+    from codeagent.llm.ollama import StallTimeout
+
+    reset_unhealthy()
+    seen: list[str] = []
+
+    class HangThen:
+        name = "ollama"
+
+        def __init__(self, model, **kwargs):
+            self.model = model
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            seen.append(self.model)
+            if "120b" in self.model:
+                raise StallTimeout(f"本地模型 {self.model} 超过 120 秒没有输出，视为卡住")
+            return LLMResponse(content="small-ok")
+
+    monkeypatch.setattr("codeagent.llm.ollama.OllamaProvider", HangThen)
+    ep = api.assets.endpoints[0]
+    api.save_mixture("默认池", "cascade", [
+        f"local:qwen3:8b@{ep.id}",
+        f"local:gpt-oss:120b@{ep.id}",
+    ])
+    api.set_active_model("route:free")
+    api.add_route_rule("综合", "综合", f"local:gpt-oss:120b@{ep.id}")
+    assert api.send("请综合分析一下") is True
+    done = wait_for(api._window, "done")
+    assert done["text"] == "small-ok"
+    assert "gpt-oss:120b" in seen
+    assert "qwen3:8b" in seen
+    assert any("自动切换" in c.get("text", "") and "继续" in c.get("text", "")
+               for c in api._window.calls if c["kind"] == "status")
+    reset_unhealthy()
+
+
+def test_agent_continues_on_backup_after_stall(api, monkeypatch):
+    """卡住切换后，同一次对话里后续工具往返不再碰 120B。"""
+    from codeagent.core.types import LLMResponse, ToolCall
+    from codeagent.llm.aggregate import reset_unhealthy
+    from codeagent.llm.ollama import StallTimeout
+    from codeagent.tools.base import Tool, ToolRegistry
+
+    reset_unhealthy()
+    seen: list[str] = []
+
+    class Echo(Tool):
+        name = "echo"
+        description = "echo"
+        parameters = {
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        }
+
+        async def execute(self, text: str = "", **_):
+            return text
+
+    class HangThenTools:
+        name = "ollama"
+
+        def __init__(self, model, **kwargs):
+            self.model = model
+            self._n = 0
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            seen.append(self.model)
+            if "120b" in self.model:
+                raise StallTimeout(f"本地模型 {self.model} 超过 120 秒没有输出，视为卡住")
+            self._n += 1
+            if self._n == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[ToolCall(id="1", name="echo", arguments={"text": "ok"})],
+                )
+            return LLMResponse(content="done-on-backup")
+
+    monkeypatch.setattr("codeagent.llm.ollama.OllamaProvider", HangThenTools)
+    monkeypatch.setattr(
+        api, "_agent_tools", lambda: ToolRegistry([Echo()])
+    )
+    ep = api.assets.endpoints[0]
+    api.save_mixture("默认池", "cascade", [
+        f"local:qwen3:8b@{ep.id}",
+        f"local:gpt-oss:120b@{ep.id}",
+    ])
+    api.set_active_model("route:free")
+    api.add_route_rule("综合", "综合", f"local:gpt-oss:120b@{ep.id}")
+    assert api.send("请综合处理") is True
+    done = wait_for(api._window, "done")
+    assert done["text"] == "done-on-backup"
+    assert seen[0] == "gpt-oss:120b"
+    assert all(m == "qwen3:8b" for m in seen[1:])
+    reset_unhealthy()
+
+
+def test_pinned_local_stall_fails_over(api, monkeypatch):
+    """钉死 gpt-oss:120b 时卡住，同样改走聚合池备用。"""
+    from codeagent.core.types import LLMResponse
+    from codeagent.llm.aggregate import reset_unhealthy
+    from codeagent.llm.ollama import StallTimeout
+
+    reset_unhealthy()
+    seen: list[str] = []
+
+    class HangThen:
+        name = "ollama"
+
+        def __init__(self, model, **kwargs):
+            self.model = model
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            seen.append(self.model)
+            if "120b" in self.model:
+                raise StallTimeout(f"本地模型 {self.model} 超过 120 秒没有输出，视为卡住")
+            return LLMResponse(content="pinned-backup")
+
+    monkeypatch.setattr("codeagent.llm.ollama.OllamaProvider", HangThen)
+    ep = api.assets.endpoints[0]
+    api.save_mixture("默认池", "cascade", [
+        f"local:qwen3:8b@{ep.id}",
+        f"local:gpt-oss:120b@{ep.id}",
+    ])
+    api.set_active_model(f"local:gpt-oss:120b@{ep.id}")
+    assert api.send("随便问一句") is True
+    done = wait_for(api._window, "done")
+    assert done["text"] == "pinned-backup"
+    assert "gpt-oss:120b" in seen
+    assert "qwen3:8b" in seen
+    reset_unhealthy()
+
+
+def test_code_audit_after_write_uses_other_model(api, monkeypatch, tmp_path):
+    """写文件后换另一模型审计；通过则把审计块附在回复后。"""
+    from codeagent.core.types import LLMResponse, ToolCall
+    from codeagent.tools.base import Tool, ToolRegistry
+    from codeagent.tools.filesystem import WriteFileTool
+
+    api.root = tmp_path
+    api.config.code_audit_enabled = True
+    api.config.auto_yes = True
+    calls: list[str] = []
+
+    class Writer:
+        name = "ollama"
+
+        def __init__(self, model, **kwargs):
+            self.model = model
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            calls.append(f"w:{self.model}")
+            # First turn: write; second (repair) shouldn't happen if audit passes
+            n = sum(1 for c in calls if c.startswith("w:"))
+            if n == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[ToolCall(
+                        id="1", name="write_file",
+                        arguments={"path": "demo.py", "content": "x = 1\n"},
+                    )],
+                )
+            return LLMResponse(content="已写好 demo.py")
+
+    class Auditor:
+        name = "openai"
+
+        def __init__(self, model, **kwargs):
+            self.model = model
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            calls.append(f"a:{self.model}")
+            return LLMResponse(content="审计通过：未发现错误")
+
+    monkeypatch.setattr("codeagent.llm.ollama.OllamaProvider", Writer)
+    monkeypatch.setattr("codeagent.llm.openai.OpenAIProvider", Auditor)
+    ep = api.assets.endpoints[0]
+    r = api.add_api_model("https://api.example.com/v1", "audit-model", api_key="k")
+    api.set_active_model(f"local:writer-model@{ep.id}")
+    api.config.code_audit_ref = f"api:{r['id']}"
+
+    def tools():
+        return ToolRegistry([WriteFileTool(tmp_path)])
+
+    monkeypatch.setattr(api, "_agent_tools", tools)
+    assert api.send("写一个 demo.py") is True
+    done = wait_for(api._window, "done", timeout=15)
+    assert "已写好" in done["text"]
+    assert "代码审计" in done["text"] or any(
+        "审计" in (c.get("text") or "") for c in api._window.calls
+        if c["kind"] in ("thinking", "status")
+    )
+    assert any(c.startswith("a:") for c in calls)
+    assert (tmp_path / "demo.py").is_file()
+
+
+def test_code_audit_disabled_skips(api, monkeypatch, tmp_path):
+    from codeagent.core.types import LLMResponse, ToolCall
+    from codeagent.tools.base import ToolRegistry
+    from codeagent.tools.filesystem import WriteFileTool
+
+    api.root = tmp_path
+    api.config.code_audit_enabled = False
+    api.config.auto_yes = True
+    audit_calls = {"n": 0}
+
+    class Writer:
+        name = "ollama"
+
+        def __init__(self, model, **kwargs):
+            self.model = model
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            if not any(
+                getattr(m, "tool_results", None) for m in messages
+            ):
+                return LLMResponse(
+                    content="",
+                    tool_calls=[ToolCall(
+                        id="1", name="write_file",
+                        arguments={"path": "x.py", "content": "1\n"},
+                    )],
+                )
+            return LLMResponse(content="ok")
+
+    class BoomAuditor:
+        name = "openai"
+
+        def __init__(self, model, **kwargs):
+            self.model = model
+
+        async def complete(self, messages, tools=None, system=None, **kw):
+            audit_calls["n"] += 1
+            raise RuntimeError("should not run")
+
+    monkeypatch.setattr("codeagent.llm.ollama.OllamaProvider", Writer)
+    monkeypatch.setattr("codeagent.llm.openai.OpenAIProvider", BoomAuditor)
+    ep = api.assets.endpoints[0]
+    api.add_api_model("https://api.example.com/v1", "audit-model", api_key="k")
+    api.set_active_model(f"local:writer@{ep.id}")
+    monkeypatch.setattr(api, "_agent_tools", lambda: ToolRegistry([WriteFileTool(tmp_path)]))
+    assert api.send("写文件") is True
+    done = wait_for(api._window, "done")
+    assert done["text"] == "ok"
+    assert audit_calls["n"] == 0
+
+
 def test_chat_free_route_empty_assets_friendly_error(api, monkeypatch):
     """自由路由既无规则也无模型资产、偏好又为空时，给出中文提示而不是 Empty provider spec。"""
     api.set_active_model("route:free")
@@ -1277,44 +1692,48 @@ def test_open_privacy_page(api, monkeypatch):
     assert opened and opened[0] == r["url"]
 
 
-def test_feedback_writes_learn_activity(api):
-    assert api.send_feedback(True)["ok"]
-    assert api.send_feedback(False)["ok"]
-    entries = api.get_activity()
-    learns = [e for e in entries if e["kind"] == "learn"]
-    assert any("正向" in e["text"] for e in learns)
-    assert any("点踩" in e["text"] for e in learns)
-
-
-def test_learn_now_requires_samples(api):
-    r = api.learn_now()
-    assert not r["ok"] and "反馈样本" in r["error"]
-
-
-def test_learn_now_upserts_today(api):
-    api.send_feedback(True)
-    api.send_feedback(True)
-    api.send_feedback(False)
-    r = api.learn_now()
-    assert r["ok"] and r["samples"] == 3 and r["accuracy"] == 67
+def test_self_learn_toggle_defaults_off(api):
     data = api.get_learning()
-    assert data["total_samples"] == 3
-    assert data["records"][-1]["thumbs_up"] == 2
-    # 同日覆盖而非追加
-    api.send_feedback(True)
-    r2 = api.learn_now()
-    assert r2["samples"] == 4
-    assert len(api.get_learning()["records"]) == 1
+    assert data["night"]["settings"]["enabled"] is False
+    r = api.set_self_learn(True)
+    assert r["ok"] and r["enabled"] is True
+    assert api.get_night_learn()["settings"]["enabled"] is True
+    assert api.set_self_learn(False)["ok"]
+    assert api.get_night_learn()["settings"]["enabled"] is False
 
 
-def test_learn_now_low_accuracy_shifts_local_first(api):
-    api.send_feedback(False)
-    api.send_feedback(False)
-    api.send_feedback(True)
-    before = api.router.weights.local_first
-    r = api.learn_now()
-    assert r["ok"] and r["accuracy"] == 33
-    assert api.router.weights.local_first == min(100, before + 5)
+def test_night_learn_skips_projects_without_conversations(api, tmp_path):
+    dest = tmp_path / "empty-proj"
+    dest.mkdir()
+    created = api.create_project("空项目", str(dest))
+    assert created["ok"]
+    api.night_learn.settings.web_enabled = False
+    api.night_learn.save()
+    r = api.run_night_learn_now()
+    assert r["ok"]
+    assert "没有可复盘" in (r.get("summary") or "")
+
+
+def test_night_learn_now_reads_project_and_lists_notes(api, tmp_path):
+    from codeagent.desktop.projects import append_event
+
+    api.night_learn.settings.web_enabled = False
+    api.night_learn.save()
+    dest = tmp_path / "album"
+    dest.mkdir()
+    created = api.create_project("相册自学", str(dest))
+    assert created["ok"]
+    proj = api.projects.get(created["project"]["id"])
+    (Path(proj.path) / "main.py").write_text("USERS = []\n", encoding="utf-8")
+    append_event(proj, "n1", "user", text="设计相册数据库和首页 UI")
+    append_event(proj, "n1", "thinking", text="先定 schema 再排卡片")
+    r = api.run_night_learn_now()
+    assert r["ok"]
+    data = api.get_learning()
+    assert "night" in data
+    assert data["eligible_projects"] >= 1
+    assert data["night"]["total"] >= 1
+    assert api.get_night_learn()["notes"]
 
 
 # ---------------------------------------------------------------------------
@@ -1574,10 +1993,12 @@ def test_nav_status_counts_configured_assets(api):
 def test_internal_browser_ready_without_bsk(api):
     st = api.browser_status()
     assert "内置浏览器" in st["ready_text"]
+    assert "不是沙盒" in st["ready_text"] or "浏览窗口" in st["ready_text"]
     assert st["backend"] == "idle"
-    assert not api._browser.has_gui
+    # Desktop attaches WebviewHost immediately — GUI is armed without visiting the browser page.
+    assert api._browser.has_gui
     assert api.browser_pump() == 0
-    assert api._browser.has_gui  # JS interval arms the live window
+    assert api._browser.has_gui
     brow = api._agent_tools().get("browser")
     assert brow is not None
     assert brow.engine is api._browser
@@ -2470,6 +2891,69 @@ def test_project_delete_keeps_folder(api, tmp_path):
     assert api.projects.get(r["project"]["id"]) is None
 
 
+def test_project_create_subproject(api, tmp_path):
+    parent = api.create_project("父项目", str(tmp_path / "b"))
+    child = api.create_project("子模块", "", "其他", parent["project"]["id"])
+    assert child["ok"]
+    assert child["project"]["parent_id"] == parent["project"]["id"]
+    assert Path(child["project"]["path"]).parent == Path(parent["project"]["path"])
+    rows = api.get_projects()["projects"]
+    ids = [p["id"] for p in rows]
+    assert ids.index(parent["project"]["id"]) < ids.index(child["project"]["id"])
+    nested = next(p for p in rows if p["id"] == child["project"]["id"])
+    assert nested["depth"] == 1
+    missing = api.create_project("孤儿", str(tmp_path / "b"), "其他", "no-such")
+    assert not missing["ok"]
+
+
+def test_project_retarget_path(api, tmp_path):
+    r = api.create_project("改路径", str(tmp_path / "b"))
+    old = Path(r["project"]["path"])
+    dest = tmp_path / "elsewhere"
+    dest.mkdir()
+    out = api.retarget_project(r["project"]["id"], str(dest))
+    assert out["ok"]
+    assert Path(out["project"]["path"]) == dest
+    assert old.is_dir()
+    assert api.root == dest
+
+
+def test_project_delete_files_error_keeps_index(api, tmp_path, monkeypatch):
+    r = api.create_project("删不掉", str(tmp_path / "b"))
+    pid = r["project"]["id"]
+    folder = Path(r["project"]["path"])
+
+    def boom(path):
+        raise OSError("device busy")
+
+    monkeypatch.setattr("codeagent.desktop.projects.shutil.rmtree", boom)
+    assert api.delete_project(pid, True) is False
+    assert api.projects.get(pid) is not None
+    assert folder.is_dir()
+
+
+def test_project_delete_files_drops_nested(api, tmp_path):
+    parent = api.create_project("整棵删", str(tmp_path / "b"))
+    child = api.create_project("叶子", "", "其他", parent["project"]["id"])
+    folder = Path(parent["project"]["path"])
+    assert api.delete_project(parent["project"]["id"], True) is True
+    assert not folder.exists()
+    assert api.projects.get(parent["project"]["id"]) is None
+    assert api.projects.get(child["project"]["id"]) is None
+
+
+def test_project_delete_list_only_reparents(api, tmp_path):
+    parent = api.create_project("列表父", str(tmp_path / "b"))
+    child = api.create_project("列表子", "", "其他", parent["project"]["id"])
+    folder = Path(parent["project"]["path"])
+    child_folder = Path(child["project"]["path"])
+    assert api.delete_project(parent["project"]["id"], False) is True
+    assert folder.is_dir() and child_folder.is_dir()
+    leftover = api.projects.get(child["project"]["id"])
+    assert leftover is not None
+    assert leftover.parent_id == ""
+
+
 def test_conversation_persisted_in_project_folder(api, tmp_path, monkeypatch):
     fake_llm(monkeypatch)
     api.create_project("记录", str(tmp_path / "b"))
@@ -2533,6 +3017,14 @@ def test_ui_has_projects_surface():
     assert "optgroup" not in HTML
     assert "loadProjectRecords" in HTML
     assert "get_project_records" in HTML
+    assert 'id="projCtxMenu"' in HTML
+    assert "修改项目路径" in HTML
+    assert "添加子项目" in HTML
+    assert "复制到新项目文件夹" not in HTML
+    assert "删除项目" in HTML
+    assert "retarget_project" in HTML and "copy_project" not in HTML
+    assert "openProjDelete" in HTML
+    assert 'id="projDelDialog"' in HTML
 
 
 def test_ui_mentions_project_export_import():

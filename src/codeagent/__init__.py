@@ -113,7 +113,7 @@ from codeagent.tools import (
     web_tools,
 )
 
-__version__ = "0.81.0"
+__version__ = "0.90.3"
 
 __all__ = [
     "Agent",

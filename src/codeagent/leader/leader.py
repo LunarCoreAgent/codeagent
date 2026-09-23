@@ -102,6 +102,7 @@ class Leader:
         worker_retries: int = 2,
         max_parallel: int | None = None,
         worker_permissions: PermissionPolicy | None = None,
+        worker_providers: dict[str, LLMProvider] | None = None,
     ) -> None:
         if not workers:
             raise ValueError("Leader needs at least one worker")
@@ -124,6 +125,7 @@ class Leader:
         self.worker_permissions = worker_permissions or PermissionPolicy(
             auto_approve_up_to=RiskLevel.EXECUTE,
         )
+        self.worker_providers = worker_providers or {}
         self._project = project_context(self.root)
         self._task_counter = 0
 
@@ -273,6 +275,7 @@ class Leader:
             max_iterations=self.max_iterations,
             budget=self.budget,
             permissions=self.worker_permissions,
+            provider=self.worker_providers.get(worker_name),
         )
         task_text = assignment["task"]
         dep_context = [

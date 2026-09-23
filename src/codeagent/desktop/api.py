@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import threading
 import time
 import zipfile
@@ -26,11 +27,8 @@ from codeagent.core.agent import Agent, AgentEvent
 from codeagent.core.budget import Budget, BudgetExceededError
 from codeagent.memory.compact import CompactionConfig, ConversationCompactor
 from codeagent.desktop.activity import (
-    LearningStore,
-    learn_now,
     log_activity,
     read_activity,
-    record_feedback,
 )
 from codeagent.desktop.automation import Workflow, WorkflowRunner, WorkflowStep, WorkflowStore
 from codeagent.desktop.cron import PRESETS, CronJob, CronScheduler, CronStore, next_run_hint
@@ -291,11 +289,21 @@ class DesktopConfig:
     max_iterations: int = DESKTOP_MAX_ITERATIONS_DEFAULT
     # JSON list of {"name","provider","model","description"} for leader mode
     workers_json: str = ""
+    # 指挥中心默认链路：模型管理里已接入模型的引用，JSON 数组，顺序即超时切换顺序
+    chain_refs: str = ""
     # Accepted privacy policy version (empty = never accepted)
     privacy_accepted_version: str = ""
     privacy_accepted_at: str = ""  # ISO timestamp when last accepted
     # 对话是否自动检索并允许写入长期记忆（本机 memory.json）
     memory_enabled: bool = True
+    # 写完项目代码后，换另一个模型做只读审计；发现问题可再让原模型修
+    code_audit_enabled: bool = True
+    # 审计模型引用：mix:… / api:… / local:model@epid；空=自动选与写作模型不同的备用
+    code_audit_ref: str = ""
+    # 内置 SQLite：安装前由用户选择本地 / 局域网 / 广域网位置
+    db_scope: str = ""  # local | lan | wan
+    db_path: str = ""
+    db_ready: bool = False
 
     @classmethod
     def load(cls, path: Path | None = None) -> "DesktopConfig":
@@ -341,12 +349,17 @@ class DesktopAPI:
         self.evolution = EvolutionStore.load()
         self.cron_jobs = CronStore.load()
         self.runner = WorkflowRunner(self.workflows, self._run_workflow_step)
+        from codeagent.learn.nightly import NightLearnState
+
+        self.night_learn = NightLearnState.load()
         self.scheduler = CronScheduler(
             self.cron_jobs,
             run_action=self._run_cron_action,
             evolution_enabled=lambda: self.evolution.settings.enabled,
             evolution_cron=lambda: self.evolution.settings.cron,
             run_evolution=lambda: self._run_evolution(manual=False),
+            night_learn_enabled=lambda: self.night_learn.settings.enabled,
+            run_night_learn=lambda: self._run_night_learn(manual=False),
         )
         self.scheduler.start()
         self._window: Any = None
@@ -676,9 +689,15 @@ class DesktopAPI:
     def save_config(self, data: dict[str, Any]) -> dict[str, Any]:
         for key in ("provider", "model", "api_key", "base_url", "strategy",
                     "voice_name", "workers_json", "theme", "thinking",
-                    "companion_preset", "companion_name", "companion_nature"):
+                    "companion_preset", "companion_name", "companion_nature",
+                    "code_audit_ref"):
             if key in data:
                 setattr(self.config, key, str(data[key]))
+        if "chain_refs" in data and data["chain_refs"] is not None:
+            self.config.chain_refs = json.dumps(
+                self._normalize_chain_refs(data["chain_refs"]),
+                ensure_ascii=False,
+            )
         if self.config.theme not in ("dark", "light", "auto"):
             self.config.theme = "dark"
         if self.config.thinking not in ("low", "medium", "high"):
@@ -689,9 +708,12 @@ class DesktopAPI:
             )
         else:
             self.config.max_iterations = clamp_max_iterations(self.config.max_iterations)
-        for key in ("auto_yes", "voice_enabled", "voice_cute_tone", "companion_enabled", "memory_enabled"):
+        for key in ("auto_yes", "voice_enabled", "voice_cute_tone", "companion_enabled",
+                    "memory_enabled", "code_audit_enabled"):
             if key in data:
                 setattr(self.config, key, bool(data[key]))
+        if "code_audit_ref" in data:
+            self.config.code_audit_ref = str(data["code_audit_ref"] or "").strip()
         if "voice_pitch" in data:
             try:
                 self.config.voice_pitch = max(-50, min(50, int(data["voice_pitch"])))
@@ -709,6 +731,35 @@ class DesktopAPI:
                  self.config.provider, self.config.model,
                  self.config.companion_enabled)
         return asdict(self.config)
+
+    def database_status(self) -> dict[str, Any]:
+        """Whether the embedded database still needs a location."""
+        from codeagent.desktop.projects import list_disk_roots
+        from codeagent.sqlite_store import ENGINE, default_dir
+
+        ready = bool(self.config.db_ready and self.config.db_path)
+        return {
+            "ready": ready,
+            "engine": ENGINE,
+            "scope": self.config.db_scope,
+            "path": self.config.db_path,
+            "default_dir": str(default_dir()),
+            "disks": list_disk_roots(),
+        }
+
+    def install_database(self, scope: str, path: str) -> dict[str, Any]:
+        """Install SQLite only after the user picks local, LAN, or WAN."""
+        from codeagent.sqlite_store import install_database
+
+        result = install_database(path, scope)
+        if result.get("ok") != "1":
+            return {"ok": False, "error": result.get("error") or "安装失败"}
+        self.config.db_scope = result["scope"]
+        self.config.db_path = result["path"]
+        self.config.db_ready = True
+        self.config.save()
+        payload = {k: v for k, v in result.items() if k != "ok"}
+        return {"ok": True, **payload}
 
     def save_settings(self, data: dict[str, Any]) -> dict[str, Any]:
         for key in ("nickname", "language", "instructions", "context"):
@@ -1318,36 +1369,148 @@ class DesktopAPI:
     def get_activity(self, limit: int = 80) -> list[dict[str, Any]]:
         return read_activity(min(int(limit), 500))
 
-    def send_feedback(self, positive: bool) -> dict[str, Any]:
-        """对话页赞/踩 → 活动流 kind=learn 条目。"""
-        record_feedback(bool(positive))
-        return {"ok": True}
-
     def get_learning(self) -> dict[str, Any]:
-        store = LearningStore.load()
-        entries = read_activity(500)
-        ups = sum(1 for e in entries
-                  if e.get("kind") == "learn" and "正向" in e.get("text", ""))
-        downs = sum(1 for e in entries
-                    if e.get("kind") == "learn" and "点踩" in e.get("text", ""))
-        latest_rec = store.records[-1] if store.records else None
+        from codeagent.learn.collect import projects_with_conversations
+
+        night = self.get_night_learn()
+        eligible = len(projects_with_conversations(list(self.projects.projects)))
         return {
-            "records": [asdict(r) for r in store.records[-30:]],
-            "accuracy": latest_rec.accuracy if latest_rec else 0,
-            "total_samples": sum(r.samples for r in store.records),
-            "today_up": ups,
-            "today_down": downs,
+            "records": [],
+            "eligible_projects": eligible,
+            "total_projects": len(self.projects.projects),
+            "night": night,
         }
 
-    def learn_now(self) -> dict[str, Any]:
-        result = learn_now()
-        if result.get("ok"):
-            # 反馈信号真实回流：正反馈占比低 → 路由更保守（本地优先上调）
-            if result["accuracy"] < 60:
-                self.router.weights.local_first = min(
-                    100, self.router.weights.local_first + 5)
-                self.router.save()
+    def get_night_learn(self) -> dict[str, Any]:
+        from codeagent.learn.collect import projects_with_conversations
+        from codeagent.learn.nightly import NightLearnState
+        from codeagent.learn.store import LearnedStore
+
+        self.night_learn = NightLearnState.load()
+        db = self._learned_db_path()
+        store = LearnedStore(db)
+        notes = store.recent(limit=20)
+        active = self.projects.get(self.projects.active)
+        pid = active.id if active is not None else ""
+        eligible = projects_with_conversations(list(self.projects.projects))
+        return {
+            "settings": asdict(self.night_learn.settings),
+            "status": self.night_learn.status,
+            "last_date": self.night_learn.last_date,
+            "summary": self.night_learn.last_summary,
+            "notes_today": self.night_learn.notes_today,
+            "total": store.count(),
+            "project_total": store.count(pid) if pid else 0,
+            "eligible_projects": len(eligible),
+            "total_projects": len(self.projects.projects),
+            "notes": [n.as_dict() for n in notes],
+        }
+
+    def save_night_learn_settings(self, enabled: bool, web_enabled: bool = True) -> dict[str, Any]:
+        from codeagent.learn.nightly import NightLearnState
+
+        self.night_learn = NightLearnState.load()
+        self.night_learn.settings.enabled = bool(enabled)
+        self.night_learn.settings.web_enabled = bool(web_enabled)
+        self.night_learn.save()
+        log_activity(
+            "learn",
+            "自我学习已开启" if enabled else "自我学习已关闭",
+        )
+        return {
+            "ok": True,
+            "enabled": self.night_learn.settings.enabled,
+            "web_enabled": self.night_learn.settings.web_enabled,
+        }
+
+    def set_self_learn(self, enabled: bool) -> dict[str, Any]:
+        """Page toggle: turn automatic project replay on or off."""
+        from codeagent.learn.nightly import NightLearnState
+
+        self.night_learn = NightLearnState.load()
+        web = bool(self.night_learn.settings.web_enabled)
+        return self.save_night_learn_settings(bool(enabled), web)
+
+    def run_night_learn_now(self) -> dict[str, Any]:
+        return self._run_night_learn(manual=True)
+
+    def _learned_db_path(self):
+        """Prefer the SQLite file the user installed; fall back to default."""
+        from codeagent.sqlite_store import db_path as default_db
+
+        raw = (self.config.db_path or "").strip()
+        if self.config.db_ready and raw:
+            return Path(raw).expanduser()
+        return default_db()
+
+    def _run_night_learn(self, manual: bool = True) -> dict[str, Any]:
+        from codeagent.learn.collect import projects_with_conversations
+        from codeagent.learn.nightly import NightLearnState, run_night_learn
+        from codeagent.learn.store import LearnedNote
+
+        self.night_learn = NightLearnState.load()
+
+        def write_memory(note: LearnedNote) -> None:
+            saved = self.projects.active
+            if note.project_id:
+                self.projects.active = note.project_id
+            try:
+                self._add_memory_meta(note.memory_text(), {
+                    "source": "night-learn",
+                    "kind": note.as_dict()["memory_kind"],
+                    "project_id": note.project_id,
+                    "title": note.title,
+                })
+            finally:
+                self.projects.active = saved
+
+        def chat_fn(prompt: str) -> str:
+            try:
+                provider = self._build_provider()
+            except Exception:  # noqa: BLE001
+                return ""
+
+            async def _go() -> str:
+                from codeagent.core.types import Message
+
+                resp = await provider.complete(
+                    [Message.user(prompt)],
+                    system="只输出 JSON 数组，不要解释。",
+                )
+                return resp.content or ""
+
+            try:
+                return asyncio.run(_go())
+            except Exception:  # noqa: BLE001
+                return ""
+
+        targets = projects_with_conversations(list(self.projects.projects))
+        result = run_night_learn(
+            targets,
+            state=self.night_learn,
+            db_path=self._learned_db_path(),
+            memory_writer=write_memory,
+            chat_fn=chat_fn,
+            manual=manual,
+            reset_day=manual,
+        )
+        self.night_learn = NightLearnState.load()
         return result
+
+    def _recall_learned_notes(self, query: str) -> list[str]:
+        from codeagent.learn.store import recall_learned
+
+        proj = self.projects.get(self.projects.active)
+        pid = proj.id if proj is not None else ""
+        db = self._learned_db_path()
+        notes = recall_learned(query, project_id=pid, limit=6, path=db)
+        if notes or not query.strip():
+            return notes
+        return recall_learned(query, limit=4, path=db)
+
+    def _attach_learned_recall(self, agent: Agent) -> Agent:
+        agent.recall_learned = self._recall_learned_notes
+        return agent
 
     # ------------------------------------------------------------------
     # automation: workflows (LCA Automation.tsx, real step execution)
@@ -1424,7 +1587,7 @@ class DesktopAPI:
             finally:
                 self.assets.active = saved
             if provider is not None:
-                return provider
+                return self._ensure_recovery_chain(provider, preferred=ref)
         return self._build_provider()
 
     # ------------------------------------------------------------------
@@ -1577,7 +1740,9 @@ class DesktopAPI:
         if not is_free_route(self.assets.active):
             asset_provider = build_active_provider(self.assets)
             if asset_provider is not None:
-                return asset_provider
+                return self._ensure_recovery_chain(
+                    asset_provider, preferred=self.assets.active
+                )
         kwargs: dict[str, Any] = {}
         if self.config.model:
             kwargs["model"] = self.config.model
@@ -1589,11 +1754,13 @@ class DesktopAPI:
         if not spec:
             if is_free_route(self.assets.active):
                 raise ValueError(
-                    "自由路由未命中可用模型，且偏好设置里没有默认 Provider。"
+                    "自由路由未命中可用模型。"
                     "请在「自由路由」添加空关键词的兜底规则，或在对话里选一个具体模型。"
                 )
-            raise ValueError("没有可用的模型——请在对话里选一个模型，或在偏好设置填写 Provider。")
-        return parse_provider_spec(spec, strategy=self.config.strategy, **kwargs)
+            raise ValueError("没有可用的模型——请在对话里选一个模型，或在模型管理接入本地 / API 模型。")
+        return self._ensure_recovery_chain(
+            parse_provider_spec(spec, strategy=self.config.strategy, **kwargs)
+        )
 
     @staticmethod
     def _diagnose(exc: Exception) -> str:
@@ -1603,8 +1770,10 @@ class DesktopAPI:
         if "connect" in low or "connection refused" in low:
             return ("连不上模型服务——本地模型请确认 Ollama 已启动；"
                     "API 模型请检查 Base URL 与网络。")
-        if "timed out" in low or "timeout" in low:
-            return "模型响应超时——本地大模型首次加载较慢，可再试一次。"
+        if "timed out" in low or "timeout" in low or "视为卡住" in text:
+            return ("模型卡住无响应——已断开本地调用。"
+                    "若配了聚合池或其它模型，会自动改走备用；"
+                    "也可把综合任务改路由到更小的本地模型。")
         if "401" in text or "403" in text or "unauthorized" in low:
             return "API Key 无效或权限不足——请在设置页检查密钥。"
         if "404" in text:
@@ -1711,9 +1880,9 @@ class DesktopAPI:
             if self.config.auto_yes
             else build_policy(self.perm_levels, confirmer)
         )
-        provider = self._build_provider()
+        provider = self._attach_failover(self._build_provider(), chan)
         memory = self._memory_store() if self.config.memory_enabled else None
-        return Agent(
+        return self._attach_learned_recall(Agent(
             provider=provider,
             tools=self._agent_tools(),
             permissions=policy,
@@ -1728,7 +1897,7 @@ class DesktopAPI:
             settings=self._settings_with_patches(),
             on_event=on_event,
             workspace_hints=self._workspace_skill_hints(),
-        )
+        ))
 
     def _implicit_free_route_targets(self) -> list[str]:
         """No keyword/fallback rule: mixture → API models → local chat models."""
@@ -1801,8 +1970,7 @@ class DesktopAPI:
             provider = self._try_build_ref(cand)
             if provider is None:
                 continue
-            if not cand.startswith("mix:"):
-                provider = self._with_route_backups(provider, cand)
+            provider = self._ensure_recovery_chain(provider, preferred=cand)
             if cand != target:
                 label = self._target_label(cand)
                 decision = {
@@ -1817,34 +1985,107 @@ class DesktopAPI:
         # 无规则/无聚合池/无本地模型时，退回偏好设置里的默认 Provider
         return self._build_provider(), decision
 
-    def _with_route_backups(self, primary, target: str):
-        """Keyword-routed single model: keep it first, fail over to the mixture."""
-        from codeagent.desktop.models import _build_member
-
-        mix = next((m for m in self.assets.mixtures if m.enabled), None)
+    def _backup_refs(self, preferred: str = "") -> list[str]:
+        """All other models that can continue work after the preferred one stalls."""
         refs: list[str] = []
-        if mix is not None:
-            refs.extend(mix.members)
+        seen: set[str] = {preferred} if preferred else set()
+
+        def add(ref: str) -> None:
+            if ref and ref not in seen:
+                seen.add(ref)
+                refs.append(ref)
+
+        for mix in self.assets.mixtures:
+            if not mix.enabled:
+                continue
+            for ref in mix.members:
+                add(ref)
             if mix.fallback:
-                refs.append(mix.fallback)
+                add(mix.fallback)
+        for am in self.assets.api_models:
+            add(f"api:{am.id}")
+        for ref in self._extra_local_refs(preferred):
+            add(ref)
+        return refs
+
+    def _ensure_recovery_chain(self, primary, preferred: str = ""):
+        """Keep preferred first; append other models so a stall can continue the task.
+
+        Does not change routing priority — preferred is still tried first every
+        fresh conversation until it is marked unhealthy after a stall.
+        Aggregate / mixture pools are flattened to leaf models so a dead member
+        switches to the next member (and then to other backups).
+        """
+        from codeagent.llm.aggregate import AggregateProvider as Agg
+
+        if isinstance(primary, AggregateProvider):
+            chain = Agg._flatten(list(primary.providers))
+            strategy: str = "fallback"  # recovery always fail-over, never rotate into a dead 120B
         else:
-            refs.extend(f"api:{am.id}" for am in self.assets.api_models)
-        backups = []
-        seen = {f"{primary.name}:{primary.model}"}
-        for ref in refs:
-            if not ref or ref == target:
+            chain = [primary]
+            strategy = "fallback"
+
+        seen = {f"{p.name}:{p.model}" for p in chain}
+        for ref in self._backup_refs(preferred):
+            if preferred and ref == preferred:
                 continue
-            extra = _build_member(self.assets, ref)
-            if extra is None:
+            if preferred.startswith("mix:") and ref.startswith("mix:"):
                 continue
-            key = f"{extra.name}:{extra.model}"
-            if key in seen:
+            for extra in self._providers_for_refs([ref]):
+                key = f"{extra.name}:{extra.model}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                chain.append(extra)
+        if len(chain) == 1:
+            return chain[0]
+        return AggregateProvider(chain, strategy=strategy)
+
+    def _with_route_backups(self, primary, target: str):
+        """Keyword-routed single model: keep it first, fail over to backups."""
+        return self._ensure_recovery_chain(primary, preferred=target)
+
+    @staticmethod
+    def _local_size_rank(name: str) -> int:
+        low = (name or "").lower()
+        for tag, rank in (
+            ("1b", 1), ("3b", 3), ("7b", 7), ("8b", 8),
+            ("14b", 14), ("32b", 32), ("70b", 70), ("72b", 72), ("120b", 120),
+        ):
+            if tag in low:
+                return rank
+        return 40
+
+    def _extra_local_refs(self, target: str) -> list[str]:
+        """Cached smaller local models as last-resort backups (no extra probe)."""
+        cached = self._probe_cache[1] if self._probe_cache else {}
+        refs: list[str] = []
+        for ep in self.assets.endpoints:
+            if ep.kind in ("gradio", "comfy"):
                 continue
-            seen.add(key)
-            backups.append(extra)
-        if not backups:
-            return primary
-        return AggregateProvider([primary, *backups], strategy="fallback")
+            names = sorted(cached.get(ep.id, []) or [], key=self._local_size_rank)
+            for name in names:
+                ref = f"local:{name}@{ep.id}"
+                if ref != target:
+                    refs.append(ref)
+        return refs
+
+    def _attach_failover(self, provider, chan: str = "A"):
+        """Surface automatic backup switches in the chat status bar."""
+        if not isinstance(provider, AggregateProvider):
+            return provider
+
+        def _on_failover(src, exc: Exception, dst) -> None:
+            stuck = "卡住" in str(exc) or "timeout" in str(exc).lower() or "没有思考" in str(exc)
+            verb = "卡住" if stuck else "失败"
+            self._push(
+                "status",
+                chan=chan,
+                text=f"{src.model} {verb}，已自动切换 {dst.model}，继续当前任务",
+            )
+
+        provider.on_failover = _on_failover
+        return provider
 
     # ------------------------------------------------------------------
     # attachments / clipboard / share (对话页)
@@ -1935,7 +2176,9 @@ class DesktopAPI:
     def get_projects(self) -> dict[str, Any]:
         proj = self.projects.get(self.projects.active)
         return {
-            "projects": [asdict(p) for p in self.projects.projects],
+            "projects": [
+                {**asdict(p), "depth": depth} for p, depth in self.projects.walk()
+            ],
             "active": self.projects.active,
             "active_path": proj.path if proj else "",
             "default_base": str(DEFAULT_BASE.expanduser()),
@@ -1943,15 +2186,32 @@ class DesktopAPI:
             "categories": list(CATEGORIES),
         }
 
-    def pick_project_base(self) -> dict[str, Any]:
+    def pick_project_base(self, directory: str = "") -> dict[str, Any]:
         """系统文件夹选择器：选项目存放的父目录（可到任意硬盘）。"""
-        if self._window is None:
+        return self._pick_folder(directory)
+
+    def _pick_folder(self, directory: str = "") -> dict[str, Any]:
+        if self._window is None or not hasattr(self._window, "create_file_dialog"):
             return {"ok": False, "error": "窗口未就绪"}
         import webview
 
+        start = (directory or "").strip()
+        if start:
+            start_path = Path(start).expanduser()
+            try:
+                if start_path.is_file():
+                    start = str(start_path.parent)
+                elif start_path.is_dir():
+                    start = str(start_path)
+                else:
+                    start = str(DEFAULT_BASE.expanduser())
+            except OSError:
+                start = str(DEFAULT_BASE.expanduser())
+        else:
+            start = str(DEFAULT_BASE.expanduser())
         paths = self._window.create_file_dialog(
             webview.FOLDER_DIALOG,
-            directory=str(DEFAULT_BASE.expanduser()),
+            directory=start,
             allow_multiple=False,
         )
         if not paths:
@@ -1987,14 +2247,42 @@ class DesktopAPI:
         }
 
     def create_project(self, name: str, base: str = "",
-                       category: str = "其他") -> dict[str, Any]:
+                       category: str = "其他",
+                       parent_id: str = "") -> dict[str, Any]:
         try:
-            proj = self.projects.create(name, base, category)
+            proj = self.projects.create(name, base, category, parent_id)
         except (OSError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
         self._activate_project(proj.id)
-        log_activity("project", f"新建项目：{proj.name}（{proj.path}）")
+        kind = "子项目" if proj.parent_id else "项目"
+        log_activity("project", f"新建{kind}：{proj.name}（{proj.path}）")
         return {"ok": True, "project": asdict(proj)}
+
+    def retarget_project(self, pid: str, path: str = "") -> dict[str, Any]:
+        """只改索引路径，不移动原文件夹。未传 path 时弹出文件夹选择器。"""
+        dest = (path or "").strip()
+        if not dest:
+            picked = self._pick_folder(self._project_parent_dir(pid))
+            if not picked.get("ok"):
+                return picked
+            dest = str(picked["path"])
+        try:
+            proj = self.projects.set_path(pid, dest)
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        if self.projects.active == pid:
+            self._activate_project(pid)
+        log_activity("project", f"修改项目路径：{proj.name} → {proj.path}")
+        return {"ok": True, "project": asdict(proj)}
+
+    def _project_parent_dir(self, pid: str) -> str:
+        proj = self.projects.get(pid)
+        if proj is None:
+            return ""
+        try:
+            return str(Path(proj.path).expanduser().parent)
+        except OSError:
+            return proj.path
 
     def get_project_records(self) -> dict[str, Any]:
         """当前项目的全部记录：对话 + 文件夹内文件。"""
@@ -2101,12 +2389,16 @@ class DesktopAPI:
         log_activity("project", f"切换到项目：{proj.name}")
         return {"ok": True, "project": asdict(proj)}
 
-    def delete_project(self, pid: str) -> bool:
-        """仅从索引移除；本地文件夹与对话记录全部保留。"""
+    def delete_project(self, pid: str, delete_files: bool = False) -> bool:
+        """默认只从列表移除。delete_files=True 时删除磁盘文件夹及其中的嵌套子项目。"""
         proj = self.projects.get(pid)
-        ok = self.projects.remove(pid)
+        try:
+            ok = self.projects.remove(pid, delete_files=bool(delete_files))
+        except OSError:
+            return False
         if ok:
-            log_activity("project", f"移除项目：{proj.name}（文件夹保留）")
+            extra = "（含磁盘文件夹）" if delete_files else "（文件夹保留）"
+            log_activity("project", f"删除项目：{proj.name}{extra}")
             if self.projects.active:
                 self._activate_project(self.projects.active)
             else:
@@ -2446,6 +2738,16 @@ class DesktopAPI:
             if cancel.is_set():
                 stopped = True
                 return
+            try:
+                answer = asyncio.run(
+                    self._maybe_code_audit(agent, text, answer or "", chan, cancel)
+                )
+            except asyncio.CancelledError:
+                stopped = True
+                return
+            if cancel.is_set():
+                stopped = True
+                return
             proj = self.projects.get(self.projects.active)
             emotion_name = ""
             display = answer
@@ -2624,6 +2926,24 @@ class DesktopAPI:
     def browser_status(self) -> dict[str, Any]:
         return self._browser.ui_state()
 
+    def phone_status(self) -> dict[str, Any]:
+        """USB phone bridge (hdc/adb) readiness for install & smoke tests."""
+        from codeagent.phone.bridge import bridge_summary, status_text
+
+        summary = bridge_summary()
+        summary["ready_text"] = status_text("auto")
+        return summary
+
+    def phone_action(self, action: str, **kwargs: Any) -> dict[str, Any]:
+        """Run a phone bridge action from the desktop UI / agent helpers."""
+        from codeagent.phone.bridge import run_action
+
+        try:
+            text = run_action(action, **kwargs)
+            return {"ok": True, "text": text}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)[:300]}
+
     def browser_goto(self, url: str) -> dict[str, Any]:
         """Open a page in the internal browser (worker thread + GUI pump)."""
 
@@ -2654,6 +2974,145 @@ class DesktopAPI:
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)[:200]}
 
+    def _audit_tools(self):
+        """Read-only tools for the auditor model."""
+        from codeagent.tools.base import ToolRegistry
+        from codeagent.tools.filesystem import ListDirTool, ReadFileTool
+        from codeagent.tools.search import GlobTool, GrepTool
+
+        return ToolRegistry([
+            ReadFileTool(self.root),
+            ListDirTool(self.root),
+            GrepTool(self.root),
+            GlobTool(self.root),
+        ])
+
+    def _pick_auditor_ref(self, writer) -> str:
+        from codeagent.code_audit import pick_auditor_ref
+
+        mix = next((m for m in self.assets.mixtures if m.enabled), None)
+        locals_refs: list[str] = []
+        cached = self._probe_cache[1] if self._probe_cache else {}
+        for ep in self.assets.endpoints:
+            if ep.kind in ("gradio", "comfy"):
+                continue
+            for name in cached.get(ep.id, []) or []:
+                locals_refs.append(f"local:{name}@{ep.id}")
+        return pick_auditor_ref(
+            getattr(writer, "model", "") or "",
+            audit_ref=self.config.code_audit_ref,
+            mixture_members=list(mix.members) if mix else [],
+            mixture_fallback=(mix.fallback if mix else ""),
+            api_ids=[am.id for am in self.assets.api_models],
+            local_refs=locals_refs,
+        )
+
+    def _build_auditor_agent(self, provider, chan: str = "A") -> Agent:
+        from codeagent.security.policy import PermissionPolicy
+
+        on_event = self._on_event if chan == "A" else self._on_event2
+        provider = self._attach_failover(provider, chan)
+        return Agent(
+            provider=provider,
+            tools=self._audit_tools(),
+            permissions=PermissionPolicy.permissive(),
+            max_iterations=min(12, self._effective_max_iterations()),
+            soft_iterations=True,
+            budget=Budget(max_total_tokens=min(DESKTOP_TOKEN_BUDGET, 80_000), soft=True),
+            settings=self._settings_with_patches(),
+            on_event=on_event,
+            workspace_hints=self._workspace_skill_hints(),
+        )
+
+    async def _maybe_code_audit(
+        self,
+        writer: Agent,
+        task: str,
+        answer: str,
+        chan: str,
+        cancel: threading.Event,
+    ) -> str:
+        """After write/edit, run a different model to audit; repair if needed."""
+        if not self.config.code_audit_enabled:
+            return answer
+        paths = list(getattr(writer, "written_paths", None) or [])
+        if not paths:
+            return answer
+        if cancel.is_set():
+            return answer
+
+        from codeagent.code_audit import (
+            audit_needs_repair,
+            build_audit_prompt,
+            build_repair_prompt,
+            clip_audit_report,
+            format_audit_block,
+        )
+
+        ref = self._pick_auditor_ref(writer.provider)
+        if not ref:
+            self._push("status", chan=chan, text="代码审计跳过：没有可用的另一模型")
+            return answer
+        auditor_provider = self._provider_for_ref(ref)
+        if auditor_provider is None:
+            self._push("status", chan=chan, text="代码审计跳过：审计模型不可用")
+            return answer
+        writer_key = f"{writer.provider.name}:{writer.provider.model}"
+        auditor_key = f"{auditor_provider.name}:{auditor_provider.model}"
+        if auditor_key == writer_key and not (self.config.code_audit_ref or "").strip():
+            # Still allow explicit same-ref override; otherwise try next backup
+            alt = self._ensure_recovery_chain(auditor_provider, preferred=ref)
+            if isinstance(alt, AggregateProvider) and len(alt.providers) > 1:
+                for p in alt.providers:
+                    if f"{p.name}:{p.model}" != writer_key:
+                        auditor_provider = p
+                        break
+            if f"{auditor_provider.name}:{auditor_provider.model}" == writer_key:
+                self._push("status", chan=chan, text="代码审计跳过：找不到与写作不同的模型")
+                return answer
+
+        label = self._target_label(ref) if ref else auditor_provider.model
+        self._push(
+            "status",
+            chan=chan,
+            text=f"代码审计：{label} 正在检查 {len(paths)} 个文件…",
+        )
+        auditor = self._build_auditor_agent(auditor_provider, chan=chan)
+        try:
+            report = await auditor.run(build_audit_prompt(paths, task))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("code audit failed")
+            self._push("status", chan=chan, text=f"代码审计失败：{self._diagnose(exc)}")
+            return answer
+        if cancel.is_set():
+            return answer
+
+        report = clip_audit_report(report or "")
+        block = format_audit_block(report, label)
+        self._push("thinking", chan=chan, text=block)
+        proj = self.projects.get(self.projects.active)
+        conv_id = self._conv_id if chan != "B" else self._conv_id2
+        if proj is not None and conv_id:
+            try:
+                append_event(proj, conv_id, "thinking", text=block)
+            except OSError:
+                log.exception("persist audit")
+
+        if not audit_needs_repair(report):
+            self._push("status", chan=chan, text="代码审计通过")
+            return f"{answer}\n\n{block}".strip()
+
+        self._push("status", chan=chan, text="审计发现问题，原模型正在修复…")
+        try:
+            fixed = await writer.run(build_repair_prompt(report, paths))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("code audit repair failed")
+            self._push("status", chan=chan, text=f"审计后修复失败：{self._diagnose(exc)}")
+            return f"{answer}\n\n{block}".strip()
+        if cancel.is_set():
+            return answer
+        return f"{fixed}\n\n{block}".strip()
+
     def _agent_tools(self):
         """Default tools + knowledge vault + video ops when configured."""
         from codeagent.knowledge.tools import knowledge_tools
@@ -2682,7 +3141,8 @@ class DesktopAPI:
             if self.config.auto_yes
             else build_policy(self.perm_levels, confirmer)
         )
-        return Agent(
+        provider = self._attach_failover(provider, chan)
+        return self._attach_learned_recall(Agent(
             provider=provider,
             tools=self._agent_tools(),
             permissions=policy,
@@ -2697,7 +3157,7 @@ class DesktopAPI:
             settings=self._settings_with_patches(),
             on_event=on_event,
             workspace_hints=self._workspace_skill_hints(),
-        )
+        ))
 
     def reset(self) -> bool:
         if self._agent is not None:
@@ -2968,6 +3428,150 @@ class DesktopAPI:
 
         threading.Thread(target=_play, daemon=True, name="cca-tts").start()
 
+    def connected_chat_models(self) -> list[dict[str, str]]:
+        """Local, API, and enabled mixture pools already added in model management."""
+        from codeagent.videoops.cloud import is_video_api_model
+
+        rows: list[dict[str, str]] = []
+        probed = {item["id"]: item for item in self._probed_assets()}
+        for ep in self.assets.endpoints:
+            if ep.kind in ("gradio", "comfy"):
+                continue
+            info = probed.get(ep.id) or {}
+            if info.get("kind") in ("gradio", "comfy"):
+                continue
+            for name in info.get("models") or []:
+                model = str(name).strip()
+                if not model:
+                    continue
+                rows.append({
+                    "ref": f"local:{model}@{ep.id}",
+                    "label": f"{model} · {ep.label or ep.base}",
+                    "kind": "local",
+                })
+        for am in self.assets.api_models:
+            if is_video_api_model(am.model, am.base_url, am.provider):
+                continue
+            rows.append({
+                "ref": f"api:{am.id}",
+                "label": am.display,
+                "kind": "api",
+            })
+        for mix in self.assets.mixtures:
+            if not mix.enabled:
+                continue
+            rows.append({
+                "ref": f"mix:{mix.id}",
+                "label": f"聚合池 · {mix.name}",
+                "kind": "mix",
+            })
+        seen = {row["ref"] for row in rows}
+        for ref in self._saved_chain_refs():
+            if ref in seen:
+                continue
+            kind = (
+                "mix" if ref.startswith("mix:")
+                else "local" if ref.startswith("local:")
+                else "api"
+            )
+            label = (
+                f"聚合池 · {next((m.name for m in self.assets.mixtures if m.id == ref[4:]), ref)}"
+                if kind == "mix" else self.assets.member_label(ref)
+            )
+            rows.append({"ref": ref, "label": label, "kind": kind})
+        return rows
+
+    def _normalize_chain_refs(self, raw: Any) -> list[str]:
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return []
+            try:
+                raw = json.loads(text)
+            except json.JSONDecodeError:
+                return []
+        if not isinstance(raw, list):
+            return []
+        chosen: list[str] = []
+        for item in raw:
+            ref = str(item or "").strip()
+            if ref and ref not in chosen and self._valid_chain_ref(ref):
+                chosen.append(ref)
+        return chosen
+
+    def _valid_chain_ref(self, ref: str) -> bool:
+        from codeagent.videoops.cloud import is_video_api_model
+
+        if ref.startswith("local:") and "@" in ref:
+            model, ep_id = ref[6:].rsplit("@", 1)
+            if not model.strip():
+                return False
+            ep = next((e for e in self.assets.endpoints if e.id == ep_id), None)
+            return ep is not None and ep.kind not in ("gradio", "comfy")
+        if ref.startswith("api:"):
+            am = next((m for m in self.assets.api_models if m.id == ref[4:]), None)
+            if am is None:
+                return False
+            return not is_video_api_model(am.model, am.base_url, am.provider)
+        if ref.startswith("mix:"):
+            mix = next((m for m in self.assets.mixtures if m.id == ref[4:]), None)
+            return mix is not None and mix.enabled and bool(mix.members)
+        return False
+
+    def _saved_chain_refs(self) -> list[str]:
+        return self._normalize_chain_refs(self.config.chain_refs)
+
+    def _providers_for_refs(self, refs: list[str]):
+        """Expand refs to leaf providers; mixtures flatten to member failover order."""
+        from codeagent.desktop.models import _build_member, build_mixture_providers
+
+        providers = []
+        seen: set[str] = set()
+        for ref in refs:
+            if ref.startswith("mix:"):
+                mix = next((m for m in self.assets.mixtures if m.id == ref[4:]), None)
+                if mix is None or not mix.enabled:
+                    continue
+                for provider in build_mixture_providers(self.assets, mix):
+                    key = f"{provider.name}:{provider.model}"
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    providers.append(provider)
+                continue
+            provider = _build_member(self.assets, ref)
+            if provider is None:
+                continue
+            key = f"{provider.name}:{provider.model}"
+            if key in seen:
+                continue
+            seen.add(key)
+            providers.append(provider)
+        return providers
+
+    def _command_provider(self):
+        """Command-center chain: selected models only, timeout fail-over in order.
+
+        The first model stays first. A timeout or stall marks it unhealthy and
+        the next selected model continues the same task. Round-robin is not used.
+        Mixture pools expand to their members so a dead pool member switches too.
+        """
+        from codeagent.desktop.models import build_active_provider
+
+        providers = self._providers_for_refs(self._saved_chain_refs())
+        if not providers and not is_free_route(self.assets.active):
+            active = build_active_provider(self.assets)
+            if isinstance(active, AggregateProvider):
+                providers = list(AggregateProvider._flatten(active.providers))
+            elif active is not None:
+                providers = [active]
+        if not providers:
+            raise ValueError(
+                "请先在偏好设置勾选模型管理里已接入的本地、API 或聚合池。"
+            )
+        chain = AggregateProvider(providers, strategy="fallback")
+        return self._attach_failover(chain, "A")
+
     # ------------------------------------------------------------------
     # leader command center
     # ------------------------------------------------------------------
@@ -2993,10 +3597,9 @@ class DesktopAPI:
             except (json.JSONDecodeError, TypeError, AttributeError):
                 log.warning("workers_json invalid, falling back to default")
         return [WorkerConfig(
-            name="worker",
-            provider=self.config.provider,
-            model=self.config.model or None,
-            description="默认工人",
+            name="默认",
+            provider="chain",
+            description="按已选模型顺序执行，超时或卡住后切换下一个",
         )]
 
     def lead(self, text: str) -> bool:
@@ -3024,9 +3627,14 @@ class DesktopAPI:
                     status=r.status, detail=r.detail,
                 )
             )
+            chain = self._command_provider()
+            workers = self._leader_workers()
+            injected = {
+                w.name: chain for w in workers if w.provider == "chain"
+            }
             leader = Leader(
-                provider=self._build_provider(),
-                workers=self._leader_workers(),
+                provider=chain,
+                workers=workers,
                 root=self.root,
                 skills=self._load_skills(),
                 board=board,
@@ -3040,6 +3648,7 @@ class DesktopAPI:
                     if self.config.auto_yes
                     else None
                 ),
+                worker_providers=injected,
             )
 
             async def _go() -> str:

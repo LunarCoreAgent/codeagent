@@ -109,6 +109,7 @@ def test_fusion_pack_and_chinese_routing():
     assert "y-ai-accompany" in FUSION_SKILLS
     assert "ai-companion" in FUSION_SKILLS
     assert "mobile-app-ui" in FUSION_SKILLS
+    assert "phone-device" in FUSION_SKILLS
     assert "wechat-miniprogram" in FUSION_SKILLS
     assert "weapp-agent-mcp" in FUSION_SKILLS
     assert "m3e-canvas" in FUSION_SKILLS
@@ -254,6 +255,7 @@ def test_expand_and_match_work_content():
     assert "ai-companion" in {s.name for s in match_work_skills(lib, "AI伴侣恋人预设多会话")}
     assert "手机App" in expand_work_query("做个健身App首页")
     assert "mobile-app-ui" in {s.name for s in match_work_skills(lib, "做个健身App首页")}
+    assert "phone-device" in {s.name for s in match_work_skills(lib, "把 hap 装到手机做真机冒烟")}
     assert "微信小程序" in expand_work_query("做一个微信小程序")
     assert "wechat-miniprogram" in {s.name for s in match_work_skills(lib, "做一个微信小程序并提审")}
     assert "weapp-agent" in expand_work_query("在微信开发者工具里点按钮")

@@ -21,6 +21,15 @@ interface ChatCompletionChunk {
   choices?: ChatChoice[];
 }
 
+/** 流式空闲上限（毫秒）。120B 等大模型给 600 秒，普通模型 90 秒。 */
+export function idleTimeoutFor(model: string): number {
+  const n = model.toLowerCase();
+  if (n.indexOf('120b') >= 0 || n.indexOf('70b') >= 0 || n.indexOf('72b') >= 0 || n.indexOf('65b') >= 0) {
+    return 600000;
+  }
+  return 90000;
+}
+
 function buildHeader(apiKey: string): Record<string, string> {
   const header: Record<string, string> = { 'Content-Type': 'application/json' };
   if (apiKey.length > 0) {
@@ -88,10 +97,30 @@ export function chatStream(
       }
     };
 
+    let lastByte = Date.now();
+    const idleMs = idleTimeoutFor(cfg.model);
+    const idleWatch = setInterval((): void => {
+      if (stopped) {
+        clearInterval(idleWatch);
+        return;
+      }
+      if (Date.now() - lastByte < idleMs) {
+        return;
+      }
+      stopped = true;
+      clearInterval(idleWatch);
+      try {
+        req.destroy();
+      } catch (_e) {
+      }
+      onError(`本地模型 ${cfg.model} 超过 ${Math.floor(idleMs / 1000)} 秒没有输出，视为卡住`);
+    }, 2000);
+
     req.on('dataReceive', (chunk: ArrayBuffer) => {
       if (stopped) {
         return;
       }
+      lastByte = Date.now();
       sseBuf += decoder.decodeToString(new Uint8Array(chunk));
       let idx = sseBuf.indexOf('\n');
       while (idx >= 0) {
@@ -106,6 +135,7 @@ export function chatStream(
       if (stopped) {
         return;
       }
+      clearInterval(idleWatch);
       if (sseBuf.trim().length > 0) {
         handleLine(sseBuf);
       }
@@ -123,7 +153,7 @@ export function chatStream(
       }),
       expectDataType: http.HttpDataType.STRING,
       connectTimeout: 30000,
-      readTimeout: 180000,
+      readTimeout: idleTimeoutFor(cfg.model),
     };
 
     req.requestInStream(url, options, (err: BusinessError, _code: number) => {
@@ -131,12 +161,14 @@ export function chatStream(
         return;
       }
       if (err) {
+        clearInterval(idleWatch);
         onError(`网络错误: ${err.code} ${err.message}`);
       }
     });
 
     return () => {
       stopped = true;
+      clearInterval(idleWatch);
       try {
         req.destroy();
       } catch (_e) {

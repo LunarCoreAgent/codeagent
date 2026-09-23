@@ -3,7 +3,7 @@
 ;   iscc /DMyAppVersion=0.26.0 packaging\windows-setup.iss
 
 #ifndef MyAppVersion
-#define MyAppVersion "0.81.0"
+#define MyAppVersion "0.90.3"
 #endif
 #define MyAppName "CodeCoreAgent"
 #define MyAppPublisher "CodeCoreAgent"
@@ -38,6 +38,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 
 [Files]
 Source: "..\dist\desktop\codeagent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\desktop\node\*"; DestDir: "{app}\node"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "win-readme.txt"; DestDir: "{app}"; DestName: "README.txt"; Flags: ignoreversion
 
 [Icons]

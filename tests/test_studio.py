@@ -32,7 +32,10 @@ def studio_ws(tmp_path, monkeypatch):
 @pytest.fixture
 def api(studio_ws, tmp_path, monkeypatch):
     monkeypatch.setattr("codeagent.desktop.api.DESKTOP_CONFIG_PATH", tmp_path / "desktop.json")
+    monkeypatch.setattr("codeagent.learn.nightly.STATE_PATH", tmp_path / "night_learn.json")
+    monkeypatch.setattr("codeagent.learn.store.db_path", lambda: tmp_path / "codecore.sqlite")
     a = DesktopAPI(root=tmp_path)
+    a.scheduler._night_learn_enabled = lambda: False
     return a
 
 

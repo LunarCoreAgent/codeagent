@@ -162,8 +162,12 @@ class MCPManager:
                         streamable_http_client(config.url, http_client=http_client)
                     )
                 else:
+                    from codeagent.node_runtime import augment_env, resolve_launcher
+
                     params = StdioServerParameters(
-                        command=config.command, args=config.args, env=config.env
+                        command=resolve_launcher(config.command or ""),
+                        args=config.args,
+                        env=augment_env(config.env),
                     )
                     read, write = await self._stack.enter_async_context(
                         stdio_client(params)

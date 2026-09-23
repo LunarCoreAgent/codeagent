@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from codeagent.core.agent import Agent
 from codeagent.core.budget import Budget
 from codeagent.llm.aggregate import parse_provider_spec
+from codeagent.llm.base import LLMProvider
 from codeagent.security.policy import PermissionPolicy, RiskLevel
 from codeagent.skills.skill import SkillLibrary
 from codeagent.tools import ToolRegistry, default_tools
@@ -70,6 +71,7 @@ def build_worker_agent(
     budget: Budget | None = None,
     on_event=None,
     permissions: PermissionPolicy | None = None,
+    provider: LLMProvider | None = None,
 ) -> Agent:
     """Build a worker agent with full tools, skills, and project understanding."""
     provider_kwargs: dict[str, Any] = {}
@@ -79,7 +81,7 @@ def build_worker_agent(
         provider_kwargs["base_url"] = config.base_url
     if config.api_key:
         provider_kwargs["api_key"] = config.api_key
-    provider = parse_provider_spec(config.provider, **provider_kwargs)
+    provider = provider or parse_provider_spec(config.provider, **provider_kwargs)
 
     system = (
         f"你是工人 '{config.name}'，由领导分派任务。"

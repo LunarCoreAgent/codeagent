@@ -18,8 +18,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -38,6 +40,7 @@ class Project:
     created: str = ""
     last_active: str = ""
     category: str = "其他"
+    parent_id: str = ""
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
 
@@ -71,20 +74,40 @@ class ProjectStore:
     def get(self, pid: str) -> Project | None:
         return next((p for p in self.projects if p.id == pid), None)
 
-    def create(self, name: str, base: str = "", category: str = "其他") -> Project:
+    def create(
+        self,
+        name: str,
+        base: str = "",
+        category: str = "其他",
+        parent_id: str = "",
+    ) -> Project:
         """建立项目：同时在本地创建项目文件夹（含 conversations/ 与 files/）。"""
         name = name.strip() or "未命名项目"
         category = category if category in CATEGORIES else "其他"
-        folder = _unique_folder(Path(base).expanduser() if base.strip()
-                                else DEFAULT_BASE.expanduser(), name)
+        parent_id = (parent_id or "").strip()
+        parent = self.get(parent_id) if parent_id else None
+        if parent_id and parent is None:
+            raise ValueError("父项目不存在")
+        dest = (base or "").strip()
+        if not dest and parent is not None:
+            dest = parent.path
+        folder = _unique_folder(
+            Path(dest).expanduser() if dest else DEFAULT_BASE.expanduser(),
+            name,
+        )
         folder.mkdir(parents=True, exist_ok=False)
         (folder / "conversations").mkdir()
         (folder / "files").mkdir()
         now = time.strftime("%Y-%m-%d %H:%M:%S")
-        proj = Project(name=name, path=str(folder), created=now,
-                       last_active=now, category=category)
-        (folder / "project.json").write_text(json.dumps(
-            asdict(proj), ensure_ascii=False, indent=2), encoding="utf-8")
+        proj = Project(
+            name=name,
+            path=str(folder),
+            created=now,
+            last_active=now,
+            category=parent.category if parent is not None else category,
+            parent_id=parent.id if parent is not None else "",
+        )
+        _write_meta(proj)
         self.projects.append(proj)
         self.active = proj.id
         self.save()
@@ -99,13 +122,92 @@ class ProjectStore:
             return self.get(self.active) or self.projects[0]
         return self.create("默认项目", category="其他")
 
-    def remove(self, pid: str) -> bool:
-        """仅从索引移除（本地文件夹与对话记录保留）。"""
+    def children(self, pid: str) -> list[Project]:
+        return [p for p in self.projects if p.parent_id == pid]
+
+    def descendants(self, pid: str) -> list[Project]:
+        found: list[Project] = []
+        pending = [pid]
+        seen = {pid}
+        while pending:
+            current = pending.pop()
+            for child in self.children(current):
+                if child.id in seen:
+                    continue
+                seen.add(child.id)
+                found.append(child)
+                pending.append(child.id)
+        return found
+
+    def walk(self) -> list[tuple[Project, int]]:
+        """Top-level projects first, children nested; preserves sibling order."""
+        by_parent: dict[str, list[Project]] = {}
+        for proj in self.projects:
+            by_parent.setdefault(proj.parent_id or "", []).append(proj)
+        rows: list[tuple[Project, int]] = []
+
+        def visit(parent: str, depth: int, stack: frozenset[str]) -> None:
+            for proj in by_parent.get(parent, []):
+                rows.append((proj, depth))
+                if proj.id in stack:
+                    continue
+                visit(proj.id, depth + 1, stack | {proj.id})
+
+        visit("", 0, frozenset())
+        listed = {proj.id for proj, _ in rows}
+        for proj in self.projects:
+            if proj.id not in listed:
+                rows.append((proj, 0))
+        return rows
+
+    def set_path(self, pid: str, path: str) -> Project:
+        """Point the index at another existing folder. Does not move files."""
+        proj = self.get(pid)
+        if proj is None:
+            raise ValueError("项目不存在")
+        folder = Path(path).expanduser()
+        if not folder.is_dir():
+            raise ValueError("该路径不是可用的文件夹")
+        occupied = next(
+            (p for p in self.projects if p.id != pid and _same_path(p.path, str(folder))),
+            None,
+        )
+        if occupied is not None:
+            raise ValueError(f"该路径已被项目「{occupied.name}」使用")
+        proj.path = str(folder)
+        _write_meta(proj)
+        self.save()
+        return proj
+
+    def remove(self, pid: str, delete_files: bool = False) -> bool:
+        """Remove from the index. Optionally delete the folder on disk."""
         proj = self.get(pid)
         if proj is None:
             return False
-        self.projects.remove(proj)
-        if self.active == pid:
+        nested = [
+            child for child in self.descendants(pid)
+            if _is_under(child.path, proj.path)
+        ]
+        outsiders = [
+            child for child in self.descendants(pid)
+            if child not in nested
+        ]
+        if delete_files:
+            folder = Path(proj.path).expanduser()
+            if folder.is_dir():
+                try:
+                    shutil.rmtree(folder)
+                except OSError:
+                    return False
+            drop = {proj.id, *(child.id for child in nested)}
+            self.projects = [p for p in self.projects if p.id not in drop]
+            for child in outsiders:
+                child.parent_id = proj.parent_id
+        else:
+            for child in self.children(pid):
+                child.parent_id = proj.parent_id
+            self.projects = [p for p in self.projects if p.id != pid]
+        if self.active == pid or self.get(self.active) is None:
             self.active = self.projects[-1].id if self.projects else ""
         self.save()
         return True
@@ -116,6 +218,45 @@ class ProjectStore:
             proj.last_active = time.strftime("%Y-%m-%d %H:%M:%S")
             self.active = pid
             self.save()
+
+
+def _write_meta(proj: Project) -> None:
+    folder = Path(proj.path).expanduser()
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "project.json").write_text(
+            json.dumps(asdict(proj), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _norm_path(path: str) -> str:
+    text = os.path.normpath(os.path.expanduser(str(path)))
+    if len(text) > 1:
+        text = text.rstrip("/\\")
+    return text
+
+
+def _same_path(a: str, b: str) -> bool:
+    left, right = _norm_path(a), _norm_path(b)
+    if sys.platform == "win32":
+        return left.casefold() == right.casefold()
+    return left == right
+
+
+def _is_under(path: str, root: str) -> bool:
+    child, parent = _norm_path(path), _norm_path(root)
+    if not parent:
+        return False
+    try:
+        common = os.path.commonpath([child, parent])
+    except ValueError:
+        return False
+    if sys.platform == "win32":
+        return common.casefold() == parent.casefold() and child.casefold() != parent.casefold()
+    return common == parent and child != parent
 
 
 def _unique_folder(base: Path, name: str) -> Path:

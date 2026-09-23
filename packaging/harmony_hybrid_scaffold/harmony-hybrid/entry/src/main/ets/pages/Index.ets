@@ -119,7 +119,7 @@ struct Index {
 
           Blank()
 
-          Text('v0.81.0')
+          Text('v0.89.0')
             .fontSize(10).fontColor(Color.Gray)
             .margin({ bottom: 12 })
         }

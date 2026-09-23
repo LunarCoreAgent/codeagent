@@ -23,6 +23,7 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
 
 - 做界面 / 改视觉 / React 动效 → impeccable-craft、taste-craft、ui-ux-pro、react-bits、anime-js、agent-style
 - 手机 App 界面 / 拇指热区 / 移动端组件 → mobile-app-ui
+- 真机 USB 安装 / 启动 / 截图 / 点按冒烟测试 → phone-device（内置 phone 工具，hdc/adb）
 - Material 3 Expressive 画布 / 导出实现提示词 → m3e-canvas（内置浏览器打开）
 - 微信小程序从需求到提审发布 → wechat-miniprogram
 - 微信开发者工具里点页面、截图、巡检 → weapp-agent-mcp
@@ -46,7 +47,7 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
 - 团队级 Agent 记忆 Hub / 四类资产共享 → tencentdb-agent-memory（默认映射本地 Wiki；进阶 Docker Hub）
 - 鸿蒙 / HarmonyOS NEXT / ArkTS API 查询 → harmony-next（离线路由，勿把 4000+ 文档整包塞进上下文）
 - ArkTS 语法 / .ets / TS 迁移 / 编译错误 → arkts-syntax-assistant
-- 鸿蒙编译安装 / 真机调试 / UI 树 / hilog → deveco-mcp（需本机 DevEco + MCP `deveco-mcp-server`）
+- 鸿蒙编译安装 / 真机调试 / UI 树 / hilog → 日常装测用 phone 工具（phone-device）；完整 DevEco 工程编译叠 deveco-mcp
 - CLI agent 启动自检 / --json 信封 / 工具执行前权限闸门 → claw-code
 - 可视化无代码建站 / Silex / GrapesJS 画布 → silex（MCP `http://127.0.0.1:6807/mcp`，先开 Desktop；AGPL 勿拷进安装包）
 - MotionSites 付费设计提示词 / 按条取参考 → motionsites-mcp（需账号 OAuth；禁止刮库、禁止把 500 条塞进上下文）
@@ -55,6 +56,8 @@ FUSION_SKILLS: dict[str, tuple[str, str, str, str]] = {
 - 打开网页 / 登录站 / 点按钮 / 填表 → 直接调用 browser 工具（软件内置浏览器，无需安装；已登录 Chrome 可另用 browser-skill / ego-browser）
 - 语音面 / 麦克风 / 播报 / 嗲音 / barge-in → voice-surface
 - 情感陪伴 / AI 伴侣 / 人设 YAML / 永久记忆 / 口癖 → y-ai-accompany、ai-companion
+- 用户文字语言 → lang-zh / lang-zh-hant / lang-en / lang-ja / lang-ko / lang-fr / lang-es（只约束回复语言）
+- 浏览器、终端、Python、Node.js → 先用本体；没有则 ensure_runtime，Node 只装官方包到 ~/.codeagent/runtime
 """,
     ),
     "voice-surface": (
@@ -511,6 +514,32 @@ macOS 上的 Agent 浏览器：每个任务一个 Space，复用你的登录，�
 - 拇指热区：主操作放屏幕下半；返回/次要放上沿或边缘
 - Peak-End：关键成功瞬间与结束态单独设计，不要平均铺满装饰
 - 先信息架构与状态（空/加载/错/成功），再动效
+""",
+    ),
+    "phone-device": (
+        "真机控制：USB 装包、启动、截图、日志、UI 树、点按滑动冒烟测试（hdc/adb）",
+        "真机,装到手机,USB调试,hdc,adb,安装HAP,安装APK,手机测试,冒烟测试,phone工具",
+        "https://github.com/LunarCoreAgent/codeagent",
+        """# phone-device（真机安装与测试）
+把应用装到已连接的手机/平板并做冒烟测试时启用。直接调用内置工具 `phone`，不要让用户去点 DevEco / Android Studio。
+
+## 闭环
+1. `phone` action=`status` 或 `devices` — 确认 hdc（鸿蒙）或 adb（安卓）与设备
+2. 编译出 `.hap` / `.apk` 后 `phone` action=`install` path=本机安装包
+3. `start`（鸿蒙传 package + ability；安卓传 package + activity）
+4. `screenshot` / `ui_dump` / `tap` / `swipe` / `input` 做冒烟
+5. 出问题用 `log`（hilog / logcat）对照修复，再装一轮
+
+## 参数要点
+- 鸿蒙：`prefer=hdc`，`package`=bundleName，`ability` 默认 EntryAbility
+- 安卓：`prefer=adb`，`package`=applicationId，`activity` 如 `.MainActivity`
+- 多设备时传 `serial`
+- 正式市场签名包可能拒绝 USB 安装；调试签名 / 开发者设备才能 `install`
+
+## 铁律
+- 先 status，没有设备就说明怎么开 USB 调试，不要假装已装上
+- 需要完整 DevEco 工程编译/UI 录制时可叠 `deveco-mcp`；日常装测优先 `phone`
+- 不要把用户手机当沙盒借口跳过真机验证
 """,
     ),
     "wechat-miniprogram": (
@@ -1074,9 +1103,17 @@ Windows 将 `DEVECO_PATH` 改为本机 Studio 安装目录。也可用上游 `de
 }
 
 
+def _skill_rows() -> dict[str, tuple[str, str, str, str]]:
+    from codeagent.skills.language import LANGUAGE_SKILLS
+
+    rows = dict(FUSION_SKILLS)
+    rows.update(LANGUAGE_SKILLS)
+    return rows
+
+
 def fusion_library() -> SkillLibrary:
     lib = SkillLibrary()
-    for name, (desc, _triggers, source, body) in FUSION_SKILLS.items():
+    for name, (desc, _triggers, source, body) in _skill_rows().items():
         lib.add(Skill(
             name=name,
             description=desc,
@@ -1092,8 +1129,8 @@ def _fusion_pack_stamp() -> str:
         from codeagent import __version__
     except Exception:  # noqa: BLE001
         __version__ = "0"
-    names = ",".join(sorted(FUSION_SKILLS))
-    return f"{__version__}:{len(FUSION_SKILLS)}:{hash(names) & 0xFFFFFFFF:x}"
+    names = ",".join(sorted(_skill_rows()))
+    return f"{__version__}:{len(_skill_rows())}:{hash(names) & 0xFFFFFFFF:x}"
 
 
 _fusion_ensured: set[str] = set()
@@ -1105,7 +1142,7 @@ def install_fusion_skills(directory: Path | None = None) -> list[str]:
     root.mkdir(parents=True, exist_ok=True)
     written: list[str] = []
     lib = SkillLibrary()
-    for name, (desc, triggers, source, body) in FUSION_SKILLS.items():
+    for name, (desc, triggers, source, body) in _skill_rows().items():
         skill = Skill(
             name=name,
             description=desc,

@@ -142,6 +142,7 @@ class Agent:
         self._invoked_plugin_names: list[str] = []
         self._browser_navigated = False
         self._showcase_nudged = False
+        self.written_paths: list[str] = []
         self._bind_skill_runtime()
         self._bind_plugin_runtime()
 
@@ -241,12 +242,17 @@ class Agent:
         """Recognize work content and enable matching skills without asking."""
         if self.skills is None or not len(self.skills):
             return []
+        from codeagent.skills.language import language_directive, language_skill_names
         from codeagent.skills.runtime import match_work_skills
 
         hits = match_work_skills(
             self.skills, task, hints=self.workspace_hints, limit=8,
         )
-        names = [skill.name for skill in hits]
+        names: list[str] = []
+        for name in [*language_skill_names(task), *[skill.name for skill in hits]]:
+            if self.skills.get(name) is None or name in names:
+                continue
+            names.append(name)
         self._auto_skill_names = names
         return names
 
@@ -373,6 +379,11 @@ class Agent:
             blob = expand_work_query(" ".join(
                 x for x in (query, self.workspace_hints) if x
             ))
+            from codeagent.skills.language import language_directive
+
+            directive = language_directive(query)
+            if directive:
+                parts.append(directive)
             active = self._active_skill_names()
             if active:
                 parts.append("[已自动启用 / 已调用技能 — 必须遵守]\n" + "、".join(active))
@@ -395,16 +406,26 @@ class Agent:
     async def _refresh_memory_context(self, task: str) -> None:
         """Recall last 5 conversation memories, then keyword matches."""
         self._memory_context = ""
+        query = self._memory_query_from_task(task)
         if self.memory is None:
+            extra_notes = self._recall_learned_library(query)
+            if extra_notes:
+                self._memory_context = (
+                    "[本机记忆库检索 — 夜间自学写入的知识，只使用下列条目]\n"
+                    + "\n".join(f"- {note}" for note in extra_notes)
+                )
             return
         from codeagent.memory.journal import CONVERSATION_KINDS
 
         recent = await self.memory.list(limit=5, kinds=CONVERSATION_KINDS)
-        query = self._memory_query_from_task(task)
         hits = await self.memory.search(query, limit=5) if query.strip() else []
+        learned = await self._match_learned(query)
         seen = {m.id for m in recent}
-        extra = [m for m in hits if m.id not in seen]
-        if not recent and not extra:
+        learned_ids = {m.id for m in learned}
+        extra = [m for m in hits if m.id not in seen and m.id not in learned_ids]
+        learned = [m for m in learned if m.id not in seen]
+        extra_notes = self._recall_learned_library(query)
+        if not recent and not extra and not learned and not extra_notes:
             return
         parts: list[str] = []
         if recent:
@@ -415,7 +436,48 @@ class Agent:
         if extra:
             parts.append("[相关记忆 — 只使用下列条目，不要编造未列出的细节]")
             parts.extend(f"- {m.content}" for m in extra)
+        if learned:
+            parts.append(
+                "[夜间自学知识 — 代码/设计/UI/流程/数据库，只使用下列条目，不要编造未列出的细节]"
+            )
+            parts.extend(f"- {m.content}" for m in learned)
+        if extra_notes:
+            parts.append(
+                "[本机记忆库检索 — 夜间自学写入的知识，只使用下列条目]"
+            )
+            parts.extend(f"- {note}" for note in extra_notes)
         self._memory_context = "\n".join(parts)
+
+    async def _match_learned(self, query: str):
+        from codeagent.memory.journal import LEARNED_KINDS
+        from codeagent.memory.store import _tokenize
+
+        items = await self.memory.list(limit=40, kinds=LEARNED_KINDS)
+        if not items:
+            return []
+        tokens = set(_tokenize(query or ""))
+        if not tokens:
+            return items[:6]
+        scored = []
+        for memory in items:
+            hay = set(_tokenize(memory.content))
+            overlap = len(tokens & hay)
+            if overlap:
+                scored.append((overlap, memory))
+        scored.sort(key=lambda pair: (-pair[0], -pair[1].updated_at))
+        return [m for _, m in scored[:6]]
+
+    def _recall_learned_library(self, query: str) -> list[str]:
+        callback = getattr(self, "recall_learned", None)
+        if not callable(callback):
+            return []
+        try:
+            notes = callback(query)
+        except Exception:  # noqa: BLE001
+            return []
+        if not isinstance(notes, list):
+            return []
+        return [str(n).strip() for n in notes if str(n).strip()][:8]
 
     def _memory_query_from_task(self, task: str) -> str:
         """Prefer the user's new message, not conversation seed or file dumps."""
@@ -443,6 +505,7 @@ class Agent:
         self._children_usage = Usage()
         self._browser_navigated = False
         self._showcase_nudged = False
+        self.written_paths = []
         self.messages.append(Message.user(task))
         await self._refresh_memory_context(memory_query if memory_query is not None else task)
         activated = self._auto_activate_skills(task)
@@ -583,6 +646,10 @@ class Agent:
                 result = await self.tools.execute(call)
                 if result.is_error:
                     log.warning("tool %s error: %.200s", call.name, result.content)
+                elif call.name in ("write_file", "edit_file"):
+                    path = str((call.arguments or {}).get("path") or "").strip()
+                    if path and path not in self.written_paths:
+                        self.written_paths.append(path)
             await self._emit("tool_result", result)
             results.append(result)
         return results

@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from typing import Any
 
 from codeagent.core.types import LLMResponse, Message, Role, ToolCall, Usage
 from codeagent.llm.base import LLMProvider
+from codeagent.llm.ollama import STALL_SWITCH_SECONDS, StallTimeout
 
 DEFAULT_MODEL = "gpt-4o"
 
@@ -34,6 +36,18 @@ def is_transient_serving_error(exc: BaseException) -> bool:
     if any(token in text for token in ("401", "403", "unauthorized", "invalid api key")):
         return False
     return any(marker in text for marker in _SERVING_MARKERS)
+
+
+def _tool_arguments(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _tool_parameters(raw: Any) -> dict[str, Any]:
@@ -75,9 +89,11 @@ class OpenAIProvider(LLMProvider):
         if key is None and base_url:
             # 免鉴权自建端点（ds4/vLLM/llama.cpp）：占位 key，头部被忽略
             key = "EMPTY"
+        self.idle_timeout = STALL_SWITCH_SECONDS
         self.client = AsyncOpenAI(
             api_key=key,
             base_url=base_url,
+            timeout=3600.0,
             **client_kwargs,
         )
 
@@ -110,8 +126,20 @@ class OpenAIProvider(LLMProvider):
                 for t in tools
             ]
         request.update(kwargs)
+        request["stream"] = True
 
-        response = await self._create_with_retry(request)
+        try:
+            response = await asyncio.wait_for(
+                self._create_with_retry(request),
+                timeout=self.idle_timeout,
+            )
+        except TimeoutError as exc:
+            raise StallTimeout(self._stall_message()) from exc
+        if hasattr(response, "__aiter__"):
+            return await self._from_stream(response)
+        return self._from_completion(response)
+
+    def _from_completion(self, response: Any) -> LLMResponse:
         choice = response.choices[0]
         msg = choice.message
 
@@ -119,14 +147,11 @@ class OpenAIProvider(LLMProvider):
             ToolCall(
                 id=tc.id,
                 name=tc.function.name,
-                arguments=json.loads(tc.function.arguments or "{}"),
+                arguments=_tool_arguments(tc.function.arguments),
             )
             for tc in msg.tool_calls or []
         ]
 
-        # Thinking models may expose CoT separately. Keep it on ``reasoning``
-        # for the UI; only fall back into ``content`` when the answer field
-        # is empty (otherwise the agent loop would see a blank reply).
         content = msg.content or ""
         reasoning = (getattr(msg, "reasoning_content", None) or "").strip()
         if not content and reasoning:
@@ -157,6 +182,109 @@ class OpenAIProvider(LLMProvider):
             usage=usage,
             reasoning=reasoning,
         )
+
+    async def _from_stream(self, stream: Any) -> LLMResponse:
+        """Switch away when a stream stays silent: no thinking and no work."""
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tools: dict[int, dict[str, str]] = {}
+        finish = "stop"
+        usage = Usage()
+        self._useful_deadline = time.monotonic() + self.idle_timeout
+        agen = stream.__aiter__()
+        try:
+            while True:
+                remaining = self._useful_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise StallTimeout(self._stall_message())
+                try:
+                    chunk = await asyncio.wait_for(agen.__anext__(), timeout=remaining)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError as exc:
+                    raise StallTimeout(self._stall_message()) from exc
+                if self._absorb_chunk(chunk, content_parts, reasoning_parts, tools):
+                    self._useful_deadline = time.monotonic() + self.idle_timeout
+                choice = (getattr(chunk, "choices", None) or [None])[0]
+                if choice is not None and getattr(choice, "finish_reason", None):
+                    finish = choice.finish_reason
+                raw_usage = getattr(chunk, "usage", None)
+                if raw_usage is not None:
+                    usage = Usage(
+                        input_tokens=getattr(raw_usage, "prompt_tokens", 0) or 0,
+                        output_tokens=getattr(raw_usage, "completion_tokens", 0) or 0,
+                    )
+        finally:
+            aclose = getattr(stream, "aclose", None) or getattr(agen, "aclose", None)
+            if callable(aclose):
+                await aclose()
+
+        tool_calls = [
+            ToolCall(
+                id=item["id"] or f"call_{index}",
+                name=item["name"],
+                arguments=_tool_arguments(item["arguments"]),
+            )
+            for index, item in sorted(tools.items())
+        ]
+        content = "".join(content_parts)
+        reasoning = "".join(reasoning_parts).strip()
+        if not content and reasoning:
+            content, reasoning = reasoning, ""
+        if not content and not tool_calls:
+            if finish == "length":
+                raise LLMError(
+                    f"输出被 token 上限（{self.max_tokens}）截断：思考型模型把预算"
+                    "烧在了推理链上。请调大 max_tokens，或要求模型先给结论。"
+                )
+            raise LLMError(
+                "模型返回空内容（思考型模型可能把正文放在 reasoning 字段，"
+                "或服务端异常）"
+            )
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls,
+            stop_reason=finish or "stop",
+            usage=usage,
+            reasoning=reasoning,
+        )
+
+    def _stall_message(self) -> str:
+        return (
+            f"{self.model} 超过 {int(self.idle_timeout)} 秒没有思考也没有工作，视为卡住"
+        )
+
+    @staticmethod
+    def _absorb_chunk(chunk: Any, content: list[str], reasoning: list[str], tools: dict[int, dict[str, str]]) -> bool:
+        choice = (getattr(chunk, "choices", None) or [None])[0]
+        if choice is None:
+            return False
+        delta = getattr(choice, "delta", None)
+        if delta is None:
+            return False
+        useful = False
+        text = getattr(delta, "content", None)
+        if text:
+            content.append(str(text))
+            useful = True
+        thought = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+        if thought:
+            reasoning.append(str(thought))
+            useful = True
+        for tc in getattr(delta, "tool_calls", None) or []:
+            useful = True
+            index = int(getattr(tc, "index", 0) or 0)
+            slot = tools.setdefault(index, {"id": "", "name": "", "arguments": ""})
+            if getattr(tc, "id", None):
+                slot["id"] = tc.id
+            fn = getattr(tc, "function", None)
+            if fn is None:
+                continue
+            if getattr(fn, "name", None):
+                slot["name"] += fn.name
+            if getattr(fn, "arguments", None):
+                slot["arguments"] += fn.arguments
+        return useful
 
     async def _create_with_retry(self, request: dict[str, Any]) -> Any:
         """Retry DashScope/compat 500s once — first failure is often transient."""

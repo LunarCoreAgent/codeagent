@@ -3,6 +3,14 @@
 from __future__ import annotations
 
 CONVERSATION_KINDS = ("turn", "thinking", "conversation")
+LEARNED_KINDS = (
+    "learned_code",
+    "learned_design",
+    "learned_ui",
+    "learned_flow",
+    "learned_db",
+    "learned_tech",
+)
 
 
 def clip(text: str, limit: int = 400) -> str:

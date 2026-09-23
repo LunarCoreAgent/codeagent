@@ -24,11 +24,14 @@ class WebviewHost:
         self.win: Any = None
         self.loaded = threading.Event()
         self._q: queue.Queue[tuple[Callable[[], Any], Future[Any]]] = queue.Queue()
-        self._gui_ready = False
+        # Desktop always has a GUI thread (main pywebview window + browser_pump).
+        # Do not wait for the first pump — otherwise chat-page navigate falls back
+        # to HTTP-only mode and never opens the live window.
+        self._gui_ready = True
 
     @property
     def has_gui(self) -> bool:
-        return self._gui_ready or self.win is not None
+        return True
 
     def notify(self, **data: Any) -> None:
         self._push("browser", **data)

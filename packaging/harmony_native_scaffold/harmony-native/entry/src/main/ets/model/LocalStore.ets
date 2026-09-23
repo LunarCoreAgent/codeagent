@@ -58,3 +58,65 @@ export function toChatBase(base: string): string {
   }
   return b + '/v1';
 }
+
+export interface StallBackup {
+  model: string;
+  baseUrl: string;
+}
+
+export function modelSizeRank(name: string): number {
+  const n = name.toLowerCase();
+  if (n.indexOf('120b') >= 0) {
+    return 120;
+  }
+  if (n.indexOf('72b') >= 0) {
+    return 72;
+  }
+  if (n.indexOf('70b') >= 0) {
+    return 70;
+  }
+  if (n.indexOf('32b') >= 0) {
+    return 32;
+  }
+  if (n.indexOf('14b') >= 0) {
+    return 14;
+  }
+  if (n.indexOf('8b') >= 0) {
+    return 8;
+  }
+  if (n.indexOf('7b') >= 0) {
+    return 7;
+  }
+  if (n.indexOf('3b') >= 0) {
+    return 3;
+  }
+  return 40;
+}
+
+/** 卡住时优先改走更小的本机模型。 */
+export function pickStallBackup(
+  list: LocalEndpoint[],
+  currentModel: string,
+  currentBase: string,
+): StallBackup | null {
+  const curBase = toChatBase(currentBase);
+  const cands: StallBackup[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const ep = list[i];
+    const base = toChatBase(ep.baseUrl);
+    for (let j = 0; j < ep.models.length; j++) {
+      const mid = ep.models[j];
+      if (mid === currentModel && base === curBase) {
+        continue;
+      }
+      cands.push({ model: mid, baseUrl: base });
+    }
+  }
+  if (cands.length === 0) {
+    return null;
+  }
+  cands.sort((a: StallBackup, b: StallBackup): number => {
+    return modelSizeRank(a.model) - modelSizeRank(b.model);
+  });
+  return cands[0];
+}

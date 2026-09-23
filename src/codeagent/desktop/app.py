@@ -167,6 +167,32 @@ def run_desktop(root: Path | None = None) -> int:
         from codeagent.desktop.mic import register_mic_with_tcc_async
 
         register_mic_with_tcc_async()
+        import threading
+
+        def _ensure_node() -> None:
+            try:
+                from codeagent.node_runtime import ensure_installed
+
+                ensure_installed()
+            except Exception:
+                import logging
+
+                logging.getLogger("codeagent").exception("fused node install failed")
+
+        def _ensure_sqlite() -> None:
+            try:
+                if not api.config.db_ready or not api.config.db_path:
+                    return
+                from codeagent.sqlite_store import ensure
+
+                ensure(Path(api.config.db_path))
+            except Exception:
+                import logging
+
+                logging.getLogger("codeagent").exception("embedded sqlite init failed")
+
+        threading.Thread(target=_ensure_node, name="cca-node", daemon=True).start()
+        threading.Thread(target=_ensure_sqlite, name="cca-sqlite", daemon=True).start()
 
     try:
         window.events.shown += _on_shown

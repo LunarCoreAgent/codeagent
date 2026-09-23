@@ -37,11 +37,14 @@ class BashTool(Tool):
 
     async def execute(self, command: str, timeout: int | None = None, **_: Any) -> str:
         effective_timeout = timeout or self.default_timeout
+        from codeagent.node_runtime import augment_env
+
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=self.cwd,
+            env=augment_env(),
         )
         try:
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=effective_timeout)

@@ -12,7 +12,15 @@ from codeagent import (
     parse_provider_spec,
 )
 from codeagent.core.types import LLMResponse
+from codeagent.llm.aggregate import mark_unhealthy, reset_unhealthy
 from codeagent.llm.base import LLMProvider
+
+
+@pytest.fixture(autouse=True)
+def _clear_unhealthy_providers():
+    reset_unhealthy()
+    yield
+    reset_unhealthy()
 
 
 class StubProvider(LLMProvider):
@@ -87,6 +95,91 @@ async def test_round_robin_still_fails_over():
     )
     assert (await agg.complete([])).content == "B"  # starts at a, fails over to b
     assert (await agg.complete([])).content == "B"  # starts at b directly
+
+
+@pytest.mark.asyncio
+async def test_skips_unhealthy_provider_without_calling_it():
+    broken = StubProvider("a", error=RuntimeError("hung"))
+    backup = StubProvider("b", "B")
+    mark_unhealthy(broken, seconds=60)
+    agg = AggregateProvider([broken, backup])
+    assert (await agg.complete([])).content == "B"
+    assert broken.calls == 0
+    assert backup.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_failover_callback_and_cooldown():
+    seen: list[tuple[str, str]] = []
+    broken = StubProvider("a", error=RuntimeError("视为卡住"))
+    backup = StubProvider("b", "B")
+    agg = AggregateProvider([broken, backup])
+    agg.on_failover = lambda src, exc, dst: seen.append((src.model, dst.model))
+    assert (await agg.complete([])).content == "B"
+    assert seen == [("a-model", "b-model")]
+    # second call must not wait on a again
+    assert (await agg.complete([])).content == "B"
+    assert broken.calls == 1
+    assert backup.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_nested_aggregate_flattens_for_stall_switch():
+    """Nested AggregateProvider leaves must all participate in dead-model switch."""
+    inner = AggregateProvider(
+        [StubProvider("a", error=RuntimeError("视为卡住")), StubProvider("b", "B")],
+        strategy="fallback",
+    )
+    outer = AggregateProvider(
+        [inner, StubProvider("c", "C")],
+        strategy="fallback",
+    )
+    resp = await outer.complete([])
+    assert resp.content == "B"
+    assert outer.providers[0].providers[0].calls == 1
+    assert outer.providers[0].providers[1].calls == 1
+    assert outer.providers[1].calls == 0
+
+
+@pytest.mark.asyncio
+async def test_timeout_switches_to_next_model(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr("codeagent.llm.aggregate.DEFAULT_CALL_CAP", 0.05)
+
+    class Slow(StubProvider):
+        async def complete(self, messages, tools=None, system=None, **kwargs):
+            self.calls += 1
+            await asyncio.sleep(1)
+            return LLMResponse(content="late")
+
+    slow = Slow("slow")
+    backup = StubProvider("backup", "ok")
+    agg = AggregateProvider([slow, backup], strategy="fallback")
+    assert (await agg.complete([])).content == "ok"
+    assert slow.calls == 1
+    assert backup.calls == 1
+    assert (await agg.complete([])).content == "ok"
+    assert slow.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_working_idle_watchdog_is_not_killed_by_wall_clock(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr("codeagent.llm.aggregate.DEFAULT_CALL_CAP", 0.05)
+
+    class Working(StubProvider):
+        idle_timeout = 600.0
+
+        async def complete(self, messages, tools=None, system=None, **kwargs):
+            self.calls += 1
+            await asyncio.sleep(0.2)
+            return LLMResponse(content="still-working")
+
+    agg = AggregateProvider([Working("thinker", "still-working")])
+    assert (await agg.complete([])).content == "still-working"
+    assert agg.providers[0].calls == 1
 
 
 def test_aggregate_requires_providers():

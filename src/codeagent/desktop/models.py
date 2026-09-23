@@ -250,6 +250,26 @@ def _build_member(assets: ModelAssets, ref: str) -> LLMProvider | None:
     return OpenAIProvider(**kwargs)
 
 
+def mixture_member_refs(mix: Mixture) -> list[str]:
+    """Member order for stall failover, appending fallback when missing."""
+    refs: list[str] = []
+    seen: set[str] = set()
+    for ref in list(mix.members) + ([mix.fallback] if mix.fallback else []):
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        refs.append(ref)
+    return refs
+
+
+def build_mixture_providers(assets: ModelAssets, mix: Mixture) -> list[LLMProvider]:
+    """Leaf providers for a mixture, in stall-switch order."""
+    return [
+        p for p in (_build_member(assets, ref) for ref in mixture_member_refs(mix))
+        if p is not None
+    ]
+
+
 def build_active_provider(assets: ModelAssets) -> LLMProvider | None:
     """Construct the provider for the active asset (the *real* call path)."""
     resolved = assets.resolve_active()
@@ -260,15 +280,12 @@ def build_active_provider(assets: ModelAssets) -> LLMProvider | None:
         from codeagent.llm.aggregate import AggregateProvider
 
         mix: Mixture = kwargs["mixture"]
-        providers = [
-            p for p in (_build_member(assets, ref) for ref in mix.members)
-            if p is not None
-        ]
+        providers = build_mixture_providers(assets, mix)
         if not providers:
             return None
-        # cascade → failover in order; weighted/vote/rule → rotate then fail over
-        strategy = "fallback" if mix.strategy == "cascade" else "round-robin"
-        return AggregateProvider(providers, strategy=strategy)
+        # Dead-model switch always fail-over in member order. Weighted/vote/rule
+        # still share the same pool; they must not skip stall recovery.
+        return AggregateProvider(providers, strategy="fallback")
     return _build_member(assets, assets.active)
 
 

@@ -154,6 +154,24 @@ def run_doctor(
             {"configured": []},
         ))
 
+    from codeagent.node_runtime import NODE_VERSION, node_exe
+    import sqlite3
+
+    checks.append(Check(
+        "sqlite", "ok",
+        f"内置 SQLite {sqlite3.sqlite_version}（随安装包，无需另装数据库）",
+        {"version": sqlite3.sqlite_version},
+    ))
+
+    node = node_exe()
+    if node:
+        checks.append(Check("node", "ok", f"Node.js {NODE_VERSION}：{node}", {"path": str(node)}))
+    else:
+        checks.append(Check(
+            "node", "warn",
+            f"未找到融合的 Node.js {NODE_VERSION}；桌面版启动时会从 nodejs.org 安装",
+        ))
+
     git = shutil.which("git")
     if git:
         checks.append(Check("git", "ok", f"git：{git}", {"path": git}))
@@ -167,6 +185,36 @@ def run_doctor(
         checks.append(Check("tools", "ok", f"内置工具 {n} 个可用", {"count": n}))
     except Exception as exc:  # noqa: BLE001 — doctor must not crash
         checks.append(Check("tools", "fail", f"工具加载失败：{exc}"))
+
+    try:
+        from codeagent.phone.bridge import bridge_summary
+
+        phone = bridge_summary()
+        hdc = phone.get("hdc") or ""
+        adb = phone.get("adb") or ""
+        devices = phone.get("devices") or []
+        if hdc or adb:
+            bits = []
+            if hdc:
+                bits.append("hdc")
+            if adb:
+                bits.append("adb")
+            msg = "真机桥：" + "+".join(bits)
+            if devices:
+                msg += f"；已连接 {len(devices)} 台"
+                status = "ok"
+            else:
+                msg += "；暂无设备（插上手机并开 USB 调试）"
+                status = "warn"
+            checks.append(Check("phone", status, msg, phone))
+        else:
+            checks.append(Check(
+                "phone", "warn",
+                "未找到 hdc/adb；真机装测需 DevEco/OpenHarmony SDK 或 Android platform-tools",
+                phone,
+            ))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(Check("phone", "warn", f"真机桥检测失败：{exc}"))
 
     if probe:
         reachable: list[str] = []

@@ -95,7 +95,10 @@ class InternalBrowser:
 
     def status_text(self) -> str:
         if self.has_gui:
-            where = "软件内浏览窗口（对话里调用 browser 即可开页/点击/填表，你能看见）"
+            where = (
+                "软件内浏览窗口（对话里调用 browser 即可开页/点击/填表，用户能看见真实页面；"
+                "不是沙盒、不受限，禁止以 sandbox/受限为由跳过展示）"
+            )
         else:
             where = "内置抓取模式（开页、读内容、点链接；复杂点击请用桌面版窗口）"
         loc = f" 当前 {self.url}" if self.url else " 尚未打开页面"

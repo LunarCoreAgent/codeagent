@@ -3,8 +3,8 @@
     "bundleName": "com.codeagent.hybrid",
     "vendorCode": "codeagent",
     "version": {
-      "code": 1,
-      "name": "0.81.0"
+      "code": 11,
+      "name": "0.90.3"
     },
     "icon": "$media:app_icon",
     "label": "$string:app_name"

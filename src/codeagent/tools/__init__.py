@@ -11,6 +11,8 @@ from codeagent.tools.filesystem import (
 from codeagent.tools.search import GlobTool, GrepTool
 from codeagent.tools.browser import BrowserTool, browser_tools
 from codeagent.tools.comfyui import ComfyTool, comfy_tools
+from codeagent.tools.phone import PhoneTool, phone_tools
+from codeagent.tools.runtime import EnsureRuntimeTool
 from codeagent.tools.shell import BashTool
 from codeagent.tools.web import WebFetchTool, WebScrapeTool, web_tools
 
@@ -23,6 +25,7 @@ __all__ = [
     "GlobTool",
     "GrepTool",
     "ListDirTool",
+    "PhoneTool",
     "ReadFileTool",
     "Tool",
     "ToolRegistry",
@@ -32,6 +35,7 @@ __all__ = [
     "browser_tools",
     "comfy_tools",
     "default_tools",
+    "phone_tools",
     "web_tools",
 ]
 
@@ -52,6 +56,8 @@ def default_tools(
             GlobTool(root_dir),
             BashTool(root_dir, shell_timeout),
             BrowserTool(),
+            PhoneTool(),
+            EnsureRuntimeTool(),
             ComfyTool(),
         ]
     )

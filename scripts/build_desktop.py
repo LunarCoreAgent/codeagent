@@ -35,6 +35,12 @@ README_TXT = """CodeCoreAgent 桌面版
 
 【模型配置】App 内点「设置」：选 provider、填 API Key；
 本地免费模型：装 Ollama 后 ollama pull qwen2.5-coder:7b，provider 选 ollama。
+
+【Node.js】安装包内置 Node.js 24.21.0 LTS（官方 nodejs/node 发布包），
+供 npx MCP 与 Remotion 使用，无需再单独安装 Node.js。
+
+【数据库】首次启动在隐私说明后选择 SQLite 位置：本地、局域网或广域网。
+确认后才创建 codecore.sqlite。记忆仍写在 memory.json。
 """
 
 
@@ -81,12 +87,25 @@ def build_dmg(app_path: Path, target: str) -> Path:
     return dmg
 
 
-def build_zip(exe_path: Path, target: str) -> Path:
+def build_zip(exe_path: Path, target: str, node_dir: Path | None = None) -> Path:
     out = DIST / f"codeagent-desktop-{target}.zip"
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(exe_path, "codeagent.exe")
         zf.writestr("README.txt", README_TXT)
+        if node_dir and node_dir.is_dir():
+            for path in node_dir.rglob("*"):
+                if path.is_file():
+                    zf.write(path, Path("node") / path.relative_to(node_dir))
     return out
+
+
+def stage_node(dest: Path) -> Path:
+    """Download the official Node.js LTS tree into the installer layout."""
+    sys.path.insert(0, str(ROOT / "src"))
+    from codeagent.node_runtime import NODE_VERSION, ensure_installed
+
+    print(f"staging Node.js {NODE_VERSION} → {dest}")
+    return ensure_installed(dest)
 
 
 def build_inno(target: str, version: str) -> Path | None:
@@ -134,6 +153,7 @@ def main() -> int:
         if not smoke_test(app / "Contents" / "MacOS" / "codeagent"):
             print("smoke test FAILED", file=sys.stderr)
             return 1
+        stage_node(app / "Contents" / "Resources" / "node")
         out = build_dmg(app, target)
         print(f"OK → {out} ({out.stat().st_size / 1_000_000:.1f} MB)")
     else:
@@ -141,7 +161,8 @@ def main() -> int:
         if not smoke_test(exe):
             print("smoke test FAILED", file=sys.stderr)
             return 1
-        zipped = build_zip(exe, target)
+        node_dir = stage_node(dist_dir / "node")
+        zipped = build_zip(exe, target, node_dir)
         print(f"OK → {zipped} ({zipped.stat().st_size / 1_000_000:.1f} MB)")
         installer = build_inno(target, _version())
         if installer:

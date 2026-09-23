@@ -199,6 +199,8 @@ def save_publish_draft(root: Path, data: dict[str, Any]) -> dict[str, Any]:
 
 
 def toolchain_status() -> dict[str, Any]:
+    from codeagent.node_runtime import node_exe, npx_exe
+
     def which(name: str) -> str:
         return shutil.which(name) or ""
 
@@ -207,11 +209,13 @@ def toolchain_status() -> dict[str, Any]:
         home = Path("~/.libtv/libtv").expanduser()
         if home.is_file():
             libtv = str(home)
+    node = node_exe()
+    npx = npx_exe()
     return {
         "libtv": libtv,
         "ffmpeg": which("ffmpeg"),
-        "node": which("node"),
-        "npx": which("npx"),
+        "node": str(node) if node else which("node"),
+        "npx": str(npx) if npx else which("npx"),
         "obsidian": which("obsidian"),
     }
 
